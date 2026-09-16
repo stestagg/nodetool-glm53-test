@@ -23,11 +23,11 @@ toast in the chrome, dismissed on click and on its own. Through it arrive the
 reports the earlier stories already define, their content unchanged — a file
 that fails to load or save (15), a failed start's compile errors (16), a
 failed run's error (16), an error reply to anything the editor asked (11),
-including an edit rejected because a run is on, the answer to a stale tab's
-gesture. No report is ever again swallowed into a browser console. What
-toasts deliberately do not carry is the durable truth: a toast is a
-happening, and happenings dismiss — the lasting state lives on the canvas and
-in the chrome, where the next paragraphs put it. (REQ-71, REQ-2)
+including an edit rejected because a run is on. No report is ever again
+swallowed into a browser console. What toasts deliberately do not carry is
+the durable truth: a toast is a happening, and happenings dismiss — the
+lasting state lives on the canvas and in the chrome, where the next
+paragraphs put it. (REQ-71, REQ-2)
 
 That durable state is the early warning. After every change to the held
 definition, and when a file is opened, the server recomputes the graph's
@@ -53,11 +53,13 @@ quiet canvas is the normal. When Start is pressed anyway, 16's failed-start
 report arrives through the surface, and the marks on the canvas are the same
 errors seen durably — one compile, one truth, two views. (REQ-71, REQ-47)
 
-One warning the compile itself must gain, settling the decision story 05
-handed here: the hang gate. A node with an input neither connected nor
-parameterised while another input is connected compiles clean and then hangs
-its run without error until Stop ends it (05, 16) — a trap the shipped nodes
-make trivial to build and only a wasted run to discover. It becomes compile's
+One warning the compile itself must gain, amending the home story 04's
+delivered compiler gave this flagging (its record left it to the editor's
+warn-early set) and so settling story 05's hand-off: the hang gate. A node
+with an input neither connected nor parameterised while another input is
+connected or parameterised compiles clean and then hangs its run without
+error until Stop ends it (05, 16) — a trap the shipped nodes make trivial to
+build and only a wasted run to discover. It becomes compile's
 first non-fatal warning, naming the node and input and saying what will
 happen, advisory everywhere: it never blocks a start, and a headless compile
 shows it the same way, changing no outcome. The compiler's result gains
@@ -116,10 +118,13 @@ the accessibility pass over these marks, toasts, and banner (22); groups
   errors (16), a failed run's error naming the node instance and the failure
   (16), and an error reply to any editor request (11), including an edit
   rejected because a run is on. No failure or error reply passes unshown into
-  the browser console; each report names what and where as its owning story
-  defines — node label with uuid where labels collide, port, path. Nothing
-  durable lives in a toast: the lasting truth is the marks and the chrome
-  state below. (REQ-71, REQ-2, REQ-74)
+  the browser console; each report names what and where its owning story
+  defines — compile's messages name the instance uuid and type reference
+  (04), a run failure the node instance and the failure (16), a file failure
+  the path (15) — and each message is shown at the labelled node it names,
+  label beside uuid where labels collide, so the where is the node the user
+  sees rather than a bare uuid. Nothing durable lives in a toast: the lasting
+  truth is the marks and the chrome state below. (REQ-71, REQ-2, REQ-74)
 - After every change to the held definition, and when a file is opened, the
   server recomputes the graph's problems through the same compile a start
   runs — no second validator, no separate check the browser performs — and
@@ -128,30 +133,36 @@ the accessibility pass over these marks, toasts, and banner (22); groups
   second tab and a reload show the same warnings. (REQ-60, REQ-2, REQ-26,
   REQ-45)
 - Each node a compile problem names is marked on the canvas, its message —
-  ports, types, and reason, as compile writes it — readable at the mark; an
-  unknown-typed placeholder carries its unknown-type error, explaining its
-  inertness. Marks clear when the problem does, on the next recompute, and a
-  clean graph carries nothing. Marks advise only: they disable no gesture and
-  block no edit, no save, and no start compile allows — a graph with problems
-  is saved and started as freely as a clean one; only compile errors refuse a
-  start, per 16. (REQ-60, REQ-72, REQ-47)
+  ports, types, and reason, as compile writes it — readable at the mark; the
+  compile result carries, beside each problem's message, the node instances
+  the problem names, and the mark and the pushed problems state ride that
+  attribution, never a parsing of the message, so marks, the failed-start
+  report, and the headless printout read one structure and none of them
+  scrapes the other. An unknown-typed placeholder carries its unknown-type
+  error, explaining its inertness. Marks clear when the problem does, on the
+  next recompute, and a clean graph carries nothing. Marks advise only: they
+  disable no gesture and block no edit, no save, and no start compile allows
+  — a graph with problems is saved and started as freely as a clean one; only
+  compile errors refuse a start, per 16. (REQ-60, REQ-72, REQ-47)
 - The compiler's result gains non-fatal warnings beside its errors — the same
-  compile, an additive extension, no second validation path — and its set
-  starts with exactly one member: an input neither connected nor
-  parameterised while the node has another input connected, the story 05 hang
-  gate, warned naming the node and input and the consequence; it changes no
-  outcome and blocks nothing, in the editor and headless alike. New warnings
-  join only when they earn their place. (REQ-60, REQ-72, REQ-74)
+  compile, an additive extension, no second validation path — carrying, with
+  each problem, the node or nodes it names, so the editor places marks from
+  the result's structure, not by parsing message text. Its set starts with
+  exactly one member: an input neither connected nor parameterised while the
+  node has another input that is connected or parameterised, the story 05
+  hang gate, warned naming the node and input and the consequence; it changes
+  no outcome and blocks nothing, in the editor and headless alike. New
+  warnings join only when they earn their place. (REQ-60, REQ-72, REQ-74)
 - A failed run's explanation lives at its location: the story 17 failed-node
   mark carries the error message the same way a warning mark does, and the
   toast reports the same error naming the node — both fed from the story
   07/17 event stream, no second error channel; both go when the next start
   resets the canvas. (REQ-71, REQ-13, REQ-14)
 - A lost websocket connection is a clear, non-blocking chrome state: a banner
-  naming the loss and the reconnection attempts, over the last-known canvas,
-  visibly stale. While disconnected every server-acting gesture — editing,
-  file open and save, start and stop — is inert, the browser holding no state
-  that could back an undeliverable edit, while panning, zooming, and
+  naming the loss and saying the editor is trying again, over the last-known
+  canvas, visibly stale. While disconnected every server-acting gesture —
+  editing, file open and save, start and stop — is inert, the browser holding
+  no state that could back an undeliverable edit, while panning, zooming, and
   selecting stay live. The run behind the lost connection is untouched by the
   loss; a server that was killed took its run with it, and the reconnected
   view says so honestly. (REQ-45, REQ-2)
@@ -162,24 +173,29 @@ the accessibility pass over these marks, toasts, and banner (22); groups
   path as any first connect with nothing extra. A first open that cannot
   reach the server shows the disconnected state rather than the empty-canvas
   invitation, and a greeting whose protocol or schema versions mismatch the
-  page's is reported, with reloading the page as the advice. (REQ-45, REQ-71)
+  page's puts the editor in the disconnected state naming the mismatch, with
+  reloading the page as the advice, rather than proceeding against a server
+  it no longer understands — the mismatch stays reported there until that
+  reload, never a self-dismissing toast. (REQ-45, REQ-71)
 - Focused tests cover the server side and the compiler: the compile result
-  carrying warnings beside errors, the hang-gate warning present exactly for
-  a node with an unconnected-and-unparameterised input beside a connected one
-  and absent otherwise, advisory in every consumer; problems recomputed after
-  an edit that introduces a compile error, pushed whole to every connection,
-  carried in the connect-time resync, and cleared when the fix lands; a
-  problem graph still accepting edits and saves, and a start compile allows;
-  an error reply answered with the connection usable, per story 11's
+  carrying warnings beside errors and, with each problem, the nodes it names;
+  the hang-gate warning present exactly for a node with an
+  unconnected-and-unparameterised input beside a connected or parameterised
+  one and absent otherwise, advisory in every consumer; problems recomputed
+  after an edit that introduces a compile error, pushed whole to every
+  connection, carried in the connect-time resync, and cleared when the fix
+  lands; a problem graph still accepting edits and saves, and a start compile
+  allows; an error reply answered with the connection usable, per story 11's
   framing. The workspace builds and passes `cargo test` and `cargo clippy`
   cleanly, with the UI build part of the check set DEVELOPMENT.md documents.
 - The visible proof, run per DEVELOPMENT.md: commit a value that cannot suit
   its input and see the node marked as it commits, the message naming the
   types — fix it and the mark is gone; wire an output back into its own node
   and see the cycle marked before any run; build the hang gate — a node with
-  a spare input beside a connected one — see the warning, press Start anyway,
-  and find the run hanging until Stop ends it, the warning having blocked
-  nothing; press Start on a broken graph and see the report list each error
+  a spare input beside a connected or parameterised one — see the warning,
+  press Start anyway, and find the run hanging until Stop ends it, the
+  warning having blocked nothing; press Start on a broken graph and see the
+  report list each error
   naming what and where, the same errors sitting as marks on their nodes —
   save the graph anyway, then fix and start; make a node fail deliberately as
   story 17 does and see the failure reported, the failed node's mark carrying
@@ -195,8 +211,9 @@ the accessibility pass over these marks, toasts, and banner (22); groups
   push-on-change and connect-time-resync rule 15's comment set for successive
   state — everything else is presentation over paths that already exist.
   Content stays with its owners: the compile error set and its naming are
-  04's, extended additively here with the warnings channel; the file-failure
-  contracts are 15's; the failed-start report, outcomes, and the run lock are
+  04's, extended additively here with the warnings channel and each problem's
+  node attribution; the file-failure contracts are 15's; the failed-start
+  report, outcomes, and the run lock are
   16's; fail-fast behaviour is 06's; derived statuses, the mid-run attach,
   and the reconnect snapshot are 07 and 17's — the failed-node mark here is
   17's rendered status wearing this story's message. Palette icons, colours,
@@ -224,9 +241,12 @@ the accessibility pass over these marks, toasts, and banner (22); groups
   change, a button is ceremony — problems are current by construction, the
   same argument 15 made for metadata.
 - 2026-09-16 — Why the hang gate is a warning and not an error, and why it
-  lives in the compiler: story 05's comment handed the decision here, the
-  runtime behaviour having been the only signal a user got. It is not an
-  error because it is not incorrect — the graph compiles, the model allows
+  lives in the compiler: story 05 handed the decision here, and story 04's
+  compile recorded it the other way — the editor's warn-early set, not
+  compilation — a record this story revises deliberately, that doc comment
+  updated in the same change; the runtime behaviour having been the only
+  signal a user got. It is not an error because it is not incorrect — the
+  graph compiles, the model allows
   it, and enforcement belongs at start, where 16's Stop is the exit; it is a
   warning because the run it hangs is otherwise undiscoverable except by
   spending a run. It lives in the compiler's result so the editor, the
