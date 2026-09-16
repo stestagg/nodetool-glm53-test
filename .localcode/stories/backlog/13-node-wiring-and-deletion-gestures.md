@@ -20,16 +20,20 @@ behaves:
 
 - **Wire**: dragging between an output port and an input port — from either
   end — creates an edge, drawn live during the drag and landed as an edge in
-  the definition when released on a port. Releasing anywhere that is not a
-  port cancels quietly: no edge, no error noise. One output can feed any
+  the definition when released on a port. Releasing anywhere the wire cannot
+  land — anywhere that is not a port of the other kind — cancels quietly: no
+  edge, no error noise. A drag that grabbed a connected input's end is the
+  unhook gesture below, not a cancel: releasing it off-port removes the old
+  wire rather than restoring it. One output can feed any
   number of inputs, drawn as separate wires; an input takes at most one
   upstream, so dropping a new wire onto an already-wired input *replaces* the
   old wire rather than demanding an unhook first — the most natural gesture
   should not be a run-in with an error dialog.
-- **Unhook**: dragging a connected input's end off and releasing it removes
-  that wire — the input returns to unconnected. Unhooking an input that has
-  no wire changes nothing. This one drag mechanism covers removing and
-  re-routing a wire; there is no separate edge-selection-and-delete path.
+- **Unhook**: dragging a connected input's end off and releasing it on
+  anything that is not a port removes that wire — the input returns to
+  unconnected. Released on a port, the same drag is the wire gesture, and
+  replace semantics do the re-routing. Unhooking an input that has no wire
+  changes nothing; there is no separate edge-selection-and-delete path.
 - **Delete**: pressing Delete (or Backspace) while a node is selected removes
   it from canvas and definition together with every wire attached to it —
   no dangling edges are left behind, since the file format (03) forbids them.
@@ -56,8 +60,9 @@ presentation (19); multi-selection and group delete (20).
 
 - Dragging between an output port and an input port (from either end) creates
   an edge rendered on the canvas between the two ports; the gesture becomes a
-  wire operation naming both nodes by uuid and the ports by name, applied to
-  the server-held definition and pushed to every connection. One output feeds
+  wire operation naming the edge it means — source node by uuid and output
+  port by name, target node by uuid and input port by name — applied to the
+  server-held definition and pushed to every connection. One output feeds
   any number of downstream inputs, each shown as its own wire. (REQ-54,
   REQ-20, REQ-41)
 - An input has at most one upstream: dropping a wire on an already-wired
@@ -65,29 +70,34 @@ presentation (19); multi-selection and group delete (20).
   an input that holds a parameter value replaces the literal, so the
   definition never holds an input with both. A connected input shows a
   visible connected state on the node. (REQ-21, REQ-58)
-- Dragging a connected input's end off and releasing unhooks it: the edge is
-  removed from definition and canvas in every open tab, and the input returns
-  to its unconnected state (its editable scalar field returns with story 14);
-  unhooking an input with no wire changes nothing. Every input can be
-  wired — nothing is forbidden to connect — and no type, port, or cycle
-  checking happens at edit time. (REQ-57, REQ-60, REQ-72)
+- Dragging a connected input's end off and releasing it anywhere that is
+  not a port unhooks it: the edge is removed from definition and canvas in
+  every open tab, and the input returns to its unconnected state (its
+  editable scalar field returns with story 14); unhooking an input with no
+  wire changes nothing. Every input of a known type can be wired — nothing
+  is forbidden to connect — and no type, port, or cycle checking happens at
+  edit time. (REQ-57, REQ-60, REQ-72)
 - Pressing Delete (or Backspace) on a selected node removes it from the
   canvas and the definition together with every edge attached to it, leaving
-  no dangling edges. (REQ-45)
+  no dangling edges. (REQ-2)
 - The browser holds no graph state of its own: reloading, or a second tab,
   shows the same wiring, and a wire, unhook, or delete made in one tab
   appears in the other. (REQ-2, REQ-45)
 - Focused tests cover the new operation messages server-side: wire creates
-  the edge and replaces an occupied input's edge and any literal it held;
-  unhook removes the edge and is idempotent; delete removes the node and
+  the edge and replaces an occupied input's edge and any literal it held,
+  and a wire from a node's output to one of its own inputs lands at edit
+  time, compile (04) being what rejects it later; unhook removes the edge
+  and is idempotent; delete removes the node and
   cascades its edges; operations naming a node not in the definition are
   answered with an error per story 11's framing, leaving the connection
   usable; pushes reach every connection. The workspace builds and passes
   `cargo test` and `cargo clippy` cleanly.
 - The visible proof, run per DEVELOPMENT.md: open the editor, drop a few
-  nodes, wire a fan-out from one output to two inputs, drop a new wire onto
-  an occupied input and watch the old wire replaced, drag a wire's input end
-  off to unhook it, delete a wired node and see its wires go with it, then
+  nodes, wire a fan-out from one output to two inputs, release a drag over
+  empty canvas and see it cancel quietly — no wire, no error — drop a new
+  wire onto an occupied input and watch the old wire replaced, drag a wire's
+  input end off to unhook it, wire an output back into its own node's input
+  and watch it land, delete a wired node and see its wires go with it, then
   reload and check a second tab shows the same graph.
 
 ## Comments
@@ -121,7 +131,11 @@ presentation (19); multi-selection and group delete (20).
   03's rule that an input carries a connection or a literal, never both; the
   replaced literal is not resurrected on unhook — whether replaced values are
   remembered at all is story 14's call, and 13 keeps no second bookkeeping.
-  Unknown-typed placeholder nodes from story 12 stay inert and take no part
-  in wiring, per 12's rendering rule. All operation names travel as uuid and
-  port names — nothing here knows what a node is, only what the definition
-  holds. (REQ-73)
+  Unknown-typed placeholder nodes from story 12 offer no grabbable ports, so
+  no wire gesture can start or land on them — a rendering fact, not a check:
+  the server applies an operation naming a placeholder like any other, and
+  compile time judges (04). They take no part in wiring because the wire
+  operation names ports by name and a placeholder's ports are unknown — no
+  name to name, no carved-out exception. All operation names travel as uuid
+  and port names — nothing here knows what a node is, only what the
+  definition holds. (REQ-73)
