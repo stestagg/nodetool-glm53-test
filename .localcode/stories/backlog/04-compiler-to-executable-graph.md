@@ -1,15 +1,42 @@
 ---
 title: Compiler to executable graph
 date: 2026-09-16
-placeholder: true
+depends: []
 ---
 
 ## Description
 
-A pure, fast compile step that validates structure (DAG, ports exist, single upstream), resolves each connection's type across unions including declared trivial conversions, and produces the immutable executable graph, reporting errors rather than running broken graphs and settling how conversions appear in the model.
+Between the graph file a user writes (story 03) and the running engine (story 06) sits the compile step: the moment where a graph stops being text and becomes something that can run. The vision calls it a pure, fast transformation, and the requirements call for the type of every connection to be resolved *before* the graph is built for execution — so a run never starts on a broken graph, and the editor's later job (stories 18, 16) is only to warn early, never to police.
 
-_Placeholder: written out in full during backlog population, against the project vision._
+This story delivers that compiler. It takes an in-memory graph definition — the parsed shape of a graph file — and produces a compiled, immutable, executable graph object. Along the way it validates what correctness requires and nothing more (REQ-72):
+
+- **Structure**: the graph is a DAG (a cycle is an error naming the cycle), every edge names ports that exist on its node types, and no input has more than one upstream connection (REQ-21). Fan-out — one output feeding many downstream inputs — is legal and preserved (REQ-20).
+- **Types**: each connection's type is resolved across the unions ports may declare (REQ-27, REQ-28). Where the two sides differ only by a declared trivial conversion — `i16`→`i32`, `f32`→`f64`, `i32`→`f64`, or a plugin's own declared conversion — the conversion is resolved at compile time and applied as values flow at runtime; the conversion machinery (the converting functions and the runtime value representation) comes from stories 02 and 05, and this story consumes it rather than reworks it.
+- **Parameters**: scalar parameter values attached to nodes in the definition are checked against their input's resolved types, so a `String` literal wired where an `i32` is expected fails to compile with an error a user can act on.
+
+One open question the vision assigns to this story, settled here: **an applied conversion stays implicit.** The saved graph file never gains conversion edges or annotations — hand-written files stay exactly as the user wrote them (REQ-11) — and the graph model between definition and compiled graph carries no explicit conversion node. The compiled graph simply wires the converting adapter into the stream; compile results expose which connections carry a conversion so the editor (story 18) can badge them visually without the file format or model changing. Rationale: conversions are an implementation detail of the connection, the edit–recompile–restart loop must stay fast and frictionless (REQ-26), and an explicit conversion in the model would add a second path beside the one general conversion mechanism.
+
+The compiled graph is what the engine later consumes (REQ-15): routing is by node instance uuid, and the compiler never bakes in anything that would make the engine branch on what a node is called or which type it is (REQ-73). It is immutable once produced — a running graph cannot be modified (REQ-24) — and because recompile-and-restart is a first-class path, compilation must be fast: recompiling an edited graph is cheap and does not re-do work that does not depend on the edit's shape (no scanning of plugin registries per compile, no I/O).
+
+Groups and subgraphs are designed for, not implemented: the compiler's shape leaves room for a node type backed by a subgraph (validation and type resolution recursing into it) without forcing a rework (REQ-44).
+
+The user here is the graph user and plugin author working headless or through the editor: after this story, feeding a graph definition through the compiler either yields something runnable or tells them precisely what is wrong — unknown node type, missing port, two edges into one input, a cycle, an unresolvable connection — in errors that name the nodes and ports involved (REQ-71).
 
 ## Definition of done
 
-_To be written when this story is populated._
+- A function takes a validated-structure-capable in-memory graph definition (the parsed graph file from story 03) plus the registry, and returns either a compiled, immutable, executable graph object or a compile error; the transformation is pure — no I/O, no global state, same input yields same output. (REQ-15, REQ-28)
+- Structure validation reports, as compile errors naming the offending nodes/ports: a cyclic graph (the cycle named), an edge referencing a port that does not exist, an edge referencing an unknown node instance, and an input with more than one upstream connection. An output connected to multiple downstream inputs compiles successfully. (REQ-20, REQ-21, REQ-71)
+- The compiled graph's structure is a DAG consistent with the definition: same nodes (by instance uuid), same edges, fan-out preserved. (REQ-41)
+- Each connection's type is resolved at compile time from the ports' declared type unions: a connection compiles when the sides match exactly, or when a declared conversion (from the type registry, including the base scalars' trivial ones) bridges them; the resolved type is recorded on the compiled connection. (REQ-27, REQ-28, REQ-35)
+- Where a conversion bridges a connection, the compiled graph carries the adapter — resolved from the registry's conversion declarations, never a core special case for specific type names — so the engine applies it as values flow; the graph *definition* and any saved file are unchanged by compilation (no conversion edges or annotations are added), and compile results expose which connections carry conversions for later UI display. (REQ-35, REQ-11, REQ-73)
+- A connection no exact match nor any declared conversion can bridge fails to compile with an error naming both ports, their declared types, and the reason. (REQ-71)
+- Scalar parameter values on nodes are checked against the input's resolved type; a mismatch is a compile error naming the node, input, and both types. (REQ-28)
+- Compilation does not read the filesystem or re-scan registrations per call beyond what the passed registry provides; recompiling a modified definition is a fast in-memory operation, usable in a stop–edit–recompile–restart loop. (REQ-26)
+- The compiled graph exposes only instance-identity addressing (node instance uuids and ports); nothing in its shape requires or records a branch on node type name, and the engine-facing surface keeps room for a node type backed by a subgraph (a node's compiled body could be a nested compiled graph) without schema rework. (REQ-24, REQ-44, REQ-73)
+- The example binary from the core story demonstrates the compiler from a terminal: it loads a small example graph definition (per the story 03 format), compiles it, and prints the compiled graph — nodes with resolved connection types, conversions marked — and, run against deliberately broken example definitions (a cycle, a doubled input, an unresolvable type, a bad literal), prints the corresponding error instead of a graph. Running it is the visible proof; focused tests cover each validation and resolution case above, including a plugin custom type with a declared conversion resolving at compile time. (REQ-71)
+
+## Comments
+
+- 2026-09-16 — Scope seams: the runtime behaviour of the compiled graph — how values actually flow, what a node's stream API looks like, value representation — is story 05's; this story defines the *shape* the compiler produces against it, and its dependency on 05 is to consume that, not settle it. The engine that runs the compiled object is story 06. Parse/serialise of the definition is story 03; this story starts from the parsed, in-memory definition. The events observer is story 07 — compilation itself emits no events.
+- 2026-09-16 — Union negotiation detail: when both ports declare unions, the story intentionally leaves "pick the first matching pair" adequate; if conflicts arise (a port union matching more than one way), the error path above covers it. Refinement can tighten the resolution rule; the user-visible contract is simply: matching types compile, trivially-convertible types compile with the conversion applied, everything else fails with a clear error.
+- 2026-09-16 — The implicit-conversion decision above is the deliberate product call the vision flagged as an open question. It keeps hand-written files honest, keeps one conversion mechanism, and gives the editor what it needs via compile results rather than the file format. If a later story (23, groups) needs explicit conversion in files for round-tripping, that is a change to make there, in the open.
