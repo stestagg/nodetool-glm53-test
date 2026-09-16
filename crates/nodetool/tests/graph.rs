@@ -154,13 +154,13 @@ fn metadata_is_carried_verbatim() {
     .unwrap();
     let metadata = &definition.nodes[0].metadata;
     assert_eq!(metadata.len(), 3);
-    let position = metadata.get(&Value::String("position".into())).unwrap();
+    let position = metadata.get(Value::String("position".into())).unwrap();
     assert_eq!(
-        position.get(&Value::String("x".into())),
+        position.get(Value::String("x".into())),
         Some(&Value::Number(80.into()))
     );
     assert_eq!(
-        metadata.get(&Value::Number(1.into())),
+        metadata.get(Value::Number(1.into())),
         Some(&Value::String("two".into()))
     );
     assert_eq!(graph::load(&graph::dump(&definition)).unwrap(), definition);

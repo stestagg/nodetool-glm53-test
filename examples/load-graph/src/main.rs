@@ -6,7 +6,7 @@
 use plugin_shapes as _;
 use plugin_text as _;
 
-use nodetool::graph::{self, GraphDefinition, Mapping, NodeInstance};
+use nodetool::graph::{self, GraphDefinition, NodeInstance};
 
 const SAMPLE: &str = include_str!("../graphs/sample.yml");
 const MALFORMED: &str = include_str!("../graphs/malformed.yml");

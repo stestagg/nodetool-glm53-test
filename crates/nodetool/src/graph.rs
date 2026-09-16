@@ -439,7 +439,7 @@ fn cross_check(nodes: &[NodeInstance], edges: &[Edge]) -> Result<(), LoadError> 
     for (index, node) in nodes.iter().enumerate() {
         if let Some(first) = indexes.insert(node.uuid, index) {
             return Err(err(
-                &format!("{NODES}[{index}]"),
+                format!("{NODES}[{index}]"),
                 format!(
                     "duplicate node uuid {}; already used at nodes[{first}]",
                     node.uuid

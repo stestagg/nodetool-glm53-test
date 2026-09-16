@@ -16,7 +16,8 @@ scalar data types.
 
 - `crates/nodetool` — the core library: the node type model, the data type
   model with the base scalars, the `node_type!` and `data_type!` declaration
-  macros, and the registry.
+  macros, the versioned YAML graph file format (`nodetool::graph`; its
+  rustdoc is the format's spec), and the registry.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the registry
   tests (`alpha` is sub-grouped, `beta` is flat).
 - `examples/plugins` — small example plugin crates (`shapes` is sub-grouped,
@@ -27,6 +28,12 @@ scalar data types.
 - `examples/list-nodes-empty` — the same listing with no plugin linked; core
   ships no node types, so that section is empty, while the base scalars show
   with nothing contributed.
+- `examples/load-graph` — demo binary linked against both example plugins;
+  loads its sample graph file and prints what it loaded (nodes with uuid,
+  type reference, label, parameters, and metadata, then the edges), dumps it
+  back to YAML to show the round trip, and attempts a deliberately malformed
+  file to show the load error. The sample files live in
+  `examples/load-graph/graphs/`.
 
 ## Build and check
 
@@ -42,6 +49,7 @@ cargo fmt --check
 ```sh
 cargo run -p list-nodes        # the listing across both example plugins
 cargo run -p list-nodes-empty  # the same listing, no plugin linked
+cargo run -p load-graph        # load a graph file, print it, show the round trip
 ```
 
 ## Writing a plugin
