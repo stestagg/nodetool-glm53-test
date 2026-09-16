@@ -52,17 +52,21 @@ time, so nothing needs writing.
 Save always knows its target: the path the binary was launched with, the last
 file opened, or nothing yet. Save writes to the current file; the first save
 of an untitled graph asks for a path, and the answer becomes the graph's file
-— the same ask doubles as saving the working graph elsewhere, so there is one
-control and one dialog, not a second save mechanism. The chrome names the
+once the save succeeds. The same ask doubles as saving the working graph
+elsewhere: its control differs from plain save only in always asking — one
+dialog and one save mechanism, however the chrome presents the two entries
+into it, and no second save path. The chrome names the
 current file (or says untitled) and shows whether the held graph has unsaved
-changes since the last open or save. Opening another file, or starting a
-fresh graph, over unsaved changes asks before discarding — the one guard,
-placed exactly where loss is real.
+changes since the last open or save. Opening a file — another or the current
+one — or starting a fresh graph, over unsaved changes asks before discarding
+— the one guard, placed exactly where loss is real.
 
 Errors stay honest and cheap, per story 11's framing: a file that fails to
-load leaves the held graph untouched and reports the story 03 load error,
-naming what and where; a save to an unwritable path reports the failure and
-changes neither the graph nor any file; the connection stays usable. The
+load leaves the held graph and current file untouched and reports the failure
+naming the path and what and where — the story 03 load error for content the
+loader rejects, the read failure for a path it cannot open; a save to an
+unwritable path reports the failure and changes neither the graph nor any
+file — save writes a complete file or none; the connection stays usable. The
 reporting here is plainly visible in the editor; making the surfaces
 systematic — toasts, panels, compile warnings, connection loss — is story
 18's.
@@ -93,33 +97,44 @@ product binary (24).
 - The editor can save the held definition as YAML to the file being edited:
   the story 03 format with its schema version, and nodes, parameters, edges,
   and metadata carried exactly as held. Saving an untitled graph asks for a
-  path, which becomes the current file; saving elsewhere re-targets the same
-  way. Nothing is invented at save time: a node the user never positioned is
-  written with no position, and reopening lands it identically via the
-  deterministic fallback. (REQ-11, REQ-12)
-- Round trip holds through the editor: open a hand-written file, save it with
-  only viewing or visual edits made, and the file comes back
-  meaning-identical — uuids, labels, parameter values, metadata, and edges —
-  so hand-written and editor-written files stay interchangeable, extending
-  story 03's guarantee across the editor's door. (REQ-11, REQ-12)
+  path, which becomes the current file once the save succeeds; saving
+  elsewhere re-targets the same way — a save that fails leaves the current
+  file where it was. Nothing is invented at save time: a node the user never
+  positioned is written with no position, and reopening lands it identically
+  via the deterministic fallback. (REQ-11, REQ-12)
+- Round trip holds through the editor: open a hand-written file and save it
+  having made no edits — panning, zooming, and selecting are view-local and
+  touch nothing the file carries — and the file comes back meaning-identical
+  — uuids, labels, parameter values, metadata, and edges — so hand-written
+  and editor-written files stay interchangeable, extending story 03's
+  guarantee across the editor's door. A move made before saving writes the
+  moved position; that is the faithfulness criterion above doing its work,
+  not a round-trip failure. (REQ-11, REQ-12)
 - The editor shows which file it is editing and whether the held graph has
   unsaved changes since the last open or save; a reload or a second tab shows
-  the same file name and state. Opening another file, or starting a fresh
-  graph, over unsaved changes asks before discarding them; a fresh-graph
-  control returns the editor to an empty, untitled graph in one step.
-  (REQ-2, REQ-45)
+  the same file name and state. Opening a file — another or the current one —
+  or starting a fresh graph, over unsaved changes asks before discarding
+  them; a fresh-graph control returns the editor to an empty, untitled graph
+  in one step. (REQ-2, REQ-45)
 - A file that fails to load leaves the held graph and current file untouched
-  and reports the story 03 load error naming what and where; a save that
-  fails — an unwritable path — reports it, changing neither the graph nor any
-  file; in both cases the connection stays usable. (REQ-71)
+  and reports the failure naming the path and what and where — the story 03
+  load error for content the loader rejects, the read failure for a path it
+  cannot open; a save that fails — an unwritable path — reports it, changing
+  neither the graph nor any file, and save writes a complete file or none, so
+  a failed save never leaves the target half-written; in both cases the
+  connection stays usable. (REQ-71)
 - Focused tests cover the new messages server-side: launch-with-file seeding
   the server's held definition through the story 03 loader; open replacing
   the definition and pushing to every connection; save writing the document
   the definition dumps, checked against the format's own round-trip fidelity;
-  save retargeting the current file; a load failure and a save failure each
-  leaving the state untouched and answered with an error per story 11's
+  save retargeting the current file, the new current-file state pushed to
+  every connection like open's; the dirty rule — an edit sets it, open, save,
+  and the fresh-graph control clear it; a load failure and a save failure
+  each leaving the state untouched and answered with an error per story 11's
   framing. The workspace builds and passes `cargo test` and `cargo clippy`
   cleanly, with the UI build part of the check set DEVELOPMENT.md documents.
+  DEVELOPMENT.md also documents launching the editor example on a graph file
+  and where the sample file ships.
 - The visible proof, run per DEVELOPMENT.md: launch the editor example on the
   sample file and see all three placements — metadata position, fallback
   position, inert placeholder; drop a node, move it, wire and value it with
@@ -137,13 +152,20 @@ product binary (24).
   browser beside the definition it belongs to. Launching on a file simply
   seeds the server-held definition (11's state) through the story 03 loader —
   no new mechanism. The visual push shape is 12's, unchanged: an open pushes
-  the whole new definition; save changes no definition state, so its reply
-  suffices. Compile warnings on opened files are 18's; the run-time lock over
-  file operations is 16's — open and save are edits like any other, so once
-  runs exist they sit under the same edit lock (REQ-25); nothing to lock yet,
-  as nothing runs yet. Fizzbuzz's UI mode (REQ-69) is story 24's, consuming
-  this story's capability; the console printing there inherits story 10's
-  rule. (REQ-74)
+  the whole new definition; save changes no definition state, so the
+  definition needs no push — but the file state a save changes, the dirty
+  flag cleared and the retargeted current file on a first save or
+  save-elsewhere, is server state like any other: it travels beside the
+  definition wherever the definition travels (the connect-time resync), and
+  when it changes it is pushed to every connection, so every tab's chrome
+  shows the same file name and dirty state without a reload. 16's run state
+  will want this same rule — the next state that changes while the
+  definition does not. Compile warnings on opened files are 18's; the
+  run-time lock over file operations is 16's — open and save are edits like
+  any other, so once runs exist they sit under the same edit lock (REQ-25);
+  nothing to lock yet, as nothing runs yet. Fizzbuzz's UI mode (REQ-69) is
+  story 24's, consuming this story's capability; the console printing there
+  inherits story 10's rule. (REQ-74)
 - 2026-09-16 — Why server-side paths, not browser file pickers and
   downloads: the server owns the graph (11), files live in the same
   filesystem as the binary, and the loopback single-user posture — no auth,
@@ -154,13 +176,19 @@ product binary (24).
   in a downloads folder the user then shepherds; a path keeps the editor
   literally editing a named file — the same file the headless run takes.
 - 2026-09-16 — UX calls settled here: save always knows its target, asked for
-  only when untitled, the answer becoming the current file — one dialog
-  serving first-save and save-elsewhere, so no second control; a fresh-graph
+  only when untitled (the save-elsewhere entry always asks), the answer
+  becoming the current file once the save succeeds — one dialog and one save
+  mechanism serving first-save and save-elsewhere; a fresh-graph
   control completes the file model (launch-with-file, open, save, new) at the
   cost of one more use of the same replace path; the unsaved-changes confirm
   sits only where loss is real — replacing the held graph — and nowhere
-  else; the dirty state is server-known (definition changed since the last
-  open or save), so every tab agrees without browser-side bookkeeping. No
+  else; process exit is the other place loss is real and is deliberately not
+  covered here — Ctrl-C on a binary holding an untitled, unsaved graph loses
+  it, and the chrome's dirty indicator dies with the terminal — a quit guard
+  is left to be settled when 16 or 24 are populated, recorded so it reads as
+  a decision rather than an oversight; the dirty state is server-known
+  (definition changed since the last open or save), so every tab agrees
+  without browser-side bookkeeping. No
   file watching and no mtime checks: the editing session is the working
   copy, save writes it whole, and picking up hand edits means re-opening —
   watching would add a second graph source to reconcile for a workflow
