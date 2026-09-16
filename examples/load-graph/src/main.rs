@@ -51,8 +51,9 @@ fn print_node(node: &NodeInstance) {
     }
     if !node.parameters.is_empty() {
         println!("  parameters:");
-        for (name, value) in &node.parameters {
-            println!("    {name}: {value}");
+        let yaml = serde_yaml::to_string(&node.parameters).expect("parameters always serialise");
+        for line in yaml.lines() {
+            println!("    {line}");
         }
     }
     if !node.metadata.is_empty() {

@@ -29,11 +29,8 @@ scalar data types.
   ships no node types, so that section is empty, while the base scalars show
   with nothing contributed.
 - `examples/load-graph` — demo binary linked against both example plugins;
-  loads its sample graph file and prints what it loaded (nodes with uuid,
-  type reference, label, parameters, and metadata, then the edges), dumps it
-  back to YAML to show the round trip, and attempts a deliberately malformed
-  file to show the load error. The sample files live in
-  `examples/load-graph/graphs/`.
+  loads a graph file and shows the listing, the round trip, and a load
+  error; the sample files live in `examples/load-graph/graphs/`.
 
 ## Build and check
 

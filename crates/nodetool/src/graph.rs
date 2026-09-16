@@ -47,24 +47,39 @@
 //! about failure: a file that fails to load fails loudly and precisely, the
 //! error naming the offending node, edge, or field and where it sits —
 //! nothing guessed, defaulted, or silently dropped.
+//!
+//! The load contract, stated plainly: `schema_version`, `nodes`, and
+//! `edges` are required — write `edges: []` for a graph with no edges — and
+//! the schema version must be a non-negative integer this reader supports.
+//! Duplicate YAML keys are rejected rather than silently resolved, and
+//! parameter names must be strings. One known gap in the locations: a
+//! duplicate key is reported at its mapping's start rather than at the
+//! repeated key, though the message names the key either way.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 use uuid::Uuid;
 
+/// The YAML value types a node's metadata carries, so callers build it
+/// without a direct serde_yaml dependency.
 pub use serde_yaml::{Mapping, Value};
 
-/// The schema version this reader understands, and the version every dump
-/// carries.
+/// The schema version this reader understands; the only version [`load`]
+/// accepts, and the one it stores.
 pub const SCHEMA_VERSION: u64 = 1;
 
-/// A graph definition as a file carries it: node instances and the edges
+/// A graph definition, exactly as a file carries it: the schema version it
+/// was written for, an optional name, the node instances, and the edges
 /// between them.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct GraphDefinition {
+    /// The schema version the file carries; [`SCHEMA_VERSION`] for anything
+    /// [`load`] returns.
+    pub schema_version: u64,
     /// The graph's name, if the file gives one.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub nodes: Vec<NodeInstance>,
     pub edges: Vec<Edge>,
@@ -105,7 +120,7 @@ pub struct Edge {
 }
 
 /// A parameter value: a plain YAML scalar of one of the four kinds.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum ParameterValue {
     Bool(bool),
@@ -114,12 +129,28 @@ pub enum ParameterValue {
     Str(String),
 }
 
+/// Equality here is the round trip's: two values are equal when they carry
+/// the same kind and the same meaning — so NaN equals NaN.
+impl PartialEq for ParameterValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Float(a), Self::Float(b)) => a == b || (a.is_nan() && b.is_nan()),
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Int(a), Self::Int(b)) => a == b,
+            (Self::Str(a), Self::Str(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 impl fmt::Display for ParameterValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ParameterValue::Bool(value) => write!(f, "{value}"),
             ParameterValue::Int(value) => write!(f, "{value}"),
-            ParameterValue::Float(value) => write!(f, "{value}"),
+            // Debug keeps a decimal point or exponent, so a float's kind
+            // shows: 3.0 never reads as the integer 3.
+            ParameterValue::Float(value) => write!(f, "{value:?}"),
             ParameterValue::Str(value) => write!(f, "{value:?}"),
         }
     }
@@ -180,24 +211,6 @@ pub fn dump(graph: &GraphDefinition) -> String {
     serde_yaml::to_string(graph).expect("a graph definition always serialises")
 }
 
-impl Serialize for GraphDefinition {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeMap;
-        let len = 3 + usize::from(self.name.is_some());
-        let mut map = serializer.serialize_map(Some(len))?;
-        map.serialize_entry("schema_version", &SCHEMA_VERSION)?;
-        if let Some(name) = &self.name {
-            map.serialize_entry("name", name)?;
-        }
-        map.serialize_entry("nodes", &self.nodes)?;
-        map.serialize_entry("edges", &self.edges)?;
-        map.end()
-    }
-}
-
 fn parse_error(error: serde_yaml::Error) -> LoadError {
     let message = error.to_string();
     match error.location() {
@@ -222,47 +235,54 @@ fn without_position(message: &str, location: serde_yaml::Location) -> String {
     message.replace(&position, "")
 }
 
-fn load_document(root: &Value) -> Result<GraphDefinition, LoadError> {
-    let fields = as_mapping(root, DOCUMENT)?;
-    let mut schema_version = None;
-    let mut name = None;
-    let mut nodes = None;
-    let mut edges = None;
-    for (key, value) in fields {
-        match key.as_str() {
-            Some("schema_version") => schema_version = Some(value),
-            Some("name") => name = Some(value),
-            Some(NODES) => nodes = Some(value),
-            Some(EDGES) => edges = Some(value),
-            _ => {
-                let text = key_text(key);
-                return Err(unknown_field(&text, &text, DOCUMENT_FIELDS));
-            }
+/// A mapping whose keys must all be among the allowed fields; an unknown
+/// key is an error named at the key's own path. All three structural
+/// mappings — the document, a node, an edge — walk their keys this way.
+fn fields<'v>(value: &'v Value, path: &str, allowed: &[&str]) -> Result<&'v Mapping, LoadError> {
+    let fields = as_mapping(value, path)?;
+    for key in fields.keys() {
+        if !key.as_str().is_some_and(|text| allowed.contains(&text)) {
+            let text = key_text(key);
+            return Err(unknown_field(&format!("{path}.{text}"), &text, allowed));
         }
     }
-    check_schema_version(
-        schema_version.ok_or_else(|| err(DOCUMENT, "missing field `schema_version`"))?,
+    Ok(fields)
+}
+
+fn load_document(root: &Value) -> Result<GraphDefinition, LoadError> {
+    let fields = fields(root, DOCUMENT, DOCUMENT_FIELDS)?;
+    let schema_version = check_schema_version(
+        fields
+            .get("schema_version")
+            .ok_or_else(|| err(DOCUMENT, "missing field `schema_version`"))?,
     )?;
-    let name = match name {
+    let name = match fields.get("name") {
         Some(value) => Some(as_str(value, "name")?.to_owned()),
         None => None,
     };
-    let nodes = match nodes {
-        Some(value) => load_nodes(value)?,
-        None => return Err(err(DOCUMENT, "missing field `nodes`")),
-    };
-    let edges = match edges {
-        Some(value) => load_edges(value)?,
-        None => return Err(err(DOCUMENT, "missing field `edges`")),
-    };
+    let nodes = load_nodes(
+        fields
+            .get(NODES)
+            .ok_or_else(|| err(DOCUMENT, "missing field `nodes`"))?,
+    )?;
+    let edges = load_edges(
+        fields
+            .get(EDGES)
+            .ok_or_else(|| err(DOCUMENT, "missing field `edges`"))?,
+    )?;
     cross_check(&nodes, &edges)?;
-    Ok(GraphDefinition { name, nodes, edges })
+    Ok(GraphDefinition {
+        schema_version,
+        name,
+        nodes,
+        edges,
+    })
 }
 
-fn check_schema_version(value: &Value) -> Result<(), LoadError> {
+fn check_schema_version(value: &Value) -> Result<u64, LoadError> {
     let version = value.as_u64().ok_or_else(|| {
         let not = match value {
-            Value::Number(_) => String::new(),
+            Value::Number(number) => format!(", not {number}"),
             other => format!(", not {}", kind(other)),
         };
         err(
@@ -276,7 +296,7 @@ fn check_schema_version(value: &Value) -> Result<(), LoadError> {
             format!("unsupported schema version {version}; this reader understands version {SCHEMA_VERSION}"),
         ));
     }
-    Ok(())
+    Ok(version)
 }
 
 fn load_nodes(value: &Value) -> Result<Vec<NodeInstance>, LoadError> {
@@ -290,43 +310,29 @@ fn load_nodes(value: &Value) -> Result<Vec<NodeInstance>, LoadError> {
 
 fn load_node(node: &Value, index: usize) -> Result<NodeInstance, LoadError> {
     let path = format!("{NODES}[{index}]");
-    let fields = as_mapping(node, &path)?;
-    let mut uuid = None;
-    let mut type_ref = None;
-    let mut label = None;
-    let mut parameters = None;
-    let mut metadata = None;
-    for (key, value) in fields {
-        match key.as_str() {
-            Some("uuid") => uuid = Some(value),
-            Some("type_ref") => type_ref = Some(value),
-            Some("label") => label = Some(value),
-            Some("parameters") => parameters = Some(value),
-            Some("metadata") => metadata = Some(value),
-            _ => {
-                let text = key_text(key);
-                return Err(unknown_field(&format!("{path}.{text}"), &text, NODE_FIELDS));
-            }
-        }
-    }
+    let fields = fields(node, &path, NODE_FIELDS)?;
     let uuid = load_uuid(
-        uuid.ok_or_else(|| err(&path, "missing field `uuid`"))?,
+        fields
+            .get("uuid")
+            .ok_or_else(|| err(&path, "missing field `uuid`"))?,
         &format!("{path}.uuid"),
     )?;
     let type_ref = as_str(
-        type_ref.ok_or_else(|| err(&path, "missing field `type_ref`"))?,
+        fields
+            .get("type_ref")
+            .ok_or_else(|| err(&path, "missing field `type_ref`"))?,
         &format!("{path}.type_ref"),
     )?
     .to_owned();
-    let label = match label {
+    let label = match fields.get("label") {
         Some(value) => Some(as_str(value, &format!("{path}.label"))?.to_owned()),
         None => None,
     };
-    let parameters = match parameters {
+    let parameters = match fields.get("parameters") {
         Some(value) => load_parameters(value, &format!("{path}.parameters"))?,
         None => BTreeMap::new(),
     };
-    let metadata = match metadata {
+    let metadata = match fields.get("metadata") {
         Some(value) => as_mapping(value, &format!("{path}.metadata"))?.clone(),
         None => Mapping::new(),
     };
@@ -371,7 +377,7 @@ fn load_parameter(value: &Value, path: &str) -> Result<ParameterValue, LoadError
             } else {
                 Err(err(
                     path,
-                    format!("a parameter value must be a plain scalar — boolean, integer, float, or string; {number} does not fit a signed integer"),
+                    format!("the integer {number} does not fit a signed 64-bit integer"),
                 ))
             }
         }
@@ -394,36 +400,31 @@ fn load_edges(value: &Value) -> Result<Vec<Edge>, LoadError> {
 
 fn load_edge(edge: &Value, index: usize) -> Result<Edge, LoadError> {
     let path = format!("{EDGES}[{index}]");
-    let fields = as_mapping(edge, &path)?;
-    let (mut from, mut from_port, mut to, mut to_port) = (None, None, None, None);
-    for (key, value) in fields {
-        match key.as_str() {
-            Some("from") => from = Some(value),
-            Some("from_port") => from_port = Some(value),
-            Some("to") => to = Some(value),
-            Some("to_port") => to_port = Some(value),
-            _ => {
-                let text = key_text(key);
-                return Err(unknown_field(&format!("{path}.{text}"), &text, EDGE_FIELDS));
-            }
-        }
-    }
+    let fields = fields(edge, &path, EDGE_FIELDS)?;
     Ok(Edge {
         from: load_uuid(
-            from.ok_or_else(|| err(&path, "missing field `from`"))?,
+            fields
+                .get("from")
+                .ok_or_else(|| err(&path, "missing field `from`"))?,
             &format!("{path}.from"),
         )?,
         from_port: as_str(
-            from_port.ok_or_else(|| err(&path, "missing field `from_port`"))?,
+            fields
+                .get("from_port")
+                .ok_or_else(|| err(&path, "missing field `from_port`"))?,
             &format!("{path}.from_port"),
         )?
         .to_owned(),
         to: load_uuid(
-            to.ok_or_else(|| err(&path, "missing field `to`"))?,
+            fields
+                .get("to")
+                .ok_or_else(|| err(&path, "missing field `to`"))?,
             &format!("{path}.to"),
         )?,
         to_port: as_str(
-            to_port.ok_or_else(|| err(&path, "missing field `to_port`"))?,
+            fields
+                .get("to_port")
+                .ok_or_else(|| err(&path, "missing field `to_port`"))?,
             &format!("{path}.to_port"),
         )?
         .to_owned(),
