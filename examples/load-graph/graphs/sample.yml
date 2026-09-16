@@ -1,0 +1,28 @@
+schema_version: 1
+name: circle to uppercase
+nodes:
+  - uuid: b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33
+    type_ref: shapes/circle
+    label: The circle
+    parameters:
+      enabled: true
+      radius: 2.5
+    metadata:
+      color: "#4a90d9"
+      position: { x: 80, y: 120 }
+  - uuid: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+    type_ref: text/split
+    parameters:
+      separator: ","
+      text: "a,b,c"
+    metadata:
+      position: { x: 300, y: 120 }
+  - uuid: 3f2b8a1c-6d54-4e8a-9b7e-1c2d3e4f5a6b
+    type_ref: text/uppercase
+    metadata:
+      position: { x: 520, y: 120 }
+edges:
+  - from: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+    from_port: parts
+    to: 3f2b8a1c-6d54-4e8a-9b7e-1c2d3e4f5a6b
+    to_port: text

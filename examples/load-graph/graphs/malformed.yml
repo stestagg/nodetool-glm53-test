@@ -1,0 +1,10 @@
+schema_version: 1
+name: a typo
+nodes:
+  - uuid: b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33
+    type_ref: shapes/circle
+    parameters:
+      radius: 2.5
+    metadat:
+      position: { x: 80, y: 120 }
+edges: []
