@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nodetool",
+    "crates/nodetool/tests/plugins/alpha",
+    "crates/nodetool/tests/plugins/beta",
+    "examples/plugins/shapes",
+    "examples/plugins/text",
+    "examples/list-nodes",
+    "examples/list-nodes-empty",
+]

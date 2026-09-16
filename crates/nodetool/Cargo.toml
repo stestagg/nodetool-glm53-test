@@ -1,0 +1,11 @@
+[package]
+name = "nodetool"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+inventory = "0.3"
+
+[dev-dependencies]
+test-plugin-alpha = { path = "tests/plugins/alpha" }
+test-plugin-beta = { path = "tests/plugins/beta" }

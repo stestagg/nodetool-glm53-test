@@ -1,0 +1,106 @@
+//! Registry behaviour over the two test plugins.
+
+use nodetool::registry::{node_type, node_types};
+use test_plugin_alpha as _;
+use test_plugin_beta as _;
+
+fn type_refs() -> Vec<&'static str> {
+    node_types().map(|node_type| node_type.type_ref).collect()
+}
+
+#[test]
+fn aggregates_node_types_across_plugins() {
+    let refs = type_refs();
+    assert_eq!(refs.len(), 4);
+    for expected in ["alpha/add", "alpha/concat", "beta/identity", "beta/tick"] {
+        assert!(refs.contains(&expected), "missing {expected} in {refs:?}");
+    }
+}
+
+#[test]
+fn separates_plugins() {
+    let mut alpha: Vec<&str> = node_types()
+        .filter(|node_type| node_type.plugin == "alpha")
+        .map(|node_type| node_type.type_ref)
+        .collect();
+    alpha.sort_unstable();
+    assert_eq!(alpha, ["alpha/add", "alpha/concat"]);
+
+    let mut beta: Vec<&str> = node_types()
+        .filter(|node_type| node_type.plugin == "beta")
+        .map(|node_type| node_type.type_ref)
+        .collect();
+    beta.sort_unstable();
+    assert_eq!(beta, ["beta/identity", "beta/tick"]);
+}
+
+#[test]
+fn separates_sub_groups_within_a_plugin() {
+    let math: Vec<&str> = node_types()
+        .filter(|node_type| node_type.plugin == "alpha" && node_type.sub_group == Some("math"))
+        .map(|node_type| node_type.type_ref)
+        .collect();
+    assert_eq!(math, ["alpha/add"]);
+
+    let text: Vec<&str> = node_types()
+        .filter(|node_type| node_type.plugin == "alpha" && node_type.sub_group == Some("text"))
+        .map(|node_type| node_type.type_ref)
+        .collect();
+    assert_eq!(text, ["alpha/concat"]);
+
+    let ungrouped: Vec<&str> = node_types()
+        .filter(|node_type| node_type.sub_group.is_none())
+        .map(|node_type| node_type.type_ref)
+        .collect();
+    assert_eq!(ungrouped.len(), 2);
+    assert!(ungrouped.contains(&"beta/identity"));
+    assert!(ungrouped.contains(&"beta/tick"));
+}
+
+#[test]
+fn returns_descriptors_exactly_as_declared() {
+    let add = node_type("alpha/add").expect("alpha/add is declared by test plugin alpha");
+    assert_eq!(add.label, "Add");
+    assert_eq!(add.icon, "<svg/>");
+    assert_eq!(add.plugin, "alpha");
+    assert_eq!(add.sub_group, Some("math"));
+    assert_eq!(
+        add.inputs,
+        [
+            nodetool::Port {
+                name: "a",
+                type_refs: &["i32"]
+            },
+            nodetool::Port {
+                name: "b",
+                type_refs: &["i32"]
+            },
+        ]
+        .as_slice()
+    );
+    assert_eq!(
+        add.outputs,
+        [nodetool::Port {
+            name: "sum",
+            type_refs: &["i32"]
+        }]
+        .as_slice()
+    );
+}
+
+#[test]
+fn ports_carry_one_or_more_type_references() {
+    let identity = node_type("beta/identity").expect("declared by test plugin beta");
+    assert_eq!(identity.inputs[0].name, "value");
+    assert_eq!(identity.inputs[0].type_refs, ["i32", "f64"]);
+
+    let tick = node_type("beta/tick").expect("declared by test plugin beta");
+    assert!(tick.inputs.is_empty());
+    assert_eq!(tick.outputs[0].type_refs, ["bool"]);
+}
+
+#[test]
+fn looks_up_by_type_reference() {
+    assert!(node_type("beta/tick").is_some());
+    assert!(node_type("missing/node").is_none());
+}
