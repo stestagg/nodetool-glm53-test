@@ -1,0 +1,9 @@
+[package]
+name = "list-nodes"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nodetool = { path = "../../crates/nodetool" }
+plugin-shapes = { path = "../plugins/shapes" }
+plugin-text = { path = "../plugins/text" }
