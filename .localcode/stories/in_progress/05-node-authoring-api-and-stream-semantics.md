@@ -1,6 +1,7 @@
 ---
 title: Node authoring API and stream semantics
 date: 2026-09-16
+pr_id: 34
 ---
 
 ## Description
