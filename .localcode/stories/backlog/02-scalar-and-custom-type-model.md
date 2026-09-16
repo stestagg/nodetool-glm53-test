@@ -13,3 +13,7 @@ _Placeholder: written out in full during backlog population, against the project
 ## Definition of done
 
 _To be written when this story is populated._
+
+## Comments
+
+- 2026-09-16: Writing this story out got stuck: opencode run failed (1). It stays in the backlog to be tried again.
