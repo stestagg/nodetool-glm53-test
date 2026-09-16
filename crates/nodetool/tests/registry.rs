@@ -1,16 +1,20 @@
 //! Registry behaviour over the two test plugins.
 
 use nodetool::registry::{node_type, node_types};
+use nodetool::NodeType;
 use test_plugin_alpha as _;
 use test_plugin_beta as _;
 
-fn type_refs() -> Vec<&'static str> {
-    node_types().map(|node_type| node_type.type_ref).collect()
+fn refs_of(filter: impl Fn(&NodeType) -> bool) -> Vec<&'static str> {
+    node_types()
+        .filter(|node_type| filter(node_type))
+        .map(|node_type| node_type.type_ref)
+        .collect()
 }
 
 #[test]
 fn aggregates_node_types_across_plugins() {
-    let refs = type_refs();
+    let refs = refs_of(|_| true);
     assert_eq!(refs.len(), 4);
     for expected in ["alpha/add", "alpha/concat", "beta/identity", "beta/tick"] {
         assert!(refs.contains(&expected), "missing {expected} in {refs:?}");
@@ -19,39 +23,26 @@ fn aggregates_node_types_across_plugins() {
 
 #[test]
 fn separates_plugins() {
-    let mut alpha: Vec<&str> = node_types()
-        .filter(|node_type| node_type.plugin == "alpha")
-        .map(|node_type| node_type.type_ref)
-        .collect();
+    let mut alpha = refs_of(|node_type| node_type.plugin == "alpha");
     alpha.sort_unstable();
     assert_eq!(alpha, ["alpha/add", "alpha/concat"]);
 
-    let mut beta: Vec<&str> = node_types()
-        .filter(|node_type| node_type.plugin == "beta")
-        .map(|node_type| node_type.type_ref)
-        .collect();
+    let mut beta = refs_of(|node_type| node_type.plugin == "beta");
     beta.sort_unstable();
     assert_eq!(beta, ["beta/identity", "beta/tick"]);
 }
 
 #[test]
 fn separates_sub_groups_within_a_plugin() {
-    let math: Vec<&str> = node_types()
-        .filter(|node_type| node_type.plugin == "alpha" && node_type.sub_group == Some("math"))
-        .map(|node_type| node_type.type_ref)
-        .collect();
+    let math =
+        refs_of(|node_type| node_type.plugin == "alpha" && node_type.sub_group == Some("math"));
     assert_eq!(math, ["alpha/add"]);
 
-    let text: Vec<&str> = node_types()
-        .filter(|node_type| node_type.plugin == "alpha" && node_type.sub_group == Some("text"))
-        .map(|node_type| node_type.type_ref)
-        .collect();
+    let text =
+        refs_of(|node_type| node_type.plugin == "alpha" && node_type.sub_group == Some("text"));
     assert_eq!(text, ["alpha/concat"]);
 
-    let ungrouped: Vec<&str> = node_types()
-        .filter(|node_type| node_type.sub_group.is_none())
-        .map(|node_type| node_type.type_ref)
-        .collect();
+    let ungrouped = refs_of(|node_type| node_type.sub_group.is_none());
     assert_eq!(ungrouped.len(), 2);
     assert!(ungrouped.contains(&"beta/identity"));
     assert!(ungrouped.contains(&"beta/tick"));

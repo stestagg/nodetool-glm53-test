@@ -15,10 +15,24 @@ nodetool::node_type! {
 
 #[test]
 fn duplicate_type_reference_names_reference_and_both_plugins() {
-    let payload = std::panic::catch_unwind(|| {
+    assert_duplicate_panic(|| {
         nodetool::registry::node_types().for_each(drop);
-    })
-    .unwrap_err();
+    });
+}
+
+#[test]
+fn lookup_reports_a_taken_reference_too() {
+    assert_duplicate_panic(|| {
+        let _ = nodetool::registry::node_type("alpha/add");
+    });
+}
+
+fn assert_duplicate_panic(panic_on: impl FnOnce() + std::panic::UnwindSafe) {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let payload = std::panic::catch_unwind(panic_on).unwrap_err();
+    std::panic::set_hook(default_hook);
+
     let message = panic_message(&*payload);
     assert!(
         message.contains("`alpha/add`"),

@@ -9,7 +9,7 @@
 //! static-initialisation time, and [`registry`] serves them aggregated across
 //! plugins.
 //!
-//! One honest wrinkle in "linking is everything": the linker discards an rlib
+//! One wrinkle in "linking is everything": the linker discards an rlib
 //! that nothing references, and its declarations go with it. A binary or test
 //! that never otherwise names a plugin crate keeps it linked with one anchor
 //! line per plugin crate:

@@ -56,9 +56,11 @@ impl fmt::Display for NodeType {
 
 /// Declare a node type. This is the whole registration step: expanding it in
 /// any crate that depends on `nodetool` contributes the node type to the
-/// registry of every binary the crate is linked into.
+/// registry of every binary the crate is linked into. One caveat: the linker
+/// discards a crate nothing references; keep such a plugin linked with `use
+/// the_plugin as _;` (see the crate docs).
 ///
-/// ```text
+/// ```rust
 /// nodetool::node_type! {
 ///     type_ref: "shapes/circle",
 ///     label: "Circle",
@@ -113,6 +115,6 @@ macro_rules! node_type {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __port_type_refs {
-    ([$($type_ref:literal),* $(,)?]) => { &[$($type_ref),*] };
+    ([$($type_ref:literal),+ $(,)?]) => { &[$($type_ref),*] };
     ($type_ref:literal) => { &[$type_ref] };
 }
