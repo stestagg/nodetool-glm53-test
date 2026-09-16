@@ -1,6 +1,7 @@
 ---
 title: Compiler to executable graph
 date: 2026-09-16
+pr_id: 28
 ---
 
 ## Description
