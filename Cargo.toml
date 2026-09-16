@@ -8,4 +8,5 @@ members = [
     "examples/plugins/text",
     "examples/list-nodes",
     "examples/list-nodes-empty",
+    "examples/load-graph",
 ]
