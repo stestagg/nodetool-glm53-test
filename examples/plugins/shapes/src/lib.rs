@@ -1,6 +1,32 @@
-//! Example nodetool plugin: shape nodes, sub-grouped by dimension.
+//! Example nodetool plugin: shape nodes, sub-grouped by dimension, and the
+//! custom data type their outputs carry.
 
-use nodetool::node_type;
+use std::any::Any;
+
+use nodetool::scalars;
+use nodetool::{data_type, node_type, uuid, MetaValue};
+
+data_type! {
+    id: uuid!("3eb7d9c2-8f14-4a06-9b5d-2c6e1f8a4b70"),
+    name: "shapes/shape",
+    conversions: [ scalars::F64 => shape_area ],
+    meta: [
+        "color" => MetaValue::Str("#4a90d9"),
+        "summary" => MetaValue::Str("2D and 3D shapes"),
+    ],
+}
+
+/// The value carried on the shape outputs. Opaque to core: only this plugin
+/// knows what a shape value looks like.
+pub struct Shape {
+    pub area: f64,
+}
+
+fn shape_area(value: &dyn Any) -> Option<Box<dyn Any>> {
+    value
+        .downcast_ref::<Shape>()
+        .map(|shape| Box::new(shape.area) as Box<dyn Any>)
+}
 
 node_type! {
     type_ref: "shapes/circle",
