@@ -53,27 +53,3 @@ impl fmt::Debug for Value {
             .finish()
     }
 }
-
-impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The base scalars are core's own types; their payloads present
-        // themselves. Anything else is opaque here, as everywhere in core.
-        if let Some(value) = self.get::<String>() {
-            return write!(f, "{value:?}");
-        }
-        if let Some(&value) = self.get::<bool>() {
-            return write!(f, "{value}");
-        }
-        macro_rules! scalar {
-            ($($kind:ty),*) => {
-                $(
-                    if let Some(&value) = self.get::<$kind>() {
-                        return write!(f, "{value}");
-                    }
-                )*
-            };
-        }
-        scalar!(i8, i16, i32, i64, u8, u16, u32, u64, f32, f64);
-        write!(f, "<{}>", self.type_id)
-    }
-}

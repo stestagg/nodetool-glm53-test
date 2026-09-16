@@ -2,7 +2,7 @@
 //! is declared through the authoring API — descriptor and behaviour
 //! together.
 
-use async_trait::async_trait;
+use nodetool::async_trait;
 
 use nodetool::behaviour::{Behaviour, Error, Flow, Io, Trigger};
 use nodetool::scalars;
@@ -18,13 +18,17 @@ impl Behaviour for Split {
         let text = io
             .input("text")
             .current()
-            .and_then(|value| value.get::<String>().cloned())
-            .expect("the input is declared String and the run is gated on it");
+            .expect("the run is gated on `text`'s first value")
+            .get::<String>()
+            .cloned()
+            .expect("`text` holds its declared String");
         let separator = io
             .input("separator")
             .current()
-            .and_then(|value| value.get::<String>().cloned())
-            .expect("the input is declared String and the run is gated on it");
+            .expect("the run is gated on `separator`'s first value")
+            .get::<String>()
+            .cloned()
+            .expect("`separator` holds its declared String");
         for part in text.split(separator.as_str()) {
             io.output("parts")
                 .emit(Value::new(scalars::STRING, part.to_owned()))

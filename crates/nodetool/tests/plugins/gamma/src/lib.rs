@@ -5,7 +5,7 @@
 //! reachable from a small graph. The doubler is declared through the
 //! authoring API, so the registry-to-driver path has a fixture too.
 
-use async_trait::async_trait;
+use nodetool::async_trait;
 
 use nodetool::behaviour::{Behaviour, Error, Flow, Io, Trigger};
 use nodetool::node_type;

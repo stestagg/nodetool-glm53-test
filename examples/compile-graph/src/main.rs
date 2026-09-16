@@ -8,7 +8,7 @@
 use plugin_shapes as _;
 use plugin_text as _;
 
-use nodetool::compile::{self, CompiledGraph};
+use nodetool::compile::{self, CompiledGraph, CompiledParameter};
 use nodetool::graph;
 use nodetool::registry::Registry;
 
@@ -43,6 +43,31 @@ fn main() {
     }
 }
 
+/// Present a compiled parameter: the demo knows the base scalars it links,
+/// so it reads each value as the concrete type its resolved name declares —
+/// presentation lives here, with the listing, not in core, where the
+/// payload is erased. Anything else stays opaque, as it does everywhere
+/// outside the declaring plugin.
+fn present(parameter: &CompiledParameter) -> String {
+    let value = &parameter.value;
+    let shown = match parameter.resolved_type.name {
+        "String" => value.get::<String>().map(|v| format!("{v:?}")),
+        "bool" => value.get::<bool>().map(|&v| v.to_string()),
+        "i8" => value.get::<i8>().map(|&v| v.to_string()),
+        "i16" => value.get::<i16>().map(|&v| v.to_string()),
+        "i32" => value.get::<i32>().map(|&v| v.to_string()),
+        "i64" => value.get::<i64>().map(|&v| v.to_string()),
+        "u8" => value.get::<u8>().map(|&v| v.to_string()),
+        "u16" => value.get::<u16>().map(|&v| v.to_string()),
+        "u32" => value.get::<u32>().map(|&v| v.to_string()),
+        "u64" => value.get::<u64>().map(|&v| v.to_string()),
+        "f32" => value.get::<f32>().map(|&v| v.to_string()),
+        "f64" => value.get::<f64>().map(|&v| v.to_string()),
+        _ => None,
+    };
+    shown.unwrap_or_else(|| format!("<{}>", parameter.resolved_type.name))
+}
+
 fn print_compiled(compiled: &CompiledGraph) {
     if let Some(name) = &compiled.name {
         println!("  name: {name}");
@@ -52,7 +77,8 @@ fn print_compiled(compiled: &CompiledGraph) {
         for (port, parameter) in &node.parameters {
             println!(
                 "    {port} = {} [{}]",
-                parameter.value, parameter.resolved_type.name
+                present(parameter),
+                parameter.resolved_type.name
             );
         }
     }

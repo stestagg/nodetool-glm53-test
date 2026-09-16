@@ -87,7 +87,7 @@ impl fmt::Display for NodeType {
 /// literal or a bracketed list. The optional `behaviour` arm names a
 /// `fn() -> Box<dyn nodetool::behaviour::Behaviour>` that builds the behaviour
 /// each instance runs — the stream semantics it programs against live in
-/// [`nodetool::behaviour`].
+/// [`nodetool::behaviour`](crate::behaviour).
 #[macro_export]
 macro_rules! node_type {
     (

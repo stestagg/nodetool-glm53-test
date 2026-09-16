@@ -25,6 +25,7 @@
 //! use my_plugin as _;
 //! ```
 
+pub use async_trait::async_trait;
 pub use inventory;
 pub use uuid::{uuid, Uuid};
 

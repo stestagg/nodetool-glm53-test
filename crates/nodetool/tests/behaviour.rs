@@ -5,11 +5,11 @@
 //! error propagation, and the one value representation carrying a
 //! union-declared port's types.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use async_trait::async_trait;
+use nodetool::async_trait;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
@@ -90,22 +90,31 @@ impl Behaviour for Pairer {
     }
 }
 
-/// One integer input; optionally blocks its first run on a signal, then
-/// records every run's own value.
+/// Two integer inputs; the first run blocks on a signal — reading its
+/// pairing when it starts, recording it once released — and later runs
+/// record as they go.
 struct Blocking {
     log: Log,
+    started: Option<oneshot::Sender<()>>,
     release: Option<oneshot::Receiver<()>>,
 }
 
 #[async_trait]
 impl Behaviour for Blocking {
     async fn process(&mut self, trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        let pairing = format!(
+            "{} a={} b={}",
+            trigger_name(&trigger),
+            current_i32(io, "a"),
+            current_i32(io, "b")
+        );
+        if let Some(started) = self.started.take() {
+            started.send(()).expect("the test waits for the first run");
+        }
         if let Some(release) = self.release.take() {
             release.await.expect("the test releases the first run");
         }
-        let value = current_i32(io, "a");
-        self.log
-            .record(format!("{} a={value}", trigger_name(&trigger)));
+        self.log.record(pairing);
         Ok(Flow::Continue)
     }
 }
@@ -256,29 +265,47 @@ async fn an_arrival_pairs_against_the_held_value_of_every_other_input() {
 #[tokio::test]
 async fn arrivals_landing_during_a_run_fire_serially_in_arrival_order() {
     let log = Log::default();
+    let (started_tx, started_rx) = oneshot::channel();
     let (release_tx, release_rx) = oneshot::channel();
-    let (tx, a) = fed("a");
+    let (a_tx, a) = fed("a");
+    let (b_tx, b) = fed("b");
     let mut behaviour = Blocking {
         log: log.clone(),
+        started: Some(started_tx),
         release: Some(release_rx),
     };
     let run = tokio::spawn(async move {
-        let mut inputs = [a];
+        let mut inputs = [a, b];
         let mut outputs = [];
         drive(&mut behaviour, &mut inputs, &mut outputs).await
     });
 
-    tx.send(int(1)).await.expect("the hand-off takes it");
-    tx.send(int(2)).await.expect("the hand-off takes it");
-    tx.send(int(3)).await.expect("the hand-off takes it");
-    drop(tx);
+    a_tx.send(int(1)).await.expect("the hand-off takes it");
+    b_tx.send(int(10)).await.expect("the hand-off takes it");
+    started_rx.await.expect("the first run started");
+
+    // Values landing while the first run is still in flight: two further
+    // arrivals on `a`, one on `b`. None of them may touch the held slots
+    // until the in-flight run is done — each run pairs the held values as
+    // of its own start.
+    a_tx.send(int(2)).await.expect("the hand-off takes it");
+    a_tx.send(int(3)).await.expect("the hand-off takes it");
+    b_tx.send(int(20)).await.expect("the hand-off takes it");
+    drop(a_tx);
+    drop(b_tx);
     release_tx.send(()).expect("the test releases the run");
 
     run.await.expect("the node task ran").expect("it completes");
     assert_eq!(
         log.runs(),
-        ["a a=1", "a a=2", "a a=3"],
-        "each queued arrival fired its own run, in order, seeing its own value"
+        [
+            "a a=1 b=10", // the in-flight run: `b` still holds 10, 20 undelivered
+            "b a=1 b=10", // the gate-opening arrival's own run
+            "a a=2 b=10", // queued runs pair the held values of their own start
+            "a a=3 b=10",
+            "b a=3 b=20", // only a run firing after 20's delivery pairs it
+        ],
+        "arrivals landing during a run wait in the hand-off, then fire serially in arrival order, each pairing the held values as of its own start"
     );
 }
 
@@ -417,15 +444,19 @@ async fn a_source_drives_itself_and_completes_when_exhausted() {
 
 #[tokio::test]
 async fn a_node_whose_inputs_are_all_degenerate_never_fires_and_completes() {
-    let mut behaviour = Pairer {
-        log: Log::default(),
-    };
+    let log = Log::default();
+    let mut behaviour = Pairer { log: log.clone() };
     let mut inputs = [Input::unconnected("a"), Input::unconnected("b")];
     let mut outputs = [];
 
     drive(&mut behaviour, &mut inputs, &mut outputs)
         .await
         .expect("nothing can ever arrive: the node completes at once");
+
+    assert!(
+        log.runs().is_empty(),
+        "the degenerate inputs never fired a run"
+    );
 }
 
 #[tokio::test]
@@ -587,10 +618,57 @@ async fn a_node_holding_a_degenerate_input_never_fires_nor_completes() {
         drive(&mut behaviour, &mut inputs, &mut outputs).await
     })
     .await;
+    let Err(_elapsed) = &outcome else {
+        panic!("the node completed or its behaviour failed; the run did not hang: {outcome:?}")
+    };
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_never_delivering_input_stalls_its_upstream_instead_of_buffering_its_stream() {
+    let (tx, a) = fed("a");
+    let b = Input::unconnected("b");
+    let log = Log::default();
+    let mut behaviour = Pairer { log: log.clone() };
+    let mut inputs = [a, b];
+    let mut outputs = [];
+    let run = tokio::spawn(async move { drive(&mut behaviour, &mut inputs, &mut outputs).await });
+
+    // Far more than the hand-offs can hold: per the settlement, the feeder
+    // stalls once `a`'s hand-off fills — the driver holds one hand-off's
+    // worth unprocessed, never the whole stream.
+    let taken = Arc::new(AtomicUsize::new(0));
+    let feeder = {
+        let taken = taken.clone();
+        tokio::spawn(async move {
+            for value in 0..10_000 {
+                if tx.send(int(value)).await.is_err() {
+                    break;
+                }
+                taken.fetch_add(1, Ordering::SeqCst);
+            }
+        })
+    };
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let taken = taken.load(Ordering::SeqCst);
     assert!(
-        outcome.is_err(),
-        "the gate can never open: the node neither fires nor completes, and the run hangs"
+        taken <= 2 * HANDOFF_CAPACITY,
+        "the driver holds a bounded backlog, not the stream: {taken} values taken"
     );
+    assert!(
+        taken < 10_000,
+        "the feeder stalled on its full hand-off: {taken} values taken"
+    );
+    assert!(
+        log.runs().is_empty(),
+        "the gate never opened, so no run ever fired"
+    );
+
+    let outcome = tokio::time::timeout(Duration::from_millis(50), run).await;
+    let Err(_elapsed) = &outcome else {
+        panic!("the node completed or its behaviour failed; the run did not hang: {outcome:?}")
+    };
+    feeder.abort();
 }
 
 #[tokio::test]

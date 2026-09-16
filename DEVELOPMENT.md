@@ -43,8 +43,8 @@ scalar data types.
 - `examples/run-node` — demo binary linked against both example plugins;
   runs one node of the text plugin — its behaviour declared through the
   authoring API — with two scripted input streams, one of them a single
-  value that completes, and prints each emitted value as it arrives, then
-  the node's completion.
+  value that completes, printing the arrival that fired each run, each
+  emitted value as it arrives, and the node's completion.
 
 ## Build and check
 
@@ -72,10 +72,9 @@ node types with `nodetool::node_type!` and linking the plugin into a binary is
 the whole registration step. The macro's rustdoc is the guide — `cargo doc -p
 nodetool --open` — to the declaration form and its linker caveat. A node type
 declared with the optional `behaviour` arm runs: the named function builds a
-fresh behaviour per instance, implementing `nodetool::behaviour::Behaviour` —
-one `process` per arrival, programming against the input and output faces
-whose stream semantics that module's rustdoc settles. A type declared without
-`behaviour` is a descriptor alone.
+fresh behaviour per instance, implementing `nodetool::behaviour::Behaviour`
+against the input and output faces whose stream semantics that module's
+rustdoc settles. A type declared without `behaviour` is a descriptor alone.
 
 Data types are the vocabulary ports refer to. Core ships the base scalars and
 declares their trivial conversions through the same mechanism a plugin uses;

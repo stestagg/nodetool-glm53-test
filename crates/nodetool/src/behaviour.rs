@@ -2,7 +2,7 @@
 //! programs against.
 //!
 //! A node type's whole being is declared through the one registration path:
-//! its descriptor ([`node_type!`]) names the ports, and the descriptor's
+//! its descriptor ([`crate::node_type!`]) names the ports, and the descriptor's
 //! [`BehaviourFn`] builds the behaviour each instance runs. There is no
 //! second behaviour mechanism, and the driver treats every node identically:
 //! it branches on nothing but the shape of the streams themselves.
@@ -25,7 +25,9 @@
 //!   behaviour is never re-entered against itself, so it writes its own
 //!   state without synchronisation. A behaviour needing different arrival
 //!   semantics consumes arrivals directly — [`Input::next`] works from
-//!   inside a run — through the same faces, never a parallel path.
+//!   inside a run — through the same faces, never a parallel path; an
+//!   arrival a behaviour consumes directly never reaches the driver, so it
+//!   fires no run.
 //! * **Sources.** A node with no inputs has no arrivals to wait on: it
 //!   drives itself, fired once ([`Trigger::Start`]) when the node begins,
 //!   and completes when that run returns. A constant is nothing more than
@@ -38,8 +40,8 @@
 //!   or, later, fixed by a parameter — completes at once and never delivers
 //!   a value, so a node holding one never fires; if its inputs are all like
 //!   that it completes immediately, and if any other input is connected the
-//!   node neither fires nor completes: the run hangs, the upstream stalled
-//!   by the bounded hand-offs.
+//!   node neither fires nor completes: the run hangs, the fed input's
+//!   hand-off filling until its upstream stalls.
 //! * **Backpressure.** A value crosses from an emitting node to each
 //!   connected downstream input through a bounded hand-off
 //!   ([`HANDOFF_CAPACITY`], one fixed policy, no author-facing knobs):
@@ -144,13 +146,16 @@ impl Input {
         Input::new(name, receiver)
     }
 
-    pub fn name(&self) -> &'static str {
-        self.name
-    }
-
     /// Await the next arrival: each new value exactly once, in order, then
     /// the stream's end. Each arrival becomes the input's current value as
     /// it is delivered.
+    ///
+    /// The driver draws from this same stream: it takes each input's first
+    /// arrival to open the gate, firing it as a run like any other — so
+    /// direct consumption starts at that input's second value. And a run
+    /// queued on an older arrival resets the current value to that arrival
+    /// as it fires, so between direct reads the current value can move
+    /// backwards. A behaviour mixing the two faces owns both effects.
     pub async fn next(&mut self) -> Option<Value> {
         let value = self.receiver.recv().await?;
         self.current = Some(value.clone());
@@ -184,10 +189,6 @@ impl Output {
             name,
             senders: Vec::new(),
         }
-    }
-
-    pub fn name(&self) -> &'static str {
-        self.name
     }
 
     /// Wire one downstream input to this output: from here on, every
@@ -249,8 +250,9 @@ pub type BehaviourFn = fn() -> Box<dyn Behaviour>;
 /// The engine instantiates one behaviour per node instance and awaits this
 /// once per instance: `Ok(())` is the node completed — its outputs end here,
 /// so its downstream streams end — and `Err` is a behaviour error, raised,
-/// never swallowed. On an error the outputs are left as they are: a failed
-/// node's downstream never sees a clean end.
+/// never swallowed. On an error the outputs are left as they are; what a
+/// failed node's downstream then sees is the engine's to decide, not this
+/// function's.
 pub async fn drive(
     behaviour: &mut dyn Behaviour,
     inputs: &mut [Input],
@@ -269,9 +271,15 @@ pub async fn drive(
     // values that may not exist yet.
     let mut queued: VecDeque<(usize, Value)> = VecDeque::new();
     let mut delivered = vec![false; inputs.len()];
+    // Each input's arrivals queued here, unprocessed. Once one reaches the
+    // hand-off's capacity the driver stops polling that input, so its
+    // bounded hand-off fills and the upstream stalls there — the driver
+    // never pools a whole stream in its own memory.
+    let mut backlog = vec![0usize; inputs.len()];
     loop {
         if delivered.iter().all(|&d| d) {
             if let Some((index, value)) = queued.pop_front() {
+                backlog[index] -= 1;
                 let name = inputs[index].name;
                 inputs[index].arrive(value);
                 let mut io = Io { inputs, outputs };
@@ -282,7 +290,7 @@ pub async fn drive(
                 continue;
             }
         }
-        match next_arrival(inputs).await {
+        match next_arrival(inputs, &backlog).await {
             Some((index, value)) => {
                 // The delivery makes it the input's current value: held from
                 // here on, so any earlier-queued run already pairs against
@@ -290,6 +298,7 @@ pub async fn drive(
                 inputs[index].arrive(value.clone());
                 queued.push_back((index, value));
                 delivered[index] = true;
+                backlog[index] += 1;
             }
             None => {
                 // Every input's stream has ended and drained. With the gate
@@ -299,9 +308,10 @@ pub async fn drive(
                 if delivered.iter().all(|&d| d) || !delivered.iter().any(|&d| d) {
                     return complete(outputs);
                 }
-                // The gate can never open, yet values have arrived: the node
-                // never fires and never completes — the run hangs here, the
-                // upstream stalled by the bounded hand-offs.
+                // The gate can never open: some input delivered, some never
+                // will, and every stream has ended. The node never fires and
+                // never completes — the run hangs here, arrived values
+                // queued, outputs open.
                 return pending().await;
             }
         }
@@ -317,12 +327,22 @@ fn complete(outputs: &mut [Output]) -> Result<(), Error> {
 }
 
 /// The next arrival across every input, in the order the inputs deliver
-/// them — each input's own order preserved. `None` once every stream has
+/// them — each input's own order preserved. An input whose unprocessed
+/// backlog has reached the hand-off's capacity is left alone — polling it
+/// would drain the hand-off its upstream needs to stall against — and
+/// counts as still waiting, never as ended. `None` once every stream has
 /// ended and drained: nothing will ever arrive again.
-async fn next_arrival(inputs: &mut [Input]) -> Option<(usize, Value)> {
+async fn next_arrival(inputs: &mut [Input], backlog: &[usize]) -> Option<(usize, Value)> {
     poll_fn(|cx| {
         let mut waiting = false;
         for (index, input) in inputs.iter_mut().enumerate() {
+            if backlog[index] >= HANDOFF_CAPACITY {
+                // Full: leave the value in the hand-off, the upstream
+                // stalled on it. Not an end — polling resumes once the
+                // backlog drains.
+                waiting = true;
+                continue;
+            }
             match input.receiver.poll_recv(cx) {
                 Poll::Ready(Some(value)) => return Poll::Ready(Some((index, value))),
                 // Ended: drained and closed. Nothing more from this stream.

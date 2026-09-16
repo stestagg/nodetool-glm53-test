@@ -170,7 +170,6 @@ dependencies = [
 name = "plugin-text"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "nodetool",
 ]
 
@@ -292,7 +291,6 @@ dependencies = [
 name = "test-plugin-gamma"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "nodetool",
 ]
 
