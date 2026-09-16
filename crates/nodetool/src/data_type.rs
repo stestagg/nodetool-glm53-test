@@ -21,8 +21,7 @@ use uuid::Uuid;
 pub struct DataType {
     /// Stable identity, unique across the registered types.
     pub id: Uuid,
-    /// Unique name; the reference ports carry (for scalars, the Rust
-    /// primitive's name).
+    /// Unique name; the reference ports carry (scalars use their Rust names).
     pub name: &'static str,
     /// Conversions declared to other types, each with the function that
     /// performs it.
@@ -43,6 +42,7 @@ pub struct Conversion {
 
 /// The signature of a [`Conversion`] function, written against erased values:
 /// the declarer owns the value shapes it maps between, core sees none of them.
+/// Provisional until the value representation settles.
 pub type ConvertFn = fn(&dyn Any) -> Option<Box<dyn Any>>;
 
 /// A plain metadata value: what a [`DataType`]'s metadata map carries.

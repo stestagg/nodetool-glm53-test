@@ -23,8 +23,8 @@ node_type! {
     icon: "<svg/>",
     plugin: "alpha",
     sub_group: "text",
-    inputs: [ parts: "string" ],
-    outputs: [ text: "string" ],
+    inputs: [ parts: "String" ],
+    outputs: [ text: "String" ],
 }
 
 data_type! {

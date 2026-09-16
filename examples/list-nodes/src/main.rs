@@ -6,6 +6,7 @@ use plugin_shapes as _;
 use plugin_text as _;
 
 fn main() {
+    println!("node types:");
     let mut node_types: Vec<_> = nodetool::registry::node_types().collect();
     node_types.sort_unstable_by_key(|node| (node.plugin, node.sub_group, node.label));
     if node_types.is_empty() {
@@ -19,7 +20,7 @@ fn main() {
     println!();
     println!("data types:");
     let mut data_types: Vec<_> = nodetool::registry::data_types().collect();
-    data_types.sort_unstable_by_key(|data_type| data_type.name);
+    data_types.sort_unstable_by_key(|data_type| data_type.name.to_lowercase());
     for data_type in data_types {
         println!("  {data_type}");
         for conversion in data_type.conversions {

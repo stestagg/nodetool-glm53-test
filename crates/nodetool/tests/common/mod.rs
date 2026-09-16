@@ -1,6 +1,6 @@
-//! Shared by the registry-error test binaries below: each carries one
-//! registration problem itself and asserts the registry reports it rather
-//! than silently accepting or dropping it.
+//! Shared by the registry-error test binaries: each carries one registration
+//! problem itself and asserts the registry reports it rather than silently
+//! accepting or dropping it.
 
 /// Runs `panic_on`, expects a panic, and asserts its message contains every
 /// fragment in `expected`.

@@ -38,19 +38,13 @@ crate::data_type! { id: BOOL, name: "bool" }
 crate::data_type! { id: STRING, name: "String" }
 
 fn i16_to_i32(value: &dyn Any) -> Option<Box<dyn Any>> {
-    value
-        .downcast_ref::<i16>()
-        .map(|&value| Box::new(value as i32) as Box<dyn Any>)
+    Some(Box::new(*value.downcast_ref::<i16>()? as i32))
 }
 
 fn f32_to_f64(value: &dyn Any) -> Option<Box<dyn Any>> {
-    value
-        .downcast_ref::<f32>()
-        .map(|&value| Box::new(value as f64) as Box<dyn Any>)
+    Some(Box::new(*value.downcast_ref::<f32>()? as f64))
 }
 
 fn i32_to_f64(value: &dyn Any) -> Option<Box<dyn Any>> {
-    value
-        .downcast_ref::<i32>()
-        .map(|&value| Box::new(value as f64) as Box<dyn Any>)
+    Some(Box::new(*value.downcast_ref::<i32>()? as f64))
 }

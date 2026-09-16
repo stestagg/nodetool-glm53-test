@@ -55,7 +55,9 @@ fn base_scalars_declare_the_trivial_conversions() {
 
 #[test]
 fn scalars_without_a_trivial_conversion_declare_none() {
-    for name in ["i8", "i64", "u8", "u64", "f64", "bool", "String"] {
+    for name in [
+        "i8", "i64", "u8", "u16", "u32", "u64", "f64", "bool", "String",
+    ] {
         let scalar = data_type(name).expect("base scalar");
         assert!(
             scalar.conversions.is_empty(),

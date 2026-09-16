@@ -22,3 +22,13 @@ fn duplicate_name_names_the_name_and_both_declarations() {
         ],
     );
 }
+
+#[test]
+fn lookup_reports_a_taken_name_too() {
+    common::assert_panic_message(
+        || {
+            let _ = nodetool::registry::data_type("i32");
+        },
+        &["duplicate data type name `i32`"],
+    );
+}

@@ -24,8 +24,9 @@ scalar data types.
 - `examples/list-nodes` — demo binary linked against both example plugins;
   prints the registry listing: node types, then data types with their
   metadata and declared conversions.
-- `examples/list-nodes-empty` — the same node listing with no plugin linked;
-  with core contributing no node types, it prints it empty.
+- `examples/list-nodes-empty` — the same listing with no plugin linked; core
+  ships no node types, so that section is empty, while the base scalars show
+  with nothing contributed.
 
 ## Build and check
 
@@ -40,7 +41,7 @@ cargo fmt --check
 
 ```sh
 cargo run -p list-nodes        # the listing across both example plugins
-cargo run -p list-nodes-empty  # the node listing, empty
+cargo run -p list-nodes-empty  # the same listing, no plugin linked
 ```
 
 ## Writing a plugin
@@ -50,16 +51,12 @@ node types with `nodetool::node_type!` and linking the plugin into a binary is
 the whole registration step. The macro's rustdoc is the guide — `cargo doc -p
 nodetool --open` — to the declaration form and its linker caveat.
 
-Data types are the vocabulary ports refer to. Core ships the base scalars —
-`i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64`, `bool`,
-`String` — and declares their trivial conversions (`i16`→`i32`, `f32`→`f64`,
-`i32`→`f64`) through the same mechanism a plugin uses; nothing converts to
-`String` automatically. A plugin declares custom types with
-`nodetool::data_type!`: a stable uuid, a unique name, optional conversions to
-other registered types (each pairing the target type's id with the function
-that performs it), and optional metadata as plain values. A conversion may be
-declared before its target type is registered — targets resolve once every
-linked crate has contributed.
+Data types are the vocabulary ports refer to. Core ships the base scalars and
+declares their trivial conversions through the same mechanism a plugin uses;
+nothing converts to `String` automatically. A plugin declares custom types
+with `nodetool::data_type!` — its rustdoc is the declaration guide, like
+`node_type!`'s above. A conversion may be declared before its target type is
+registered; targets resolve once every linked crate has contributed.
 
 Read the node registry with `nodetool::registry::node_types()`, or look one
 node type up by its type reference with `nodetool::registry::node_type(type_ref)`.
@@ -68,6 +65,6 @@ time the registry is read, naming the reference and both plugins.
 
 Read the data type vocabulary with `nodetool::registry::data_types()`, or look
 one type up by name with `nodetool::registry::data_type(name)` or by id with
-`nodetool::registry::data_type_by_id(id)`. A taken uuid or name, and a
-conversion whose target never registers, are reported the first time the
-registry is read.
+`nodetool::registry::data_type_by_id(id)`. A taken uuid or name, or a
+conversion whose target never registers, panics the first time the registry is
+read.
