@@ -2,8 +2,7 @@
 //! structural error path. No plugin is linked — loading is structural and
 //! plugin-independent.
 
-use nodetool::graph::Value;
-use nodetool::graph::{self, LoadLocation, ParameterValue};
+use nodetool::graph::{self, LoadLocation, ParameterValue, Value};
 use nodetool::registry;
 
 const CIRCLE: &str = "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33";
