@@ -1,6 +1,7 @@
 ---
 title: Scalar and custom type model
 date: 2026-09-16
+pr_id: 19
 ---
 
 ## Description
