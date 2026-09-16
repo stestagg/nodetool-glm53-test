@@ -1,15 +1,33 @@
 ---
 title: Engine events observer
 date: 2026-09-16
-placeholder: true
+depends: []
 ---
 
 ## Description
 
-An optional generic/dyn observer the engine notifies for lifecycle, per-node value flow, status, errors, and completion, with headless runs able to subscribe a printing observer while the engine stays ignorant of who listens.
+After story 06, a graph runs and its outputs can be consumed as they arrive — but the run is a black box: nothing tells a watcher which node started, what is flowing where, which node finished, or why a run died. This story gives the engine a voice: an optional events observer it notifies as the run unfolds, so a user can see what the engine is doing without the run caring who is watching (REQ-13).
 
-_Placeholder: written out in full during backlog population, against the project vision._
+The user here is anyone who runs a graph and wants to see inside it — today the headless user at a terminal, later the editor (stories 11, 16, 17) and story 10's fizzbuzz binary. The observer is a plain dyn trait: the engine notifies it and neither knows nor cares who listens. Passing no observer — the default — leaves story 06's engine exactly as it was: the observer is an addition beside the run's data path, never a rework of it, and never a second path for consuming outputs — the data path (story 06) carries the run's product; the observer is diagnostics beside it.
+
+Two questions the vision leaves open, settled here deliberately:
+
+- **What events carry.** Events are notifications with identity and, where a value is the news, the value itself: the event names the node instance (uuid and label) and port, and carries the emitted value — so a printing subscriber can show the flow, which is precisely the headless use. How much of that reaches the browser over websocket (every value, samples, or metadata only) is the websocket bridge's decision (stories 11, 17), thinning there — not a second event model with different payloads. In-process observers see everything; the transport decides what it forwards.
+- **Node status.** A node's status is derivable from the event stream — not yet started, running, completed, failed — and the events carry exactly the transitions that determine it (the status half of REQ-43): started, completed, and failed with the error. There is no separate status polling mechanism beside the events.
 
 ## Definition of done
 
-_To be written when this story is populated._
+- The engine takes an optional events observer and notifies it as the run unfolds; a run with no observer is behaviourally identical to story 06's engine — same values, same timing, same completion — and the observer mechanism is an addition beside the data path, not a rework of it. (REQ-13, REQ-2)
+- One event model, carried by one observer trait: run started; per node — started, a value emitted (naming node instance, output port, and carrying the value), completed; an error reported naming the node instance (label and uuid) and the failure; run finished, distinguishing a completed run from a run ended by that one error (REQ-13, REQ-43). There is no second event or status mechanism, and the engine never branches on what a node is called or which type it is when notifying. (REQ-2, REQ-73)
+- A node's status is derivable from the events alone — not started, running, completed, failed — with the failed state carrying the error story 06 reports at run end; no separate status query or polling path exists. (REQ-43)
+- Notifying the observer never alters the run's semantics: stream behaviour, value delivery, and completion are defined by stories 05 and 06 regardless of what the observer does; a run's product on the data path is unaffected by a slow, absent, or failing observer. (REQ-16, REQ-72)
+- Core ships one simple printing observer implementing the trait, so a headless run can subscribe it and the event timeline is visible from a terminal with no user code. (REQ-13, REQ-7)
+- The example binary from the core story runs a sample graph twice from a terminal: once with the printing observer subscribed, printing the event timeline — run started, each node's start, emitted values, completion, run finished — and once without an observer, printing only the consumed outputs as story 06 did, showing the observer changes nothing about the run. A third run of the failing sample graph shows the error event and the failed run-finished event. Running it (per DEVELOPMENT.md) is the visible proof. (REQ-13)
+- Focused tests cover: the event sequence of a small graph (started/emitted/completed per node, run started and finished in order); emitted-value events carrying the value and naming node instance and port; the error event and failed run-finished on a failing run; a run with no observer producing identical output values to the same graph with one; and the printing observer's output rendering the timeline. The workspace builds and passes `cargo test` and `cargo clippy` cleanly.
+- DEVELOPMENT.md at the repository root describes how to run the example's observer demonstrations and the checks.
+
+## Comments
+
+- 2026-09-16 — Scope seams: the engine itself, run lifecycle, and fail-fast error behaviour are story 06, which deliberately takes no observer — the seam here must be an addition beside the data path, not a rework of it. The websocket bridge and the decision of how much event data the UI receives (every value, samples, or metadata only) are stories 11 and 17 — they thin at the transport; this story fixes only that in-process events carry values, so the printing observer's use case is real. Interactive start/stop in the editor is story 16; whether the fizzbuzz headless binary prints outputs by tapping them directly or via this observer is story 10's call. (REQ-74)
+- 2026-09-16 — REQ-14 (events driving live node updates in the editor) is met by stories 11, 16, and 17 building on what this story delivers; it is not this story's criterion, because nothing user-visible in the editor exists yet here.
+- 2026-09-16 — The engine notifies one observer; an embedder wanting several listeners composes them behind one observer (the trait makes that a few lines). The engine gains no multi-caster, keeping one of each mechanism.
