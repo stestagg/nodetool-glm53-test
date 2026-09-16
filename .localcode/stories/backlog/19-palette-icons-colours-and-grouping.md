@@ -40,25 +40,31 @@ exactly one type renders its dot in that colour and shape, and a wire
 renders in the colour of the source port it flows from. A port declaring a
 union of types, and any type reference the listing does not know, render in
 one neutral colour and shape — an honest "no single type to inform" rather
-than a guess; the declared members remain in the tooltip (12). The type
-tooltip stays too: colour makes types visible at a glance, the tooltip still
-answers exactly what is declared. Colour never carries information alone —
-the shape distinguishes alongside it, leaving story 22 a contrast pass, not
-a rebuild.
+than a guess; the declared members remain readable in the tooltip (12) —
+colour makes types visible at a glance, the tooltip still answers exactly
+what is declared. A port shape is a name from the small fixed set the
+editor's renderer draws — the renderer's own vocabulary, like its neutral
+pair; a declared shape outside the set renders the neutral, the declarer's
+to fix, as with icons. Colour never carries information alone — the shape
+distinguishes beside it wherever the type shows as a port, and a wire's
+colour reads against the shaped source port it flows from, leaving story 22
+a contrast pass, not a rebuild.
 
 Where the colours come from is the same path everything else takes. Core's
 base scalars are declared through the same `data_type!` mechanism a plugin's
 custom types are, so core declaring its scalars' colours and shapes is an
-ordinary declaration change in its own type declarations — no special case,
-nothing core learns to interpret (REQ-29, REQ-73). A custom type's colour
-and shape ride the metadata map the type model already carries — top-level
-presentation metadata, exactly the kind of detail core may transport while
-knowing nothing else about the type (REQ-31, REQ-33). A type declaring none
-gets the neutral. None of these names or colours are hardcoded in the
-browser: the node-type listing gains one flat fact per type reference — its
-colour and shape, neutral when nothing is declared — composed server-side
-where the metadata lives, the same additive change to story 11's catalogue
-that story 14's base-scalar classification was.
+ordinary declaration change in its own type declarations — no special case:
+composing the fact reads the declared colour and shape and nothing else
+about the type, and no core behaviour switches on either (REQ-29, REQ-73).
+A custom type's colour and shape ride the metadata map the type model
+already carries — top-level presentation metadata, exactly the kind of
+detail core may transport while knowing nothing else about the type
+(REQ-31, REQ-33). A type that does not declare both a colour and a shape
+gets the neutral. No type's colour or shape is hardcoded in the browser:
+the node-type listing gains one flat fact per type reference — its colour
+and shape, the neutral when the type does not declare both — composed
+server-side where the metadata lives, the same additive change to story
+11's catalogue that story 14's base-scalar classification was.
 
 Deliberately not here: run-status marks, which are states not decoration
 (17); error and warning surfaces (18); multi-selection (20); plugin custom
@@ -82,36 +88,47 @@ no node-header colouring — settled in the comments.
   row and in the title bar of every node of that type, beside the label;
   nodes gain nothing else and stay compact per the Blender reference. A node
   whose type reference is missing from the listing shows no icon and stays
-  the inert placeholder it was. (REQ-42, REQ-47, REQ-71)
+  the inert placeholder it was. (REQ-42, REQ-47, REQ-49, REQ-71)
 - Ports and wires show the data type they carry: a port declaring exactly
   one type renders in that type's colour and shape, a wire renders in the
   colour of the source port it flows from, and union-declared ports, unknown
-  type references, and types declaring nothing render in one shared neutral
-  colour and shape. The colour and shape of a type come from its own
-  declaration — base scalars from core's declarations of them, custom types
-  from the declaring plugin's metadata map — and the graph definition and
-  file format carry nothing new for any of it; the declared-type tooltip
-  remains. Colour is never the only signal: the shape distinguishes
-  alongside it. (REQ-48, REQ-29, REQ-31, REQ-33, REQ-27)
+  type references, and types that do not declare both a colour and a shape
+  render in one shared neutral colour and shape. The colour and shape of a
+  type come from its own declaration — base scalars from core's declarations
+  of them, custom types from the declaring plugin's metadata map — and the
+  graph definition and file format carry nothing new for any of it; the
+  declared-type tooltip remains. Colour is never the only signal: a port
+  shows the shape beside the colour, and a wire's colour reads against the
+  shaped source port it flows from. (REQ-48, REQ-29, REQ-31, REQ-33, REQ-27)
 - The node-type listing carries each type reference's colour and shape as
   one flat fact, computed server-side from the type declarations and added
-  to the catalogue per story 11's framing, so the browser hardcodes no type
-  names, colours, or shapes — the same one-fact pattern as story 14's
-  base-scalar classification. (REQ-73, REQ-42)
+  to the catalogue per story 11's framing, so the browser holds no
+  type-name, colour, or per-type shape table — it renders the declared
+  colour verbatim and the declared shape from the small closed shape set it
+  ships, taking the neutral for a shape name it does not know. No type's
+  colour or shape is hardcoded: the neutral pair and the shape vocabulary
+  are the browser's own, the neutral the server composes for a type that
+  does not declare both is that same pair, and there is one neutral
+  everywhere — the same one-fact pattern as story 14's base-scalar
+  classification. (REQ-73, REQ-48)
 - Focused tests cover the listing server-side: the colour and shape fact
   matching a base scalar's and a custom type's declarations, the neutral
-  fact for a type declaring none, and the listing still matching the
-  registry per story 11's tests otherwise. The workspace builds and passes
-  `cargo test` and `cargo clippy` cleanly, with the UI build part of the
-  check set DEVELOPMENT.md documents.
+  fact for a type that does not declare both a colour and a shape, and for
+  a type reference the registry does not know, and the listing still
+  matching the registry per story 11's tests otherwise. The workspace builds
+  and passes `cargo test` and `cargo clippy` cleanly, with the UI build part
+  of the check set DEVELOPMENT.md documents.
 - The visible proof, run per DEVELOPMENT.md: open the editor example — it
   links more than one plugin — and see the palette in sections, one per
-  plugin with its name heading, icons on every row; drag two nodes of
-  different types out and see their icons in the title bars; wire an integer
-  output to an integer input and see the port dots and the wire in that
-  type's colour, differing from a String wire's, and a union value input
-  (the utility library's If or Format) sitting in the neutral shape; reload
-  the page and open a second tab — same sections, same order, same colours.
+  plugin with its name heading and the shapes plugin's 2d and 3d
+  sub-sections headed inside it, icons on every row; drag two nodes of
+  different types out and see their icons in the title bars; wire a String
+  output to a String input and see the port dots and the wire in String's
+  declared colour and shape, differing in both from the wire between an
+  integer-declared pair — the example plugins gain the singly-declared
+  integer ports this proof needs — and the circle's union-declared radius
+  input sitting in the neutral shape; reload the page and open a second tab
+  — same sections, same order, same colours.
 
 ## Comments
 
