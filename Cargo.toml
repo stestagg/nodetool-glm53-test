@@ -4,9 +4,11 @@ members = [
     "crates/nodetool",
     "crates/nodetool/tests/plugins/alpha",
     "crates/nodetool/tests/plugins/beta",
+    "crates/nodetool/tests/plugins/gamma",
     "examples/plugins/shapes",
     "examples/plugins/text",
     "examples/list-nodes",
     "examples/list-nodes-empty",
     "examples/load-graph",
+    "examples/compile-graph",
 ]

@@ -12,3 +12,4 @@ uuid = { version = "1", default-features = false, features = ["std", "serde"] }
 [dev-dependencies]
 test-plugin-alpha = { path = "tests/plugins/alpha" }
 test-plugin-beta = { path = "tests/plugins/beta" }
+test-plugin-gamma = { path = "tests/plugins/gamma" }

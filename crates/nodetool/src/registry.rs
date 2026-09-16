@@ -7,6 +7,55 @@ use uuid::Uuid;
 
 use crate::{DataType, NodeType};
 
+/// The vocabulary of one binary — every node type and data type the linked
+/// plugins declared — collected once and queried many times.
+///
+/// The free functions below walk the inventory on every call; a
+/// [`Registry::collect`] snapshot does the walk once, so a caller that
+/// compiles repeatedly — the compiler, the editor's recompile loop — never
+/// rescans registrations. Collecting validates the registry the same way a
+/// read does, panicking on taken names, ids, and references.
+pub struct Registry {
+    node_types: HashMap<&'static str, &'static NodeType>,
+    data_types: HashMap<&'static str, &'static DataType>,
+    data_types_by_id: HashMap<Uuid, &'static DataType>,
+}
+
+impl Registry {
+    /// Gather the declarations of every linked plugin.
+    pub fn collect() -> Registry {
+        let node_types = node_types()
+            .map(|node_type| (node_type.type_ref, node_type))
+            .collect();
+        let mut by_name = HashMap::new();
+        let mut by_id = HashMap::new();
+        for data_type in data_types() {
+            by_name.insert(data_type.name, data_type);
+            by_id.insert(data_type.id, data_type);
+        }
+        Registry {
+            node_types,
+            data_types: by_name,
+            data_types_by_id: by_id,
+        }
+    }
+
+    /// The node type declared under `type_ref`, if any.
+    pub fn node_type(&self, type_ref: &str) -> Option<&'static NodeType> {
+        self.node_types.get(type_ref).copied()
+    }
+
+    /// The data type registered under `name`, if any.
+    pub fn data_type(&self, name: &str) -> Option<&'static DataType> {
+        self.data_types.get(name).copied()
+    }
+
+    /// The data type registered under `id`, if any.
+    pub fn data_type_by_id(&self, id: Uuid) -> Option<&'static DataType> {
+        self.data_types_by_id.get(&id).copied()
+    }
+}
+
 /// Every node type declared by the linked plugins, in unspecified order.
 ///
 /// Every read walks the registry in full, so a taken type reference is always

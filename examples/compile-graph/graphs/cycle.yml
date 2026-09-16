@@ -1,0 +1,16 @@
+schema_version: 1
+name: two circles feeding each other
+nodes:
+  - uuid: 00000000-0000-0000-0000-0000000000c1
+    type_ref: shapes/circle
+  - uuid: 00000000-0000-0000-0000-0000000000c2
+    type_ref: shapes/circle
+edges:
+  - from: 00000000-0000-0000-0000-0000000000c1
+    from_port: shape
+    to: 00000000-0000-0000-0000-0000000000c2
+    to_port: radius
+  - from: 00000000-0000-0000-0000-0000000000c2
+    from_port: shape
+    to: 00000000-0000-0000-0000-0000000000c1
+    to_port: radius

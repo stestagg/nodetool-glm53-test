@@ -15,6 +15,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "compile-graph"
+version = "0.1.0"
+dependencies = [
+ "nodetool",
+ "plugin-shapes",
+ "plugin-text",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -121,6 +130,7 @@ dependencies = [
  "serde_yaml",
  "test-plugin-alpha",
  "test-plugin-beta",
+ "test-plugin-gamma",
  "uuid",
 ]
 
@@ -249,6 +259,13 @@ dependencies = [
 
 [[package]]
 name = "test-plugin-beta"
+version = "0.1.0"
+dependencies = [
+ "nodetool",
+]
+
+[[package]]
+name = "test-plugin-gamma"
 version = "0.1.0"
 dependencies = [
  "nodetool",
