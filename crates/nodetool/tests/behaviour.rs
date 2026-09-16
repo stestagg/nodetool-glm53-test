@@ -70,7 +70,7 @@ fn fed(name: &'static str) -> (mpsc::Sender<Value>, Input) {
 fn collected(name: &'static str) -> (Output, mpsc::Receiver<Value>) {
     let (tx, rx) = handoff();
     let mut output = Output::new(name);
-    output.connect(tx);
+    output.connect(tx, None);
     (output, rx)
 }
 
@@ -464,7 +464,7 @@ async fn one_emission_reaches_every_connected_downstream_input() {
     let (tx, a) = fed("a");
     let (mut output, mut first_rx) = collected("out");
     let (second_tx, mut second_rx) = handoff();
-    output.connect(second_tx);
+    output.connect(second_tx, None);
 
     let mut behaviour = Echo { complete: false };
     let mut inputs = [a];

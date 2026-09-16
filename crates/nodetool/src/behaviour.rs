@@ -66,7 +66,7 @@ use std::task::Poll;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use crate::Value;
+use crate::{ConvertFn, Value};
 
 /// The fixed capacity of the bounded hand-off between an emitting node and
 /// each downstream input: one policy for every connection, so memory stays
@@ -176,10 +176,12 @@ impl Input {
 }
 
 /// One live output of a running node: an emission is delivered to every
-/// connected downstream input.
+/// connected downstream input. A downstream whose connection rides a
+/// declared conversion receives the converted value — the conversion is
+/// wiring, applied as the value crosses, never the behaviour's concern.
 pub struct Output {
     name: &'static str,
-    senders: Vec<mpsc::Sender<Value>>,
+    senders: Vec<(mpsc::Sender<Value>, Option<ConvertFn>)>,
 }
 
 impl Output {
@@ -192,9 +194,10 @@ impl Output {
     }
 
     /// Wire one downstream input to this output: from here on, every
-    /// emission reaches it.
-    pub fn connect(&mut self, sender: mpsc::Sender<Value>) {
-        self.senders.push(sender);
+    /// emission reaches it, converted first when the connection rides a
+    /// declared conversion.
+    pub fn connect(&mut self, sender: mpsc::Sender<Value>, convert: Option<ConvertFn>) {
+        self.senders.push((sender, convert));
     }
 
     /// Emit a value: delivered to every connected downstream input, waiting
@@ -202,8 +205,17 @@ impl Output {
     /// its input gone — receives nothing more: the delivery is skipped,
     /// which is that stream ending, not an error.
     pub async fn emit(&mut self, value: Value) {
-        for sender in &mut self.senders {
-            let _ = sender.send(value.clone()).await;
+        for (sender, convert) in &mut self.senders {
+            let value = match convert {
+                Some(convert) => convert(&value).unwrap_or_else(|| {
+                    panic!(
+                        "the conversion declared on output `{}` does not take this value",
+                        self.name
+                    )
+                }),
+                None => value.clone(),
+            };
+            let _ = sender.send(value).await;
         }
     }
 

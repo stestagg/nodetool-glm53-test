@@ -5,6 +5,7 @@ members = [
     "crates/nodetool/tests/plugins/alpha",
     "crates/nodetool/tests/plugins/beta",
     "crates/nodetool/tests/plugins/gamma",
+    "crates/nodetool/tests/plugins/delta",
     "examples/plugins/shapes",
     "examples/plugins/text",
     "examples/list-nodes",
@@ -12,4 +13,5 @@ members = [
     "examples/load-graph",
     "examples/compile-graph",
     "examples/run-node",
+    "examples/run-graph",
 ]

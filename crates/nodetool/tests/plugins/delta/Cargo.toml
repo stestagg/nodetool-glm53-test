@@ -1,0 +1,9 @@
+[package]
+name = "test-plugin-delta"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nodetool = { path = "../../.." }
+async-trait = "0.1"
+tokio = { version = "1", default-features = false, features = ["sync"] }

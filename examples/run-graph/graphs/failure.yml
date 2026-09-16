@@ -1,0 +1,25 @@
+schema_version: 1
+name: fail fast
+nodes:
+  - uuid: 00000000-0000-0000-0000-200000000001
+    type_ref: text/words
+    label: lines
+  - uuid: 00000000-0000-0000-0000-200000000002
+    type_ref: text/split
+    label: splitter
+    parameters:
+      separator: ", "
+  - uuid: 00000000-0000-0000-0000-200000000003
+    type_ref: text/check
+    label: the guard
+    parameters:
+      forbidden: "one"
+edges:
+  - from: 00000000-0000-0000-0000-200000000001
+    from_port: out
+    to: 00000000-0000-0000-0000-200000000002
+    to_port: text
+  - from: 00000000-0000-0000-0000-200000000002
+    from_port: parts
+    to: 00000000-0000-0000-0000-200000000003
+    to_port: text

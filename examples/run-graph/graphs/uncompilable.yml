@@ -1,0 +1,6 @@
+schema_version: 1
+name: unknown node
+nodes:
+  - uuid: 00000000-0000-0000-0000-300000000001
+    type_ref: text/nothing
+edges: []

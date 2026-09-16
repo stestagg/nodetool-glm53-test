@@ -1,0 +1,30 @@
+schema_version: 1
+name: split pipeline
+nodes:
+  - uuid: 00000000-0000-0000-0000-100000000001
+    type_ref: text/words
+    label: lines
+  - uuid: 00000000-0000-0000-0000-100000000002
+    type_ref: text/split
+    label: splitter
+    parameters:
+      separator: ", "
+  - uuid: 00000000-0000-0000-0000-100000000003
+    type_ref: text/uppercase
+    label: shout one
+  - uuid: 00000000-0000-0000-0000-100000000004
+    type_ref: text/uppercase
+    label: shout two
+edges:
+  - from: 00000000-0000-0000-0000-100000000001
+    from_port: out
+    to: 00000000-0000-0000-0000-100000000002
+    to_port: text
+  - from: 00000000-0000-0000-0000-100000000002
+    from_port: parts
+    to: 00000000-0000-0000-0000-100000000003
+    to_port: text
+  - from: 00000000-0000-0000-0000-100000000002
+    from_port: parts
+    to: 00000000-0000-0000-0000-100000000004
+    to_port: text
