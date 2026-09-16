@@ -1,10 +1,8 @@
 //! Example nodetool plugin: shape nodes, sub-grouped by dimension, and the
 //! custom data type their outputs carry.
 
-use std::any::Any;
-
 use nodetool::scalars;
-use nodetool::{data_type, node_type, uuid, MetaValue};
+use nodetool::{data_type, node_type, uuid, MetaValue, Value};
 
 data_type! {
     id: uuid!("3eb7d9c2-8f14-4a06-9b5d-2c6e1f8a4b70"),
@@ -22,10 +20,8 @@ pub struct Shape {
     pub area: f64,
 }
 
-fn shape_area(value: &dyn Any) -> Option<Box<dyn Any>> {
-    value
-        .downcast_ref::<Shape>()
-        .map(|shape| Box::new(shape.area) as Box<dyn Any>)
+fn shape_area(value: &Value) -> Option<Value> {
+    Some(Value::new(scalars::F64, value.get::<Shape>()?.area))
 }
 
 node_type! {

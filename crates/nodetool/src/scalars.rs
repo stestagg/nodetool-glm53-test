@@ -6,9 +6,9 @@
 //! conversion to `String` is declared anywhere: turning values into strings
 //! is the explicit Format node's job.
 
-use std::any::Any;
-
 use uuid::Uuid;
+
+use crate::Value;
 
 /// The base scalars' fixed ids, for conversions that name them as targets.
 pub const I8: Uuid = uuid::uuid!("00000000-0000-0000-0000-000000000001");
@@ -37,14 +37,14 @@ crate::data_type! { id: F64, name: "f64" }
 crate::data_type! { id: BOOL, name: "bool" }
 crate::data_type! { id: STRING, name: "String" }
 
-fn i16_to_i32(value: &dyn Any) -> Option<Box<dyn Any>> {
-    Some(Box::new(*value.downcast_ref::<i16>()? as i32))
+fn i16_to_i32(value: &Value) -> Option<Value> {
+    Some(Value::new(I32, *value.get::<i16>()? as i32))
 }
 
-fn f32_to_f64(value: &dyn Any) -> Option<Box<dyn Any>> {
-    Some(Box::new(*value.downcast_ref::<f32>()? as f64))
+fn f32_to_f64(value: &Value) -> Option<Value> {
+    Some(Value::new(F64, *value.get::<f32>()? as f64))
 }
 
-fn i32_to_f64(value: &dyn Any) -> Option<Box<dyn Any>> {
-    Some(Box::new(*value.downcast_ref::<i32>()? as f64))
+fn i32_to_f64(value: &Value) -> Option<Value> {
+    Some(Value::new(F64, *value.get::<i32>()? as f64))
 }

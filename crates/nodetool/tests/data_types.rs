@@ -3,7 +3,7 @@
 
 use nodetool::registry::{data_type, data_type_by_id, data_types};
 use nodetool::scalars;
-use nodetool::{uuid, MetaValue};
+use nodetool::{uuid, MetaValue, Value};
 use test_plugin_alpha as _;
 use test_plugin_beta as _;
 
@@ -39,18 +39,24 @@ fn base_scalars_declare_the_trivial_conversions() {
     let i16 = data_type("i16").expect("base scalar");
     assert_eq!(i16.conversions.len(), 1);
     assert_eq!(i16.conversions[0].target, scalars::I32);
-    let widened = (i16.conversions[0].convert)(&7i16).expect("i16 converts to i32");
-    assert_eq!(widened.downcast_ref::<i32>(), Some(&7));
+    let widened =
+        (i16.conversions[0].convert)(&Value::new(scalars::I16, 7i16)).expect("i16 converts to i32");
+    assert_eq!(widened.get::<i32>(), Some(&7));
+    assert_eq!(widened.type_id(), scalars::I32);
 
     let f32 = data_type("f32").expect("base scalar");
     assert_eq!(f32.conversions[0].target, scalars::F64);
-    let widened = (f32.conversions[0].convert)(&1.5f32).expect("f32 converts to f64");
-    assert_eq!(widened.downcast_ref::<f64>(), Some(&1.5));
+    let widened = (f32.conversions[0].convert)(&Value::new(scalars::F32, 1.5f32))
+        .expect("f32 converts to f64");
+    assert_eq!(widened.get::<f64>(), Some(&1.5));
+    assert_eq!(widened.type_id(), scalars::F64);
 
     let i32 = data_type("i32").expect("base scalar");
     assert_eq!(i32.conversions[0].target, scalars::F64);
-    let widened = (i32.conversions[0].convert)(&3i32).expect("i32 converts to f64");
-    assert_eq!(widened.downcast_ref::<f64>(), Some(&3.0));
+    let widened =
+        (i32.conversions[0].convert)(&Value::new(scalars::I32, 3i32)).expect("i32 converts to f64");
+    assert_eq!(widened.get::<f64>(), Some(&3.0));
+    assert_eq!(widened.type_id(), scalars::F64);
 }
 
 #[test]

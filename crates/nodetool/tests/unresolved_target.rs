@@ -8,7 +8,7 @@ mod common;
 
 const NOWHERE: nodetool::Uuid = nodetool::uuid!("ffffffff-ffff-4fff-8fff-ffffffffffff");
 
-fn nowhere(_: &dyn std::any::Any) -> Option<Box<dyn std::any::Any>> {
+fn nowhere(_: &nodetool::Value) -> Option<nodetool::Value> {
     None
 }
 

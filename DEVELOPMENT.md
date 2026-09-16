@@ -18,7 +18,10 @@ scalar data types.
   model with the base scalars, the `node_type!` and `data_type!` declaration
   macros, the versioned YAML graph file format (`nodetool::graph`; its
   rustdoc is the format's spec), the compiler that turns a graph definition
-  into a compiled, executable graph (`nodetool::compile`), and the registry.
+  into a compiled, executable graph (`nodetool::compile`), the node
+  authoring API and the stream semantics behaviour programs against
+  (`nodetool::behaviour`; its rustdoc is the semantics' spec), the runtime
+  value (`nodetool::Value`), and the registry.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the registry
   and compiler tests (`alpha` is sub-grouped, `beta` is flat, `gamma`
   supplies the compiler tests' node types).
@@ -37,6 +40,11 @@ scalar data types.
   plugins; loads each sample graph definition in
   `examples/compile-graph/graphs/`, compiles it, and prints the compiled
   graph or the compile errors.
+- `examples/run-node` — demo binary linked against both example plugins;
+  runs one node of the text plugin — its behaviour declared through the
+  authoring API — with two scripted input streams, one of them a single
+  value that completes, and prints each emitted value as it arrives, then
+  the node's completion.
 
 ## Build and check
 
@@ -54,6 +62,7 @@ cargo run -p list-nodes        # the listing across both example plugins
 cargo run -p list-nodes-empty  # the same listing, no plugin linked
 cargo run -p load-graph        # load a graph file, print it, show the round trip
 cargo run -p compile-graph     # compile each sample graph file, print the result
+cargo run -p run-node          # drive one behaviour-ful node with scripted streams
 ```
 
 ## Writing a plugin
@@ -61,7 +70,12 @@ cargo run -p compile-graph     # compile each sample graph file, print the resul
 A plugin is an ordinary crate whose only dependency is `nodetool`. Declaring
 node types with `nodetool::node_type!` and linking the plugin into a binary is
 the whole registration step. The macro's rustdoc is the guide — `cargo doc -p
-nodetool --open` — to the declaration form and its linker caveat.
+nodetool --open` — to the declaration form and its linker caveat. A node type
+declared with the optional `behaviour` arm runs: the named function builds a
+fresh behaviour per instance, implementing `nodetool::behaviour::Behaviour` —
+one `process` per arrival, programming against the input and output faces
+whose stream semantics that module's rustdoc settles. A type declared without
+`behaviour` is a descriptor alone.
 
 Data types are the vocabulary ports refer to. Core ships the base scalars and
 declares their trivial conversions through the same mechanism a plugin uses;

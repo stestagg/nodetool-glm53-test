@@ -50,13 +50,13 @@
 //! node type backed by a subgraph — its compiled body a nested compiled
 //! graph — slots into [`CompiledNode`] without reworking the shape.
 
-use std::any::Any;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use uuid::Uuid;
 
 use crate::graph::{Edge, GraphDefinition, NodeInstance, ParameterValue};
 use crate::registry::Registry;
+use crate::value::Value;
 use crate::{Conversion, ConvertFn, DataType, NodeType, Port};
 
 /// Compile a graph definition into a runnable graph, or report every compile
@@ -230,11 +230,12 @@ pub struct CompiledNode {
 }
 
 /// A parameter value that compiled: the data type the literal resolved to,
-/// and the value as the engine will read it.
+/// and the runtime value the engine feeds that input as a stream that yields
+/// once and completes.
 #[derive(Clone, Debug)]
 pub struct CompiledParameter {
     pub resolved_type: &'static DataType,
-    pub value: ParameterValue,
+    pub value: Value,
 }
 
 /// One compiled connection: a definition edge whose type resolved before the
@@ -289,23 +290,23 @@ fn resolve_types(
 
 /// Resolve a parameter literal against an input port's declared union, under
 /// the connection rules: the literal's YAML scalar kind stands in as the
-/// upstream side. Returns the resolved data type and the value as the engine
-/// reads it — converted here, at compile time, where a declared conversion
-/// bridged.
+/// upstream side. Returns the resolved data type and the runtime value the
+/// engine feeds — converted here, at compile time, where a declared
+/// conversion bridged.
 fn resolve_literal(
     literal: &ParameterValue,
     declared: &[&str],
     registry: &Registry,
-) -> Option<(&'static DataType, ParameterValue)> {
+) -> Option<(&'static DataType, Value)> {
     let kind = literal_kind(literal);
     for &name in declared {
         let Some(data_type) = registry.data_type(name) else {
             continue;
         };
-        if scalar_kind(data_type.name) == Some(kind)
-            && materialize(literal, data_type.name).is_some()
-        {
-            return Some((data_type, literal.clone()));
+        if scalar_kind(data_type.name) == Some(kind) {
+            if let Some(value) = materialize(literal, data_type) {
+                return Some((data_type, value));
+            }
         }
     }
     for &name in declared {
@@ -318,7 +319,7 @@ fn resolve_literal(
             };
             for conversion in source_type.conversions {
                 if conversion.target == data_type.id {
-                    if let Some(value) = convert_literal(literal, source, conversion.convert) {
+                    if let Some(value) = convert_literal(literal, source_type, conversion.convert) {
                         return Some((data_type, value));
                     }
                 }
@@ -374,60 +375,57 @@ fn kind_names(kind: ScalarKind) -> &'static [&'static str] {
         .expect("every ScalarKind is listed in KIND_NAMES")
 }
 
-/// Present a literal as the concrete scalar value `source` names, so the
-/// declared conversion function can read it. An integer outside the
-/// source's range yields None: the candidate simply does not bridge. A
-/// float wider than f32's range yields None too; one that fits is narrowed.
-fn materialize(literal: &ParameterValue, source: &str) -> Option<Box<dyn Any>> {
-    let value: Box<dyn Any> = match (literal, source) {
-        (ParameterValue::Bool(value), "bool") => Box::new(*value),
-        (ParameterValue::Int(value), "i64") => Box::new(*value),
-        (ParameterValue::Int(value), "i32") => Box::new(i32::try_from(*value).ok()?),
-        (ParameterValue::Int(value), "i16") => Box::new(i16::try_from(*value).ok()?),
-        (ParameterValue::Int(value), "i8") => Box::new(i8::try_from(*value).ok()?),
-        (ParameterValue::Int(value), "u64") => Box::new(u64::try_from(*value).ok()?),
-        (ParameterValue::Int(value), "u32") => Box::new(u32::try_from(*value).ok()?),
-        (ParameterValue::Int(value), "u16") => Box::new(u16::try_from(*value).ok()?),
-        (ParameterValue::Int(value), "u8") => Box::new(u8::try_from(*value).ok()?),
-        (ParameterValue::Float(value), "f64") => Box::new(*value),
+/// Present a literal as a runtime value of the data type `source` names, so
+/// exact matches and declared conversion functions read a concrete scalar.
+/// An integer outside the source's range yields None: the candidate simply
+/// does not bridge. A float wider than f32's range yields None too; one that
+/// fits is narrowed.
+fn materialize(literal: &ParameterValue, source: &DataType) -> Option<Value> {
+    match (literal, source.name) {
+        (ParameterValue::Bool(value), "bool") => Some(Value::new(source.id, *value)),
+        (ParameterValue::Int(value), "i64") => Some(Value::new(source.id, *value)),
+        (ParameterValue::Int(value), "i32") => {
+            Some(Value::new(source.id, i32::try_from(*value).ok()?))
+        }
+        (ParameterValue::Int(value), "i16") => {
+            Some(Value::new(source.id, i16::try_from(*value).ok()?))
+        }
+        (ParameterValue::Int(value), "i8") => {
+            Some(Value::new(source.id, i8::try_from(*value).ok()?))
+        }
+        (ParameterValue::Int(value), "u64") => {
+            Some(Value::new(source.id, u64::try_from(*value).ok()?))
+        }
+        (ParameterValue::Int(value), "u32") => {
+            Some(Value::new(source.id, u32::try_from(*value).ok()?))
+        }
+        (ParameterValue::Int(value), "u16") => {
+            Some(Value::new(source.id, u16::try_from(*value).ok()?))
+        }
+        (ParameterValue::Int(value), "u8") => {
+            Some(Value::new(source.id, u8::try_from(*value).ok()?))
+        }
+        (ParameterValue::Float(value), "f64") => Some(Value::new(source.id, *value)),
         (ParameterValue::Float(value), "f32") => {
             let narrowed = *value as f32;
             if !narrowed.is_finite() {
                 return None;
             }
-            Box::new(narrowed)
+            Some(Value::new(source.id, narrowed))
         }
-        (ParameterValue::Str(value), "String") => Box::new(value.clone()),
-        _ => return None,
-    };
-    Some(value)
-}
-
-/// Read a converted value back as a plain parameter scalar. Only bool, i64,
-/// f64, and String read back; a conversion producing any other erased value
-/// — i32, say — does not bridge a literal.
-fn unpack(converted: Box<dyn Any>) -> Option<ParameterValue> {
-    if let Some(&value) = converted.downcast_ref::<bool>() {
-        Some(ParameterValue::Bool(value))
-    } else if let Some(&value) = converted.downcast_ref::<i64>() {
-        Some(ParameterValue::Int(value))
-    } else if let Some(&value) = converted.downcast_ref::<f64>() {
-        Some(ParameterValue::Float(value))
-    } else {
-        converted
-            .downcast_ref::<String>()
-            .map(|value| ParameterValue::Str(value.clone()))
+        (ParameterValue::Str(value), "String") => Some(Value::new(source.id, value.clone())),
+        _ => None,
     }
 }
 
+/// Apply a declared conversion to a literal, through the runtime value both
+/// sides are written against.
 fn convert_literal(
     literal: &ParameterValue,
-    source: &str,
+    source: &DataType,
     convert: ConvertFn,
-) -> Option<ParameterValue> {
-    let value = materialize(literal, source)?;
-    let converted = convert(value.as_ref())?;
-    unpack(converted)
+) -> Option<Value> {
+    convert(&materialize(literal, source)?)
 }
 
 /// The first cycle a depth-first walk meets, as the uuids around it. The

@@ -8,10 +8,11 @@
 //! they are serialised and rendered; that stays the declaring plugin's
 //! business.
 
-use std::any::Any;
 use std::fmt;
 
 use uuid::Uuid;
+
+use crate::Value;
 
 /// A data type as its declarer contributes it: pure data, identified by a
 /// stable [`DataType::id`] and a unique [`DataType::name`] — the name being
@@ -40,10 +41,10 @@ pub struct Conversion {
     pub convert: ConvertFn,
 }
 
-/// The signature of a [`Conversion`] function, written against erased values:
-/// the declarer owns the value shapes it maps between, core sees none of them.
-/// Provisional until the value representation settles.
-pub type ConvertFn = fn(&dyn Any) -> Option<Box<dyn Any>>;
+/// The signature of a [`Conversion`] function, written against the runtime
+/// value ([`Value`]): the declarer reads and produces erased values as it
+/// pleases — core sees none of their shapes.
+pub type ConvertFn = fn(&Value) -> Option<Value>;
 
 /// A plain metadata value: what a [`DataType`]'s metadata map carries.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -88,7 +89,9 @@ inventory::collect! { DataType }
 /// the_plugin as _;` (see the crate docs).
 ///
 /// ```
-/// fn shape_area(_: &dyn std::any::Any) -> Option<Box<dyn std::any::Any>> {
+/// use nodetool::Value;
+///
+/// fn shape_area(value: &Value) -> Option<Value> {
 ///     None
 /// }
 ///

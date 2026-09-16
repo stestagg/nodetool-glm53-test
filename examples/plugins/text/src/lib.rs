@@ -1,6 +1,42 @@
-//! Example nodetool plugin: flat text nodes, no sub-groups.
+//! Example nodetool plugin: flat text nodes, no sub-groups. The split node
+//! is declared through the authoring API — descriptor and behaviour
+//! together.
 
-use nodetool::node_type;
+use async_trait::async_trait;
+
+use nodetool::behaviour::{Behaviour, Error, Flow, Io, Trigger};
+use nodetool::scalars;
+use nodetool::{node_type, Value};
+
+struct Split;
+
+#[async_trait]
+impl Behaviour for Split {
+    async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        // Every run fires after the gate, so each input holds a value; the
+        // separator's single value survives its stream's end.
+        let text = io
+            .input("text")
+            .current()
+            .and_then(|value| value.get::<String>().cloned())
+            .expect("the input is declared String and the run is gated on it");
+        let separator = io
+            .input("separator")
+            .current()
+            .and_then(|value| value.get::<String>().cloned())
+            .expect("the input is declared String and the run is gated on it");
+        for part in text.split(separator.as_str()) {
+            io.output("parts")
+                .emit(Value::new(scalars::STRING, part.to_owned()))
+                .await;
+        }
+        Ok(Flow::Continue)
+    }
+}
+
+fn split() -> Box<dyn Behaviour> {
+    Box::new(Split)
+}
 
 node_type! {
     type_ref: "text/uppercase",
@@ -16,6 +52,7 @@ node_type! {
     label: "Split",
     icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M8 2v12M2 8h12" stroke="#333" stroke-width="2"/></svg>"##,
     plugin: "text",
+    behaviour: split,
     inputs: [ text: "String", separator: "String" ],
     outputs: [ parts: "String" ],
 }

@@ -11,4 +11,5 @@ members = [
     "examples/list-nodes-empty",
     "examples/load-graph",
     "examples/compile-graph",
+    "examples/run-node",
 ]
