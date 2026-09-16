@@ -1,0 +1,14 @@
+schema_version: 1
+name: string into a number
+nodes:
+  - uuid: 00000000-0000-0000-0000-0000000000b1
+    type_ref: text/uppercase
+    parameters:
+      text: "42"
+  - uuid: 00000000-0000-0000-0000-0000000000c1
+    type_ref: shapes/circle
+edges:
+  - from: 00000000-0000-0000-0000-0000000000b1
+    from_port: text
+    to: 00000000-0000-0000-0000-0000000000c1
+    to_port: radius

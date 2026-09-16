@@ -1,0 +1,39 @@
+schema_version: 1
+name: shapes and text
+nodes:
+  - uuid: 00000000-0000-0000-0000-0000000000c1
+    type_ref: shapes/circle
+    parameters:
+      radius: 2.5
+  - uuid: 00000000-0000-0000-0000-0000000000d1
+    type_ref: shapes/rectangle
+    parameters:
+      height: 3
+  - uuid: 00000000-0000-0000-0000-0000000000e1
+    type_ref: shapes/sphere
+  - uuid: 00000000-0000-0000-0000-0000000000e2
+    type_ref: shapes/sphere
+  - uuid: 00000000-0000-0000-0000-0000000000a1
+    type_ref: text/split
+    parameters:
+      text: "a,b,c"
+      separator: ","
+  - uuid: 00000000-0000-0000-0000-0000000000b1
+    type_ref: text/uppercase
+edges:
+  - from: 00000000-0000-0000-0000-0000000000c1
+    from_port: shape
+    to: 00000000-0000-0000-0000-0000000000d1
+    to_port: width
+  - from: 00000000-0000-0000-0000-0000000000d1
+    from_port: shape
+    to: 00000000-0000-0000-0000-0000000000e1
+    to_port: radius
+  - from: 00000000-0000-0000-0000-0000000000d1
+    from_port: shape
+    to: 00000000-0000-0000-0000-0000000000e2
+    to_port: radius
+  - from: 00000000-0000-0000-0000-0000000000a1
+    from_port: parts
+    to: 00000000-0000-0000-0000-0000000000b1
+    to_port: text

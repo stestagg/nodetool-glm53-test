@@ -1,7 +1,8 @@
 //! Nodetool core: the abstract node-type model, the shared vocabulary of data
 //! types, the registry that gathers node type and data type declarations
-//! from every crate linked into the binary, and the versioned YAML graph
-//! file format ([`graph`]).
+//! from every crate linked into the binary, the versioned YAML graph
+//! file format ([`graph`]), and the compiler that turns a definition into a
+//! runnable graph ([`compile`]).
 //!
 //! Core knows what a node type *is* — a stable type reference, a label, an
 //! icon, a grouping, typed ports — and what a data type *is* — a stable uuid,
@@ -26,6 +27,7 @@
 pub use inventory;
 pub use uuid::{uuid, Uuid};
 
+pub mod compile;
 mod data_type;
 pub mod graph;
 mod node_type;

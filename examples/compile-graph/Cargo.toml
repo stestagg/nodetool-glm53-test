@@ -1,0 +1,9 @@
+[package]
+name = "compile-graph"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nodetool = { path = "../../crates/nodetool" }
+plugin-shapes = { path = "../plugins/shapes" }
+plugin-text = { path = "../plugins/text" }

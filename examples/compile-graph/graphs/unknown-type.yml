@@ -1,0 +1,6 @@
+schema_version: 1
+name: a type this binary never linked
+nodes:
+  - uuid: 00000000-0000-0000-0000-0000000000f1
+    type_ref: shapes/triangle
+edges: []

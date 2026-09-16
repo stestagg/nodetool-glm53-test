@@ -17,9 +17,11 @@ scalar data types.
 - `crates/nodetool` — the core library: the node type model, the data type
   model with the base scalars, the `node_type!` and `data_type!` declaration
   macros, the versioned YAML graph file format (`nodetool::graph`; its
-  rustdoc is the format's spec), and the registry.
+  rustdoc is the format's spec), the compiler that turns a graph definition
+  into a compiled, executable graph (`nodetool::compile`), and the registry.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the registry
-  tests (`alpha` is sub-grouped, `beta` is flat).
+  and compiler tests (`alpha` is sub-grouped, `beta` is flat, `gamma`
+  supplies the compiler tests' node types).
 - `examples/plugins` — small example plugin crates (`shapes` is sub-grouped,
   `text` is flat).
 - `examples/list-nodes` — demo binary linked against both example plugins;
@@ -31,6 +33,10 @@ scalar data types.
 - `examples/load-graph` — demo binary linked against both example plugins;
   loads a graph file and shows the listing, the round trip, and a load
   error; the sample files live in `examples/load-graph/graphs/`.
+- `examples/compile-graph` — demo binary linked against both example
+  plugins; loads each sample graph definition in
+  `examples/compile-graph/graphs/`, compiles it, and prints the compiled
+  graph or the compile errors.
 
 ## Build and check
 
@@ -47,6 +53,7 @@ cargo fmt --check
 cargo run -p list-nodes        # the listing across both example plugins
 cargo run -p list-nodes-empty  # the same listing, no plugin linked
 cargo run -p load-graph        # load a graph file, print it, show the round trip
+cargo run -p compile-graph     # compile each sample graph file, print the result
 ```
 
 ## Writing a plugin
