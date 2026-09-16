@@ -1,15 +1,38 @@
 ---
 title: Graph wiring and headless execution
 date: 2026-09-16
-placeholder: true
+depends: []
 ---
 
 ## Description
 
-The engine wires a compiled graph into tokio streams with fan-out and constants as one-shot streams, settles mid-run error behaviour, and a headless run loads a graph file, compiles, and consumes outputs as they arrive.
+Everything before this story is parts on a bench: node types are declarable (01) and behave (05), types and conversions exist (02), a graph is a file (03), and a file compiles into an immutable, runnable-shaped graph (04). Nothing yet *runs a graph*. This story delivers the engine — instantiating a compiled graph as live, streaming execution across all its nodes at once — and the headless path that makes a graph file something you simply run from a terminal.
 
-_Placeholder: written out in full during backlog population, against the project vision._
+The user is the graph user working without the UI. The outcome: write a graph file by hand, run it, and values come out as they arrive; when every node is done, the run is done; when something is wrong, the run stops and tells you what and where. No UI, no ceremony — the same artefact the editor will later open (stories 12 on) is already a runnable thing today. This is REQ-7's promise kept.
+
+The engine invents neither the graph nor the semantics: it consumes the compiled graph (04) and the behaviour API (05). Per node instance it instantiates the node's behaviour and wires the compiled connections as the bounded hand-offs 05 defined; an emission reaches every connected downstream input — fan-out is the engine's routing, not the author's; and an input fixed by a parameter literal in the file is driven exactly as 05 promised, a stream that yields once and completes, so a Condition pairing a counter against a constant threshold compares every count in a whole graph, not only the first. The engine re-validates nothing: compile time already decided, and a run trusts its compiled graph (REQ-72).
+
+One open question the vision assigns here, settled deliberately: **mid-run error behaviour is fail-fast.** The first error a node's behaviour surfaces ends the run — the engine stops the remaining work and the error is reported naming the node instance (its label and uuid) and what went wrong. A run therefore ends only two ways: every node complete, or one error told. The rationale: a run's value is consumed as it happens, and once a node has failed, everything downstream of it is untrustworthy while the branches it never fed have nobody left to serve; the user's next move is always fix-and-rerun, and the edit–stop–recompile–restart loop is a first-class path. Isolating the failure and letting the rest drain would have the engine track which parts may still complete and what a failed node's downstream should see — core complexity buying a quieter kind of confusion. Rejected for now; revisitable in the open if a story ever wants it.
+
+Consuming the run's product: the run lets an embedding binary consume node outputs as values arrive, by node instance and port. An attached consumer is simply one more downstream of the fan-out — the one routing mechanism the engine already runs — so there is no separate "results" path, no collection barrier, nothing that waits for the run to end. This is the data path; story 07's events observer is diagnostics beside it, not a replacement for it.
+
+Single-node semantics were 05's proof; whole-graph wiring is this story's.
 
 ## Definition of done
 
-_To be written when this story is populated._
+- The core crate executes a compiled graph (04) as fully streaming, asynchronous execution across all nodes: values propagate as they become available, with no global barrier or batch pass anywhere in the engine. (REQ-6, REQ-15, REQ-16)
+- The engine instantiates every node instance's behaviour through the one authoring API (05) and wires the whole graph from the compiled shape: each connection is 05's bounded hand-off, an emission is delivered to every connected downstream input, and the engine branches on nothing but the compiled graph's generic shape — never on what a node is called or which type it is. (REQ-20, REQ-73)
+- An input fixed by a parameter literal in the graph file behaves exactly like a stream that yields once and completes: the node keeps pairing arrivals on its other inputs against that held value for as long as they come. (REQ-17, REQ-18)
+- A run finishes when every node in the graph is complete — self-driving sources exhausting themselves, nodes finishing after their last input value on now-complete inputs; a graph with no nodes finishes immediately. (REQ-22, REQ-23)
+- Mid-run error behaviour, settled here as fail-fast: the first behaviour error ends the run; remaining work stops, and the error is reported naming the node instance and the failure — in the headless binary as a printed error and a non-zero exit. Nothing after the error pretends the run succeeded. (REQ-71)
+- A run never mutates its compiled graph or the definition it came from, and nothing a run leaves behind makes a second run wrong: running a recompiled definition is a fresh, clean start, so the edit–recompile–restart loop works by construction. (REQ-24, REQ-26)
+- The headless path lives in core, no UI involved: load a graph definition file (the story 03 format), compile it (04), run it, and consume node outputs as values arrive — an attached consumer is one more downstream of the same fan-out, with no second mechanism and no collection step. (REQ-7, REQ-2)
+- The example binary from the core story runs a graph from a terminal: it loads a sample graph file whose nodes come from the example plugins — a source, a node pairing a streamed input against a constant-literal input, an output fanned out to two consumers — and prints each consumed output value as it arrives, then the run's completion. A second sample file carries a node whose behaviour errors mid-run, demonstrating fail-fast: remaining output stops arriving, the error names the node, the exit is non-zero. Running it (per DEVELOPMENT.md) is the visible proof. (REQ-7)
+- Focused tests cover: fan-out delivering one emission to multiple downstream nodes; a constant-literal input paired against many arrivals in a whole graph; run completion reached only when every node is complete; fail-fast ending a run, unrelated work included; outputs consumed as they arrive while the run is still going; an output with no downstream consumer neither blocking nor failing the run; the empty graph finishing immediately; and a recompile-and-second-run starting clean. The workspace builds and passes `cargo test` and `cargo clippy` cleanly.
+- DEVELOPMENT.md at the repository root describes how to run the example's run demonstrations and the checks.
+
+## Comments
+
+- 2026-09-16 — Scope seams: the events observer (REQ-13) is story 07 — this engine takes no observer yet, and the seam must be an addition beside the run's data path, not a rework of it; node status reporting (the status half of REQ-43) rides with 07 too. Story 05 delivered behaviour and semantics with single-node proofs; this story instantiates and wires them at graph scale and owns the run lifecycle. Story 10 builds fizzbuzz's headless mode on the headless path here — whether its printing taps outputs directly or uses 07's observer is 10's call; interactive start/stop in the editor is story 16. (REQ-74)
+- 2026-09-16 — Fail-fast is not a departure from REQ-22: that requirement fixes when a successful run is finished; the requirements are silent on mid-run errors, and the vision assigns the decision to this story. The contract a failed run leaves the editor (story 18) is deliberately narrow — a run ends complete or with one named error — so the UI has exactly one error story to tell. Cancellation on fail-fast is engine-internal: in-flight values may still sit in a hand-off when the run ends; the guarantee is that the run ends and the error is the last word, not a frozen instant.
+- 2026-09-16 — An output with no downstream consumer discards its values: a dangling output is the user's graph shape, not an error the engine polices (REQ-72); the editor's later job is to warn early (REQ-60), and enforcement stays at compile time.
