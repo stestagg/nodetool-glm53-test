@@ -1,15 +1,169 @@
 ---
 title: Interactive start and stop
 date: 2026-09-16
-placeholder: true
 ---
 
 ## Description
 
-A start/stop control runs and stops the graph from the editor; editing is disabled while running, and stop–edit–recompile–restart is fast and efficient.
+Stories 12–15 gave the user an editor that builds: nodes dropped, arranged,
+wired, valued, and kept in files — but the graph it builds has never run in
+front of them. The engine runs headless (06, 10); in the editor the user
+assembles a graph they can only look at. This story closes the editing loop
+with the run: a start/stop control in the chrome, so the cycle the vision
+calls first-class — build, run, stop, fix, go again — happens in one place.
 
-_Placeholder: written out in full during backlog population, against the project vision._
+The control is one button that flips: Start when idle, Stop while running,
+sitting beside story 15's file controls in the chrome. There is no separate
+"interactive mode" to switch on — the editor session is interactive mode, and
+the control is simply there (REQ-59).
+
+Pressing Start hands the definition the server holds to the compiler (04):
+every start compiles afresh, with no compiled graph kept between runs, so
+whatever the user edited last is exactly what runs — the recompile REQ-26
+asks for is not a remembered optimisation but the only path. A clean compile
+starts the run and the chrome turns over to running. A failing compile
+reports the errors, naming what and where; the run never starts, the state
+stays idle, and editing stays exactly as free as it was — the editor never
+polices, compile decides (REQ-60), and a broken graph is something the user
+fixes and retries, not something the UI forbids.
+
+While a run is on, the graph it is running must not change (REQ-24): every
+editing gesture goes quiet — palette drops, moves, wires and unhooks,
+deletion, label and parameter edits, and file open, save, and fresh-graph.
+The UI disables the controls (REQ-25), and the server backs the lock by
+rejecting any edit operation that arrives while a run is on, the definition
+untouched. Selection, panning, and zooming stay live — looking is not
+editing — and the chrome's running state is the explanation the quiet
+controls need; nothing is silently dead.
+
+The run ends three ways, and the chrome tells them apart. Every node
+completing ends it by itself: the state returns to idle, the outcome shows
+completed, and editing re-enables without anyone pressing Stop (REQ-22). A
+node erroring ends it fail-fast (06): the error is reported naming the node
+instance and what failed, the outcome shows failed, same return to idle. And
+pressing Stop ends it promptly: remaining work stops, delivery of values
+still in flight is not promised, and the outcome shows stopped. In all three
+the compiled graph and the definition are left untouched, so the next start
+begins clean and fast.
+
+Run state — idle or running, and the last run's outcome — is server state
+like the current file (15's rule): pushed to every connection when it changes
+and carried in the connect-time resync, so a second tab and a reload agree
+with the first, and a start or stop made in one tab is visible in the others.
+The resync carries the state, not a run's event history — whether a browser
+connecting mid-run can attach to the live event stream is story 17's call.
+
+Deliberately not here: nodes animating as values flow, and how much value
+data the transport forwards (17); the systematic error surfaces — toasts,
+panels, connection loss — that 18 builds (compile and run errors here are
+plainly visible, and that is all); multi-selection (20); the fizzbuzz
+binary's UI mode, which consumes this capability and prints outputs to the
+console (24).
 
 ## Definition of done
 
-_To be written when this story is populated._
+- The editor chrome carries one start/stop control beside the file controls:
+  Start when idle, Stop while running, with no separate interactive-mode
+  toggle — the editor session is the interactive mode. With no nodes in the
+  held definition the control is disabled: there is nothing to run. (REQ-59)
+- Pressing Start compiles the definition the server holds — every start
+  compiles afresh, no compiled graph survives a run, so an edit made since
+  the last run is always what runs next — and on a clean compile the run
+  begins: the chrome shows running, and every connection is pushed the new
+  run state. The thing that runs is the story 04 compiled graph. (REQ-26,
+  REQ-15, REQ-45)
+- A compile failure reports the errors, naming what and where, visibly in
+  the editor; the run never starts, the state stays idle, and editing remains
+  fully enabled — enforcement is compile time's, and the editor never blocks
+  editing on it. (REQ-71, REQ-60)
+- While a run is on, editing is disabled: palette drops, node moves, wiring
+  and unhooking, node deletion, label and parameter edits, and file open,
+  save, and fresh-graph are inert in the UI, and any edit operation that
+  arrives is rejected by the server with an error naming the running state,
+  the definition untouched. Selection, panning, and zooming remain available.
+  (REQ-24, REQ-25)
+- Pressing Stop ends the run promptly — remaining work stops, in-flight
+  delivery is not promised — the outcome shows stopped, distinct from
+  completed and failed, and editing re-enables immediately. The engine gains
+  this stop beside its natural ends (completion, fail-fast), not a second run
+  model; a stopped run leaves the compiled graph and definition untouched, so
+  the next start begins clean. (REQ-59, REQ-24)
+- The run ends by itself when every node is complete — idle again, outcome
+  completed, editing re-enabled without anyone pressing Stop; a run ended by
+  a node's error reports the error naming the node instance and the failure,
+  outcome failed, same return to idle. (REQ-22, REQ-71)
+- Run state — idle or running, and the last run's outcome — is server state:
+  pushed to every connection when it changes and carried in the connect-time
+  resync, so a second tab and a reload mid-run show the same state, and a
+  start or stop made in one tab is visible in the others; the resync carries
+  the state, not a run's event history. (REQ-2, REQ-45)
+- The state the chrome shows tracks the engine's own run lifecycle — run
+  started and run finished from the story 07 event stream drive it, no second
+  run-tracking mechanism — the same stream story 17 will bridge to the
+  browser. (REQ-13, REQ-14)
+- Focused tests cover: start compiling the held definition, with a run
+  reflecting an edit made since the previous run; a compile failure answered
+  with the errors and no run; each editing operation rejected while running
+  with the definition untouched; stop ending a running run promptly with the
+  stopped outcome; natural completion and fail-fast each returning to idle
+  with their outcomes; start-while-running and stop-while-idle answered with
+  errors, the connection usable; run state pushed to every connection and
+  present in the connect-time resync; a stopped run followed by a clean
+  restart. The workspace builds and passes `cargo test` and `cargo clippy`
+  cleanly, with the UI build part of the check set DEVELOPMENT.md documents.
+- The visible proof, run per DEVELOPMENT.md: drop and wire a small graph and
+  press Start — running shows, and every editing gesture is off: a palette
+  drag, a port drag, a sidebar field, and file save do nothing; when the
+  graph finishes, idle returns by itself and editing works again. Start a
+  graph that runs long enough to interrupt (a sample ships with the example)
+  and press Stop mid-run: stopped shows and editing returns; change a value,
+  start again, and the change is what runs. Wire a deliberately broken graph
+  and press Start: the compile errors show and the editor stays editable.
+  Open a second tab mid-run: it shows running, and a stop there stops it
+  everywhere. DEVELOPMENT.md describes how to run it.
+
+## Comments
+
+- 2026-09-16 — Scope seams: this story's additions to story 11's message
+  catalogue are the start and stop commands and the run state that travels
+  beside the definition (15's rule, which 15's comment reserved for this
+  story); the per-node event stream reaching the browser — and how much value
+  data it carries — is 17, which also settles whether a browser connecting
+  mid-run can attach to the live stream; systematic error surfaces are 18;
+  multi-selection 20; the fizzbuzz UI mode consuming this capability is 24
+  (REQ-69), inheriting 10's printing rule for its console. In the editor
+  example, outputs no node consumes are discarded per story 06 — nothing here
+  attaches a console printer; that is 24's wiring. REQ-14 completes across 16
+  and 17: here the editor's runs are observed — the run state the chrome
+  shows is driven by the events — there the nodes animate. (REQ-74)
+- 2026-09-16 — UX calls settled here: one control that flips Start↔Stop
+  rather than two buttons — the states are mutually exclusive and the flip is
+  the honest state display; the control sits beside the file controls because
+  run and file are the chrome's two acts on the graph as a whole; no
+  interactive-mode toggle, reading REQ-59's conditional as the editor session
+  itself — a second mode is ceremony for a local single-user tool; Start
+  disabled on an empty definition because a run that flashes complete on an
+  empty canvas is a silent non-event — the disabled control says "nothing to
+  run" plainly; selection, panning, and zoom stay live while running because
+  looking is not editing.
+- 2026-09-16 — Why the server enforces the lock the UI shows: the browser
+  holds no graph state (12), so a stale or second tab's edit must be refused
+  where the definition lives; the UI disabling is the affordance, the server
+  rejection is the truth, and one rule covers every editing operation,
+  including 15's file ones. (REQ-25)
+- 2026-09-16 — Why every start recompiles: keeping a compiled graph across
+  edits would make "what runs" one decision away from "what is shown" — the
+  divergence the server-owned-definition rule exists to prevent; compile is
+  04's pure, fast transformation, so REQ-26's fast recompile holds by
+  construction rather than by a caching mechanism — one of each. The visible
+  consequence is the loop: stop, edit, start, and the edit is unconditionally
+  what runs. (REQ-26)
+- 2026-09-16 — Stop is neither an error nor a failure: 06's fail-fast
+  cancellation posture is adopted for the user-triggered case — the guarantee
+  is that the run ends and the outcome is told, not a frozen instant nor
+  delivered in-flight values — and "stopped" is a distinct outcome so a
+  user-stopped run never reads as one that went wrong.
+- 2026-09-16 — Process exit stays unset, as 15 recorded: Ctrl-C mid-run or on
+  an unsaved graph still loses what is unsaved, and this story adds no quit
+  guard; whether the fizzbuzz binary's UI mode (24) wants one is its
+  population's call, noted so it reads as a decision. (REQ-74)
