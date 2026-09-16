@@ -22,14 +22,16 @@ still build, run, and save a graph; nothing on the canvas or the chrome can
 disappear into the background; and the surfaces 12–21 delivered are still
 the compact ones they promised to be.
 
-The floor's largest piece is keyboard operability. Every capability the
-editor offers gains a keyboard path alongside its pointer gesture — the
-pointer gestures stay exactly as they are, and the keyboard paths issue the
-same operations, the precedent story 20 set with its per-node fan-out.
-Concretely: every chrome control — palette, file controls, start/stop — is
-reachable and operable by keyboard, and the dialogs 15 added (the save-path
-ask, the unsaved-changes confirm) are operable and escapable; the canvas is
-traversable — nodes focusable, selection built and cleared mirroring 20's
+The floor's largest piece is keyboard operability. Every editing
+capability the editor offers gains a keyboard path alongside its pointer
+gesture — pan and zoom stay pointer-only, focus being the keyboard's way
+around the canvas — the pointer gestures stay exactly as they are, and the
+keyboard paths issue the same operations, the precedent story 20 set with
+its per-node fan-out. Concretely: every chrome control — palette, file
+controls, start/stop — is reachable and operable by keyboard, and the
+dialogs 15 added (the save-path ask, the unsaved-changes confirm) are
+operable and escapable; the canvas is traversable — nodes focusable,
+selection built and cleared mirroring 20's
 selection model; an activated palette row creates a node at a
 deterministic, visible position through the same create operation a drop
 sends; a focused node moves by arrow key, committing through the same move
@@ -42,17 +44,19 @@ with a field focused the same keys edit text and never delete. While a run
 is on, every keyboard editing path goes quiet with its pointer twin — the
 lock is one rule over both input modes, not two. The exact keys are a
 development choice, recorded in this story's comments; the constraint the
-floor sets is that a path exists for every gesture, and that the keys are
-conventional enough to guess.
+floor sets is that a path exists for every editing gesture, and that the
+keys are conventional enough to guess.
 
 Visible focus: every focusable element shows a clearly visible focus
 indicator — chrome controls, palette rows, the sidebar's fields, the
 inline fields on nodes, the nodes and ports themselves on the canvas. Focus
 order runs sensibly through chrome, canvas, sidebar; nothing traps focus or
-leaves it invisible; and moving focus never commits a field, holding 14's
-leave-without-typing rule. And so the editor's no-silent-states promise
-holds for everyone: the transient reports — 18's toasts and the
-disconnected banner — are announced to assistive technology as they appear,
+leaves it invisible; and moving focus commits nothing on its own — a field
+nothing was typed into commits nothing when focus leaves it, so tabbing
+through the sidebar unsets nothing — while 14's Enter-or-leave commit for a
+typed edit and 20's mixed-field scoping stand. And so the editor's
+no-silent-states promise holds for everyone: 18's toasts and the
+disconnected banner are announced to assistive technology as they appear,
 without stealing focus; the durable truth stays on the canvas and in the
 chrome where 18 put it.
 
@@ -82,15 +86,18 @@ readouts, status and problem marks, mixed markers — exactly how
 compactness erodes: never in one change, always in the sum. This pass
 re-checks every surface against REQ-47 and the Blender reference (REQ-49):
 a node still shows only what it needs — label and icon, ports with their
-inline fields or connected indicators, status and problem marks — with
-declared types still living in tooltips only, and no surface grown
-permanent padding or redundant text; palette rows stay single-line; the
-sidebar carries only what is editable; whatever the sum accreted beyond the
-required information goes.
+inline fields or connected indicators, status and problem marks, 17's
+per-port value readouts while they persist, and 20's mixed-state marker
+where a multi-selected field is mixed — with declared types still living in
+tooltips only, and no surface grown permanent padding or redundant text;
+palette rows stay single-line; the sidebar carries only what is editable
+beside 14's read-only type-reference-and-uuid orientation line; whatever
+the sum accreted beyond the required information goes.
 
 Deliberately not here: groups (23); the fizzbuzz UI mode (24); plugin-owned
-custom UI, whose floor is its declarer's (21); a dark theme or any second
-look — REQ-50's light look is the one the contrast work protects; new
+custom UI, whose floor is its declarer's — a division this story sets, for
+21's population to record; a dark theme or any second look — REQ-50's
+light look is the one the contrast work protects; new
 settings or an accessibility preferences panel — the floor is met by
 default or not at all; screen-reader certification beyond announcing the
 reports and states the editor already shows; new protocol messages or any
@@ -105,11 +112,14 @@ the server neither knows nor cares.
   unsaved-changes confirm) fully operable and escapable. Every canvas
   gesture — create, select, build and clear a multi-selection, move, wire,
   unhook, delete — has a keyboard path issuing the same operation its
-  pointer gesture sends, with Esc the quiet cancel (selection cleared, an
-  in-progress keyboard wire stood down, an uncommitted field edit
-  discarded), and no pointer gesture changed. The keys are conventional —
-  arrows move, Enter activates, Esc cancels, Tab traverses. (REQ-46,
-  REQ-56, REQ-59, REQ-2)
+  pointer gesture sends, a keyboard-created node landing at a
+  deterministic, visible position as a drop does, with Esc the quiet cancel
+  (selection cleared, an in-progress keyboard wire stood down, an
+  uncommitted field edit discarded), no pointer gesture changed, and pan
+  and zoom stay pointer-only — the keyboard's way around the canvas is
+  focus, the view following focus so every node stays reachable. The keys
+  are conventional — arrows move, Enter activates, Esc cancels, Tab
+  traverses. (REQ-46, REQ-56, REQ-59, REQ-2)
 - While a run is on, the keyboard editing paths go quiet exactly with their
   pointer twins, by the same one lock, while keyboard navigation and
   selection stay live; while disconnected (18) they are inert like every
@@ -117,40 +127,48 @@ the server neither knows nor cares.
 - Every focusable element shows a clearly visible focus indicator — chrome
   controls, palette rows, sidebar and inline fields, nodes and ports on the
   canvas; focus order runs chrome → canvas → sidebar sensibly; nothing
-  traps or hides focus; moving focus never commits a field; and 18's
-  toasts and the disconnected banner are announced to assistive technology
-  as they appear, without stealing focus. (REQ-71)
+  traps or hides focus; moving focus commits nothing on its own — a field
+  nothing was typed into stays uncommitted when focus leaves it, while a
+  field left with typing still commits by 14's Enter-or-leave rule; and
+  18's toasts and the disconnected banner are announced to assistive
+  technology as they appear, through a polite live region the UI tests
+  assert — present and polite, never focus-taking. (REQ-71)
 - Contrast meets the floor everywhere the editor renders: text 4.5:1,
   large text and meaningful edges — port dots, wires, status and problem
   marks, focus indicators, the banner — 3:1, all within the light Blueprint
-  theme. The editor's own colours pass as rendered, the base scalars'
-  declared port colours pass on the canvas background — fixed by
-  declaration where any fall short, the fix riding 19's listing fact with
-  no browser-side override — and the neutral pair passes. (REQ-50, REQ-48,
+  theme. The editor's own colours pass as rendered, and the base scalars'
+  declared colours pass against the surfaces they render on — wires against
+  the canvas, port dots against the node's surface — fixed by declaration
+  where any fall short, the fix riding 19's listing fact with no
+  browser-side override — and the neutral pair passes. (REQ-50, REQ-48,
   REQ-29)
 - With the platform's reduced-motion preference requested, the value pulses
   rest while statuses and latest values still update — the derived truth is
   state, not motion, per 17's settled call.
 - The density pass holds every surface to the Blender reference: nodes show
   only the required information — label and icon, ports with inline fields
-  or connected indicators, status and problem marks — with declared types
-  still in tooltips only; palette rows single-line; the sidebar only what
-  is editable; anything the stories' sum accreted beyond that is removed.
-  (REQ-47, REQ-49, REQ-70)
+  or connected indicators, status and problem marks, 17's per-port value
+  readouts while they persist, and 20's mixed-state marker where a field is
+  mixed — with declared types still in tooltips only; palette rows
+  single-line; the sidebar only what is editable beside 14's read-only
+  type-reference-and-uuid orientation line; anything the stories' sum
+  accreted beyond that is removed. (REQ-47, REQ-49, REQ-70)
 - Focused tests cover what the UI test runner 20 added reaches: the
   keyboard paths issuing the same operations as their pointer gestures —
   create, move, wire, unhook, delete, and the selection model — Esc's
-  cancels, the run lock silencing keyboard editing, and the editor's own
-  colours meeting their contrast thresholds against the light chrome; a
-  core test computes the base scalars' declared colours and the neutral
-  pair against the canvas background. The workspace builds and passes
-  `cargo test` and `cargo clippy` cleanly, with the UI build part of the
-  check set DEVELOPMENT.md documents.
+  cancels, the run lock silencing keyboard editing, the polite live region
+  asserted present and polite and never focus-taking, and the contrast
+  checks — the editor's own colours and the neutral pair against the theme
+  as the UI defines it, the base scalars' declared colours read from the
+  listing fact against the surfaces they render on — computed in the UI
+  test, no colour value copied between the Rust and browser sides. The
+  workspace builds and passes `cargo test` and `cargo clippy` cleanly,
+  with the UI build part of the check set DEVELOPMENT.md documents.
 - The visible proof, run per DEVELOPMENT.md: with the mouse unused, build a
   small working graph from the keyboard — create nodes from the palette,
   wire them, type a value into a field, rename a node, delete a deliberate
   mistake, press Start, watch it run, press Stop, save to a path and see
-  the confirm appear; Tab through the editor and watch a visible focus
+  the save-path ask appear; Tab through the editor and watch a visible focus
   indicator track onto nodes and ports; set reduced motion, start another
   run, and see the wires stand still while values still tick and statuses
   still turn; and read the shipped sample at arm's length — every port,
@@ -185,10 +203,13 @@ the server neither knows nor cares.
   colour source: the editor's own colours are editor CSS; the base scalars'
   port colours are core's declarations through the same mechanism a plugin
   uses (19's settlement), so a shortfall is a declaration change flowing
-  through the listing fact — and because the colours are data, a core test
-  can hold the line; a plugin's declared colour is the declarer's to fix,
-  as with a malformed icon, and 19's shape-beside-colour rule means the
-  type information never rides contrast alone meanwhile. (REQ-73)
+  through the listing fact — and because the colours reach the browser as
+  data, the contrast checks compute in the UI test, reading the
+  declarations from the listing fact against the background the CSS
+  defines, no colour value copied into Rust; a plugin's declared colour is
+  the declarer's to fix, as with a malformed icon, and 19's
+  shape-beside-colour rule means the type information never rides contrast
+  alone meanwhile. (REQ-73)
 - 2026-09-16 — The accessibility floor has no REQ id: it is the vision's
   quality principle, not a line in requirements.md, so the criteria above
   cite the requirements they do touch and stand on the vision for the rest.
