@@ -4,5 +4,12 @@
   "compaction": {
     "auto": true,
     "reserved": 65536
+  },
+  "provider": {
+    "openrouter": {
+      "localcode": {
+        "maxConcurrentTurns": 2
+      }
+    }
   }
 }
