@@ -2,9 +2,36 @@
 //! the base scalars, chosen so each type resolution and validation case —
 //! exact matches across unions, every declared scalar conversion, the
 //! plugin custom type's conversion, and each structural error — is
-//! reachable from a small graph.
+//! reachable from a small graph. The doubler is declared through the
+//! authoring API, so the registry-to-driver path has a fixture too.
 
+use nodetool::async_trait;
+
+use nodetool::behaviour::{Behaviour, Error, Flow, Io, Trigger};
 use nodetool::node_type;
+use nodetool::scalars;
+use nodetool::Value;
+
+struct Doubler;
+
+#[async_trait]
+impl Behaviour for Doubler {
+    async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        let value = io
+            .input("value")
+            .current()
+            .and_then(|value| value.get::<i32>().copied())
+            .expect("the input is declared i32 and the run is gated on it");
+        io.output("value")
+            .emit(Value::new(scalars::I32, value * 2))
+            .await;
+        Ok(Flow::Continue)
+    }
+}
+
+fn doubler() -> Box<dyn Behaviour> {
+    Box::new(Doubler)
+}
 
 node_type! {
     type_ref: "gamma/int_source",
@@ -110,6 +137,16 @@ node_type! {
     label: "Passthrough",
     icon: "<svg/>",
     plugin: "gamma",
+    inputs: [ value: "i32" ],
+    outputs: [ value: "i32" ],
+}
+
+node_type! {
+    type_ref: "gamma/doubler",
+    label: "Doubler",
+    icon: "<svg/>",
+    plugin: "gamma",
+    behaviour: doubler,
     inputs: [ value: "i32" ],
     outputs: [ value: "i32" ],
 }

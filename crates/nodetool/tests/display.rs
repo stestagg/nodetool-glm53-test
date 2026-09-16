@@ -18,6 +18,7 @@ fn display_shows_the_grouping_and_every_port_with_its_type_references() {
             name: "shape",
             type_refs: &["shapes/shape"],
         }],
+        behaviour: None,
     };
     let listing = node.to_string();
     assert!(listing.contains("Circle"), "label missing: {listing}");
@@ -56,6 +57,7 @@ fn display_omits_an_absent_sub_group() {
             name: "tick",
             type_refs: &["bool"],
         }],
+        behaviour: None,
     };
     assert!(!node.to_string().contains("sub-group"));
 }

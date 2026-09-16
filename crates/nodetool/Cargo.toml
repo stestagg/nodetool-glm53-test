@@ -4,12 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-trait = "0.1"
 inventory = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
+tokio = { version = "1", default-features = false, features = ["sync"] }
 uuid = { version = "1", default-features = false, features = ["std", "serde"] }
 
 [dev-dependencies]
 test-plugin-alpha = { path = "tests/plugins/alpha" }
 test-plugin-beta = { path = "tests/plugins/beta" }
 test-plugin-gamma = { path = "tests/plugins/gamma" }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time", "test-util"] }

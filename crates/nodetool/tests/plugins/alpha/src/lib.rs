@@ -1,11 +1,9 @@
 //! Node type and data type declarations exercising the registry in nodetool's
 //! tests.
 
-use std::any::Any;
-
 use nodetool::node_type;
 use nodetool::scalars;
-use nodetool::{data_type, uuid, MetaValue};
+use nodetool::{data_type, uuid, MetaValue, Value};
 
 node_type! {
     type_ref: "alpha/add",
@@ -40,8 +38,6 @@ data_type! {
 /// The value a ratio node carries; opaque to core, this plugin's business.
 pub struct Ratio(f64);
 
-fn ratio_as_f64(value: &dyn Any) -> Option<Box<dyn Any>> {
-    value
-        .downcast_ref::<Ratio>()
-        .map(|ratio| Box::new(ratio.0) as Box<dyn Any>)
+fn ratio_as_f64(value: &Value) -> Option<Value> {
+    Some(Value::new(scalars::F64, value.get::<Ratio>()?.0))
 }

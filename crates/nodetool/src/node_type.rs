@@ -3,10 +3,12 @@
 
 use std::fmt;
 
+use crate::behaviour::BehaviourFn;
+
 /// A node type as a plugin declares it: pure data, identified by its
 /// [`NodeType::type_ref`] — the key by which the registry, graph files, and
 /// the compiler refer to it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub struct NodeType {
     /// Stable reference, unique across the linked plugins.
     pub type_ref: &'static str,
@@ -22,6 +24,10 @@ pub struct NodeType {
     pub inputs: &'static [Port],
     /// Output ports, on the right of the node.
     pub outputs: &'static [Port],
+    /// Builds the behaviour each instance runs — the authoring API's half of
+    /// the declaration. A type declared without one is a descriptor alone:
+    /// the compiler accepts it, but nothing runs it.
+    pub behaviour: Option<BehaviourFn>,
 }
 
 /// One input or output port of a [`NodeType`].
@@ -61,19 +67,27 @@ impl fmt::Display for NodeType {
 /// the_plugin as _;` (see the crate docs).
 ///
 /// ```rust
+/// fn circle_behaviour() -> Box<dyn nodetool::behaviour::Behaviour> {
+///     unimplemented!("the behaviour is the authoring API's business")
+/// }
+///
 /// nodetool::node_type! {
 ///     type_ref: "shapes/circle",
 ///     label: "Circle",
 ///     icon: r#"<svg ...>...</svg>"#,
 ///     plugin: "shapes",
 ///     sub_group: "2d",               // optional
+///     behaviour: circle_behaviour,   // optional; see nodetool::behaviour
 ///     inputs:  [ radius: ["i32", "f64"] ],
 ///     outputs: [ shape: "shapes/shape" ],
 /// }
 /// ```
 ///
 /// A port carries one or more declared type references; write them as a single
-/// literal or a bracketed list.
+/// literal or a bracketed list. The optional `behaviour` arm names a
+/// `fn() -> Box<dyn nodetool::behaviour::Behaviour>` that builds the behaviour
+/// each instance runs — the stream semantics it programs against live in
+/// [`nodetool::behaviour`](crate::behaviour).
 #[macro_export]
 macro_rules! node_type {
     (
@@ -82,6 +96,7 @@ macro_rules! node_type {
         icon: $icon:literal,
         plugin: $plugin:literal
         $(, sub_group: $sub_group:literal)?
+        $(, behaviour: $behaviour:path)?
         ,
         inputs: [ $($input_name:ident : $input_types:tt),* $(,)? ]
         ,
@@ -95,6 +110,7 @@ macro_rules! node_type {
                 icon: $icon,
                 plugin: $plugin,
                 sub_group: $crate::node_type!(@sub_group $($sub_group)?),
+                behaviour: $crate::node_type!(@behaviour $($behaviour)?),
                 inputs: $crate::node_type!(@ports $($input_name : $input_types),*),
                 outputs: $crate::node_type!(@ports $($output_name : $output_types),*),
             }
@@ -102,6 +118,8 @@ macro_rules! node_type {
     };
     (@sub_group $sub_group:literal) => { Some($sub_group) };
     (@sub_group) => { None };
+    (@behaviour $behaviour:path) => { Some($behaviour) };
+    (@behaviour) => { None };
     (@ports $($name:ident : $types:tt),*) => {
         &[$(
             $crate::Port {

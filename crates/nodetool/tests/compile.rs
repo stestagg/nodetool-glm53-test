@@ -393,23 +393,23 @@ fn literals_ride_the_connection_rules() {
 
     let integer = parameter_of(&compiled, SINK, "value");
     assert_eq!(integer.resolved_type.name, "i32");
-    assert_eq!(integer.value, ParameterValue::Int(3));
+    assert_eq!(integer.value.get::<i32>(), Some(&3));
 
     let bridged = parameter_of(&compiled, SINK_F64, "value");
     assert_eq!(bridged.resolved_type.name, "f64");
-    assert_eq!(bridged.value, ParameterValue::Float(3.0));
+    assert_eq!(bridged.value.get::<f64>(), Some(&3.0));
 
     let float = parameter_of(&compiled, SINK_F64_2, "value");
     assert_eq!(float.resolved_type.name, "f64");
-    assert_eq!(float.value, ParameterValue::Float(2.5));
+    assert_eq!(float.value.get::<f64>(), Some(&2.5));
 
     let text = parameter_of(&compiled, SINK_TEXT, "text");
     assert_eq!(text.resolved_type.name, "String");
-    assert_eq!(text.value, ParameterValue::Str("hi".into()));
+    assert_eq!(text.value.get::<String>().map(String::as_str), Some("hi"));
 
     let boolean = parameter_of(&compiled, SINK_BOOL, "flag");
     assert_eq!(boolean.resolved_type.name, "bool");
-    assert_eq!(boolean.value, ParameterValue::Bool(true));
+    assert_eq!(boolean.value.get::<bool>(), Some(&true));
 }
 
 #[test]
@@ -518,16 +518,20 @@ fn a_literal_on_the_boundary_of_its_exact_match_type_compiles() {
     ));
 
     assert_eq!(
-        parameter_of(&compiled, SINK_I8, "value").value,
-        ParameterValue::Int(127)
+        parameter_of(&compiled, SINK_I8, "value").value.get::<i8>(),
+        Some(&127)
     );
     assert_eq!(
-        parameter_of(&compiled, SINK_U64, "value").value,
-        ParameterValue::Int(0)
+        parameter_of(&compiled, SINK_U64, "value")
+            .value
+            .get::<u64>(),
+        Some(&0)
     );
     assert_eq!(
-        parameter_of(&compiled, SINK_F32, "value").value,
-        ParameterValue::Float(3.4e38)
+        parameter_of(&compiled, SINK_F32, "value")
+            .value
+            .get::<f32>(),
+        Some(&(3.4e38f64 as f32))
     );
 
     // The lower integer boundary, and i64's maximum — a literal is an i64, so
@@ -549,12 +553,14 @@ fn a_literal_on_the_boundary_of_its_exact_match_type_compiles() {
     ));
 
     assert_eq!(
-        parameter_of(&compiled, SINK_I8, "value").value,
-        ParameterValue::Int(-128)
+        parameter_of(&compiled, SINK_I8, "value").value.get::<i8>(),
+        Some(&-128)
     );
     assert_eq!(
-        parameter_of(&compiled, SINK_U64, "value").value,
-        ParameterValue::Int(i64::MAX)
+        parameter_of(&compiled, SINK_U64, "value")
+            .value
+            .get::<u64>(),
+        Some(&(i64::MAX as u64))
     );
 }
 
