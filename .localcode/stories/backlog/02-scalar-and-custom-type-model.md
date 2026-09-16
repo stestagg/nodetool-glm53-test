@@ -5,90 +5,94 @@ date: 2026-09-16
 
 ## Description
 
-The type model is the vocabulary every connection in a graph speaks, and this
-story populates it: the base Rust-aligned scalar set every graph can rely on
-out of the box, and the extension point plugin authors use to introduce their
-own data types — each identified by a stable uuid and a unique name, carrying
-top-level metadata and optional conversion declarations, opaque to core beyond
-exactly that.
+Story 01 lets a plugin describe node ports that carry type references; this
+story creates what those references point at. Core gains the type model: a
+registry of data types, seeded with a base set of scalars aligned with Rust's
+own types, and open to plugin-defined custom types arriving through the same
+link-and-go inventory path as node types.
 
-Two behaviours follow for the people using graphs. Trivial conversions are
-declared, not improvised: `i16`→`i32`, `f32`→`f64`, `i32`→`f64` and their
-kin simply work when the compiler resolves a connection, while nothing
-converts silently to `String` — string formatting stays the Format node's
-explicit job. And named type groups (starting with `numeric`) let a node
-accept a whole family of types with one port reference, so a counter or
-comparison node never has to be duplicated per type; pinning a group
-reference down to one concrete type is the compiler's job, not this story's.
+For a plugin author this is the moment the type system becomes real. A plugin
+declares a custom type with a uuid, a name, free-form top-level metadata, an
+optional set of declared conversions to other types, and optional ser/de hooks
+for its data — and core treats it as opaque beyond that top level. The payload,
+its serialisation, and any rendering stay entirely in the plugin; core never
+learns what is inside. Core's scalars declare the trivial conversions (the
+requirements name i16→i32, f32→f64, and i32→f64) so that, from the compiler
+story onward, a connection across one of those conversions simply works;
+anything not declared never converts implicitly, and conversion to string is
+never a type behaviour — that is an explicit Format node's job.
 
-The proof is an example binary that prints the collected type registry — the
-scalar set with its groups and declared conversions, plus a sample plugin's
-custom type — so a plugin author can see, by eye, both halves of the model
-working: the scalars they get for free, and their own type arriving through
-linking alone.
+The visible proof follows story 01's pattern: the example binary's output now
+also shows the type registry — the core scalars, the sample plugin's custom
+type as core sees it (name, id, metadata, declared conversion targets), and
+the sample plugin's port references resolving to real registered types.
 
 ## Definition of done
 
-- Core's type registry comes pre-populated with the base scalar set — `i8`,
-  `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64`, `bool`,
-  `String` — each with a stable uuid and unique name, so node descriptors and
-  graph files can reference these types with no plugin present. (REQ-29)
-- Every type carries the top-level metadata core and the editor may show —
-  id, name, and optional plugin-supplied extras — and nothing more about
-  custom types is visible to core, the graph model, or the editor. (REQ-31,
-  REQ-33)
-- A plugin registers additional custom types by linking alone, contributing a
-  type descriptor (uuid, name, metadata, optional conversion declarations)
-  into the same registry the scalars live in — one registry, no second
-  mechanism, no core changes. (REQ-30, REQ-9, REQ-8)
-- Custom type data stays opaque: core holds custom types as descriptors only,
-  and a plugin may attach serialisation hooks (ser/de) to its own descriptor
-  for its own node UI to use later, stored by core without interpretation.
-  (REQ-32, REQ-34)
-- Trivial conversions are declared on the types: the scalar set ships with
-  one-way declarations for widening integer conversions, integer→float, and
-  `f32`→`f64` — covering every pair REQ-35 names — and the registry exposes
-  lookup of the declared conversion between two types, the API the compiler
-  will consume when resolving connections. (REQ-35)
-- The declared conversion matrix contains no conversion to `String`: turning
-  a value into text is always an explicit node, never a silent adaptation.
-  (REQ-36)
-- The type model supports named type groups — the scalars include a
-  `numeric` group — and a port can reference a group as well as concrete
-  types, so a node can accept "all numeric types" with one reference and no
-  per-type duplication; how a group reference is resolved to a concrete type
-  is left to the compiler story. (REQ-27, REQ-2)
-- A duplicate type id or name at collection time — including a custom type
-  clashing with a scalar's name — is reported as an error, never silently
-  dropped or overridden. (REQ-71)
-- Nothing in core switches behaviour on a concrete custom type or its data;
-  custom types flow through registration, lookup, and the example output as
-  opaque descriptors. (REQ-73, REQ-33)
-- An example binary prints the collected type registry — scalar names, ids,
-  groups and declared conversions, plus a sample plugin's custom type with
-  its metadata and conversion declarations — verifiable by eye; registration,
-  conflict reporting, and conversion lookup carry focused tests, the
-  workspace stays clippy-clean, and `DEVELOPMENT.md` explains how to run the
-  example and the tests.
+- Core's type registry ships populated with the base scalar set aligned with
+  Rust's types — `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`,
+  `f64`, `bool`, `String` — each carrying a name and a stable uuid, visible in
+  the example's output. (REQ-29)
+- Core's scalars declare their trivial conversions explicitly: at least the
+  requirements' named set (i16→i32, f32→f64, i32→f64) plus the same-kind
+  widenings consistent with that policy, so the declarations the compiler will
+  honour already exist. (REQ-35)
+- The type machinery performs no conversion that is not declared, and no
+  conversion to string is registered anywhere in core; turning a value into
+  text is always an explicit node's job. (REQ-36)
+- A plugin registers custom types purely by linking, through the same
+  inventory contribution path as node types, with no manual registry to
+  maintain and nothing in core aware of any concrete custom type. (REQ-30,
+  REQ-9)
+- A custom type descriptor carries a uuid, a name, optional conversion
+  declarations targeting other registered types, and free-form top-level
+  metadata. (REQ-31)
+- A custom type may declare ser/de hooks for its data where the data supports
+  it; the hooks are registered with the descriptor for later consumers
+  (inline parameter values in graph files, custom node UI). (REQ-34)
+- Core's entire view of a custom type is its top level — name, id, metadata,
+  declared conversion targets: the example output shows exactly that and
+  nothing more, and the registry works with zero custom types registered as
+  happily as with several. (REQ-32, REQ-33)
+- A port's type reference from story 01 — including each entry of a
+  union-typed reference — resolves against the registry by name or uuid; the
+  example prints the sample plugin's ports resolved to their registered
+  types, and a reference to an unregistered type is reported as not found
+  rather than guessed at. (REQ-71)
+- Two contributions claiming the same type uuid or the same name — across
+  plugins or within one — are reported clearly (which id/name, which
+  plugins), never silently dropped. (REQ-71)
+- Nothing in core switches behaviour on a specific type: the registry and
+  lookup treat every type as an opaque descriptor, scalars and custom types
+  alike. (REQ-73)
+- Focused tests cover registration, reference resolution, each declared
+  conversion producing its declared target type when applied to a value,
+  ser/de hook registration, and conflict reporting; the workspace stays
+  clippy-clean, and `DEVELOPMENT.md` covers running the extended example.
 
 ## Comments
 
-- 2026-09-16: This story settles the vision's open question on generic
-  numeric ports, via named type groups (`numeric`). That is the mechanism
-  story 09 later uses so its Counter and Condition nodes accept all numeric
-  types (REQ-62, REQ-63) without duplication; those requirements stay with
-  story 09, which is also where compile-time negotiation of a group reference
-  meets real nodes. "Type groups" are data-type classes — distinct from
-  palette sub-groupings of nodes (REQ-10, story 19) and from graph
-  groups/subgraphs (story 23).
+- 2026-09-16: Boundaries with neighbouring stories: this story populates what
+  story 01's port references point at. Resolving a *connection's* concrete
+  type across unions, honouring declared conversions at compile time, turning
+  a literal parameter into a typed value, and whether an applied conversion
+  appears in the graph model or the file are all story 04 — nothing here
+  negotiates or applies conversions between connections. That a custom type's
+  inline parameter value is deserialised through the registered ser/de hook
+  follows from the descriptor shape here and is exercised by story 04.
 
-- 2026-09-16: Boundaries with neighbouring stories: the registry machinery
-  and node descriptors are story 01 — this story adds type contributions to
-  that one registry. Inserting conversion adapters into connections, how
-  unions and declared conversions participate in resolution, and whether an
-  applied conversion appears in the graph file are story 04's open questions.
-  The runtime value representation and when conversions are applied as values
-  flow belong to the engine stories (05, 06). Palette presentation by type —
-  icons, colours — is story 19; rendering a custom type in a custom node UI
-  using the ser/de hooks is story 21. The scalar set above is fixed here;
-  extending it later is additive and needs no rework.
+- 2026-09-16: The scalar list above is the settled baseline, chosen so REQ-62's
+  "all numeric types" has something to mean; `usize`/`isize` are deliberately
+  out — nothing in the requirements or vision calls for them, and the set
+  stays small. Narrowing and signed→unsigned conversions are not declared
+  trivial. How a node definition expresses a generic numeric port (a Counter
+  over every numeric type) is story 09's open question.
+
+- 2026-09-16: REQ-34's second half — accessing the data in a custom node UI —
+  is story 21; this story only provides the registered hooks. Story 03 already
+  points the serialisation of custom-type parameter values at this story and
+  the custom UI story.
+
+- 2026-09-16: Presentation hints a plugin wants for its types (colour, shape)
+  ride in the free-form metadata; how the palette presents types is story 19.
+  Core stays out of it. (REQ-48, REQ-73)
