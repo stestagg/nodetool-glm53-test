@@ -17,3 +17,5 @@ _To be written when this story is populated._
 ## Comments
 
 - 2026-09-16: Writing this story out got stuck: opencode run failed (1). It stays in the backlog to be tried again.
+
+- 2026-09-16: Writing this story out got stuck: populate 02-scalar-and-custom-type-model.md could not be made valid in 3 attempts: .localcode/stories/backlog/02-scalar-and-custom-type-model.md still carries `placeholder: true`; remove it once the story is written out. It stays in the backlog to be tried again.
