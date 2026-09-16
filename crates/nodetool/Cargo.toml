@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 inventory = "0.3"
+uuid = { version = "1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 test-plugin-alpha = { path = "tests/plugins/alpha" }
