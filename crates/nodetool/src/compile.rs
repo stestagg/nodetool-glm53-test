@@ -15,11 +15,12 @@
 //! Validation is what correctness requires and nothing more. The graph must
 //! be a DAG — a cycle is an error naming the cycle — every edge must land on
 //! ports that exist on its node types, and an input takes at most one
-//! upstream connection while an output may fan out freely. An input left
-//! with neither a connection nor a parameter value is *not* an error: it
-//! compiles, and the runtime gives it the degenerate behaviour of a stream
-//! that completes immediately; flagging such inputs early, if wanted,
-//! belongs to the editor's warn-early set, not to compilation.
+//! upstream connection while an output may fan out freely. A node instance
+//! carries a unique uuid, a parameter must name an input port, and an input
+//! carries a parameter or a connection — never both. An input left with
+//! neither a connection nor a parameter value is *not* an error: it
+//! compiles unconnected; flagging such inputs early, if wanted, belongs to
+//! the editor's warn-early set, not to compilation.
 //!
 //! Every connection's type is resolved before the graph is built, across the
 //! unions its ports declare: the first exact match, walking the upstream's
@@ -35,12 +36,14 @@
 //! Parameter literals ride the same resolution, the literal's YAML scalar
 //! kind (integer, float, boolean, string) standing in as the upstream side
 //! against the input port's declared union. The kinds stand in as the base
-//! scalar set: an integer literal matches an integer-declared member
-//! exactly, and bridges further only through a declared conversion from one
+//! scalar set: an integer literal matches an integer-declared member by
+//! kind, and bridges further only through a declared conversion from one
 //! of those scalars — so `3` into an `f64`-only port resolves through the
 //! declared `i32`→`f64` conversion and the compiled parameter already holds
-//! the converted value. A literal the declared types neither match nor
-//! bridge is a compile error.
+//! the converted value. Whichever member a literal resolves to, the value
+//! must fit it: `300` into an `i8`-declared input is an error, not a
+//! parameter the engine misreads. A literal the declared types neither
+//! match nor bridge is a compile error.
 //!
 //! The compiled graph addresses nodes by instance uuid alone. Nothing in
 //! its shape branches on what a node is called or which type it is, and a
@@ -49,7 +52,6 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fmt;
 
 use uuid::Uuid;
 
@@ -62,21 +64,21 @@ use crate::{Conversion, ConvertFn, DataType, NodeType, Port};
 pub fn compile(
     definition: &GraphDefinition,
     registry: &Registry,
-) -> Result<CompiledGraph, Vec<CompileError>> {
+) -> Result<CompiledGraph, Vec<String>> {
     let mut errors = Vec::new();
 
     let mut instances = BTreeMap::<Uuid, (&NodeInstance, Option<&'static NodeType>)>::new();
     for instance in &definition.nodes {
         let node_type = registry.node_type(&instance.type_ref);
         if node_type.is_none() {
-            errors.push(err(format!(
+            errors.push(format!(
                 "node {} instantiates `{}`, which no linked plugin declares",
                 instance.uuid, instance.type_ref
-            )));
+            ));
         }
         match instances.entry(instance.uuid) {
             std::collections::btree_map::Entry::Occupied(_) => {
-                errors.push(err(format!("duplicate node uuid {}", instance.uuid)));
+                errors.push(format!("duplicate node uuid {}", instance.uuid));
             }
             std::collections::btree_map::Entry::Vacant(slot) => {
                 slot.insert((instance, node_type));
@@ -90,7 +92,7 @@ pub fn compile(
             .map(|uuid| format!("{uuid} (`{}`)", instances[uuid].0.type_ref))
             .collect::<Vec<_>>()
             .join(" → ");
-        errors.push(err(format!("cycle: {named}")));
+        errors.push(format!("cycle: {named}"));
     }
 
     let mut connections = Vec::with_capacity(definition.edges.len());
@@ -100,10 +102,10 @@ pub fn compile(
         let to = instances.get(&edge.to);
         for (uuid, role) in [(edge.from, "from"), (edge.to, "to")] {
             if !instances.contains_key(&uuid) {
-                errors.push(err(format!(
-                    "edge from {} `{}` to {} `{}`: the {role} node {uuid} is not defined in the graph",
+                errors.push(format!(
+                    "edge {} `{}` → {} `{}`: the {role} node {uuid} is not defined in the graph",
                     edge.from, edge.from_port, edge.to, edge.to_port
-                )));
+                ));
             }
         }
         let from_type = from.and_then(|(_, node_type)| *node_type);
@@ -113,28 +115,28 @@ pub fn compile(
         if let Some(node_type) = from_type {
             output = port(node_type.outputs, &edge.from_port);
             if output.is_none() {
-                errors.push(err(format!(
+                errors.push(format!(
                     "node {} (`{}`) has no output port `{}`",
                     edge.from, node_type.type_ref, edge.from_port
-                )));
+                ));
             }
         }
         let mut input = None;
         if let Some(node_type) = to_type {
             input = port(node_type.inputs, &edge.to_port);
             if input.is_none() {
-                errors.push(err(format!(
+                errors.push(format!(
                     "node {} (`{}`) has no input port `{}`",
                     edge.to, node_type.type_ref, edge.to_port
-                )));
+                ));
             }
         }
         if let Some(input) = input {
             if let Some(first) = fed_by.insert((edge.to, input.name), edge.from) {
-                errors.push(err(format!(
+                errors.push(format!(
                     "input `{}` of node {} receives more than one connection (from {} and {})",
                     input.name, edge.to, first, edge.from
-                )));
+                ));
             }
         }
 
@@ -148,10 +150,10 @@ pub fn compile(
                     resolved_type,
                     conversion,
                 }),
-                None => errors.push(err(format!(
+                None => errors.push(format!(
                     "connection {} `{}` ({}) → {} `{}` ({}): no exact match and no declared conversion bridges them",
                     edge.from, edge.from_port, output.type_refs.join(", "), edge.to, edge.to_port, input.type_refs.join(", ")
-                ))),
+                )),
             }
         }
     }
@@ -162,27 +164,27 @@ pub fn compile(
         let mut parameters = BTreeMap::new();
         for (name, literal) in &instance.parameters {
             let Some(input) = port(node_type.inputs, name) else {
-                errors.push(err(format!(
+                errors.push(format!(
                     "node {} (`{}`): parameter `{}` does not name an input port",
                     uuid, node_type.type_ref, name
-                )));
+                ));
                 continue;
             };
             if fed_by.contains_key(&(*uuid, input.name)) {
-                errors.push(err(format!(
+                errors.push(format!(
                     "input `{}` of node {} holds a parameter value and receives a connection; an input carries one or the other",
                     input.name, uuid
-                )));
+                ));
                 continue;
             }
             match resolve_literal(literal, input.type_refs, registry) {
                 Some((resolved_type, value)) => {
                     parameters.insert(input.name, CompiledParameter { resolved_type, value });
                 }
-                None => errors.push(err(format!(
-                    "node {} (`{}`): input `{}`: {} literal {literal} does not match declared types {} — no exact match and no declared conversion bridges them",
-                    uuid, node_type.type_ref, input.name, kind_label(literal_kind(literal)), input.type_refs.join(", ")
-                ))),
+                None => errors.push(format!(
+                    "node {} (`{}`): input `{}`: literal {literal} does not match declared types {} — no exact match and no declared conversion bridges them",
+                    uuid, node_type.type_ref, input.name, input.type_refs.join(", ")
+                )),
             }
         }
         nodes.insert(
@@ -250,27 +252,6 @@ pub struct Connection {
     pub conversion: Option<Conversion>,
 }
 
-/// Why a definition failed to compile: a message naming the nodes and ports
-/// involved, precise enough to act on.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CompileError {
-    pub message: String,
-}
-
-impl fmt::Display for CompileError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for CompileError {}
-
-fn err(message: impl Into<String>) -> CompileError {
-    CompileError {
-        message: message.into(),
-    }
-}
-
 fn port<'p>(ports: &'p [Port], name: &str) -> Option<&'p Port> {
     ports.iter().find(|port| port.name == name)
 }
@@ -318,10 +299,13 @@ fn resolve_literal(
 ) -> Option<(&'static DataType, ParameterValue)> {
     let kind = literal_kind(literal);
     for &name in declared {
-        if let Some(data_type) = registry.data_type(name) {
-            if scalar_kind(data_type.name) == Some(kind) {
-                return Some((data_type, literal.clone()));
-            }
+        let Some(data_type) = registry.data_type(name) else {
+            continue;
+        };
+        if scalar_kind(data_type.name) == Some(kind)
+            && materialize(literal, data_type.name).is_some()
+        {
+            return Some((data_type, literal.clone()));
         }
     }
     for &name in declared {
@@ -390,18 +374,10 @@ fn kind_names(kind: ScalarKind) -> &'static [&'static str] {
         .expect("every ScalarKind is listed in KIND_NAMES")
 }
 
-fn kind_label(kind: ScalarKind) -> &'static str {
-    match kind {
-        ScalarKind::Integer => "integer",
-        ScalarKind::Float => "float",
-        ScalarKind::Bool => "boolean",
-        ScalarKind::Str => "string",
-    }
-}
-
 /// Present a literal as the concrete scalar value `source` names, so the
-/// declared conversion function can read it. A literal that does not fit the
-/// source's range yields None: the candidate simply does not bridge.
+/// declared conversion function can read it. An integer outside the
+/// source's range yields None: the candidate simply does not bridge. A
+/// float wider than f32's range yields None too; one that fits is narrowed.
 fn materialize(literal: &ParameterValue, source: &str) -> Option<Box<dyn Any>> {
     let value: Box<dyn Any> = match (literal, source) {
         (ParameterValue::Bool(value), "bool") => Box::new(*value),
@@ -414,16 +390,22 @@ fn materialize(literal: &ParameterValue, source: &str) -> Option<Box<dyn Any>> {
         (ParameterValue::Int(value), "u16") => Box::new(u16::try_from(*value).ok()?),
         (ParameterValue::Int(value), "u8") => Box::new(u8::try_from(*value).ok()?),
         (ParameterValue::Float(value), "f64") => Box::new(*value),
-        (ParameterValue::Float(value), "f32") => Box::new(*value as f32),
+        (ParameterValue::Float(value), "f32") => {
+            let narrowed = *value as f32;
+            if !narrowed.is_finite() {
+                return None;
+            }
+            Box::new(narrowed)
+        }
         (ParameterValue::Str(value), "String") => Box::new(value.clone()),
         _ => return None,
     };
     Some(value)
 }
 
-/// Read a converted value back as a plain parameter scalar. Only the four
-/// scalar kinds can hold a parameter; a conversion producing anything else
-/// does not bridge a literal.
+/// Read a converted value back as a plain parameter scalar. Only bool, i64,
+/// f64, and String read back; a conversion producing any other erased value
+/// — i32, say — does not bridge a literal.
 fn unpack(converted: Box<dyn Any>) -> Option<ParameterValue> {
     if let Some(&value) = converted.downcast_ref::<bool>() {
         Some(ParameterValue::Bool(value))

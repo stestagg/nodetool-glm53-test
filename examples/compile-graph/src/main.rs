@@ -57,11 +57,15 @@ fn print_compiled(compiled: &CompiledGraph) {
         }
     }
     for connection in &compiled.connections {
+        let from_type = compiled.nodes[&connection.from].node_type.type_ref;
+        let to_type = compiled.nodes[&connection.to].node_type.type_ref;
         println!(
-            "  {} `{}` → {} `{}` : {}{}",
+            "  connection {} [{}] `{}` → {} [{}] `{}` : {}{}",
             connection.from,
+            from_type,
             connection.from_port,
             connection.to,
+            to_type,
             connection.to_port,
             connection.resolved_type.name,
             if connection.conversion.is_some() {

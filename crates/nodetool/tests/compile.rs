@@ -19,6 +19,11 @@ const RATIO: &str = "00000000-0000-0000-0000-0000000000a4";
 const SINK: &str = "00000000-0000-0000-0000-0000000000b1";
 const SINK_F64: &str = "00000000-0000-0000-0000-0000000000b2";
 const SINK_TEXT: &str = "00000000-0000-0000-0000-0000000000b3";
+const SINK_F64_2: &str = "00000000-0000-0000-0000-0000000000b4";
+const SINK_BOOL: &str = "00000000-0000-0000-0000-0000000000b5";
+const SINK_I8: &str = "00000000-0000-0000-0000-0000000000b6";
+const SINK_U64: &str = "00000000-0000-0000-0000-0000000000b7";
+const SINK_F32: &str = "00000000-0000-0000-0000-0000000000b8";
 const PASS_1: &str = "00000000-0000-0000-0000-0000000000c1";
 const PASS_2: &str = "00000000-0000-0000-0000-0000000000c2";
 const MISSING: &str = "00000000-0000-0000-0000-0000000000ff";
@@ -65,11 +70,7 @@ fn compile_ok(definition: &GraphDefinition) -> CompiledGraph {
 }
 
 fn compile_errors(definition: &GraphDefinition) -> Vec<String> {
-    compile::compile(definition, &registry())
-        .unwrap_err()
-        .into_iter()
-        .map(|error| error.message)
-        .collect()
+    compile::compile(definition, &registry()).unwrap_err()
 }
 
 fn single_error(messages: Vec<String>) -> String {
@@ -250,6 +251,23 @@ fn an_edge_referencing_an_unknown_instance_is_an_error() {
 }
 
 #[test]
+fn a_duplicate_instance_uuid_is_an_error() {
+    let messages = compile_errors(&definition(
+        vec![
+            node(SINK, "gamma/int_sink"),
+            node(SINK, "gamma/float64_sink"),
+        ],
+        vec![],
+    ));
+
+    let error = single_error(messages);
+    assert!(
+        error.contains("duplicate node uuid") && error.contains(SINK),
+        "{error}"
+    );
+}
+
+#[test]
 fn an_edge_to_a_missing_port_is_an_error() {
     let messages = compile_errors(&definition(
         vec![
@@ -355,7 +373,7 @@ fn literals_ride_the_connection_rules() {
                 ParameterValue::Int(3),
             ),
             with_parameter(
-                node("00000000-0000-0000-0000-0000000000b4", "gamma/float64_sink"),
+                node(SINK_F64_2, "gamma/float64_sink"),
                 "value",
                 ParameterValue::Float(2.5),
             ),
@@ -365,7 +383,7 @@ fn literals_ride_the_connection_rules() {
                 ParameterValue::Str("hi".into()),
             ),
             with_parameter(
-                node("00000000-0000-0000-0000-0000000000b5", "gamma/bool_sink"),
+                node(SINK_BOOL, "gamma/bool_sink"),
                 "flag",
                 ParameterValue::Bool(true),
             ),
@@ -381,7 +399,7 @@ fn literals_ride_the_connection_rules() {
     assert_eq!(bridged.resolved_type.name, "f64");
     assert_eq!(bridged.value, ParameterValue::Float(3.0));
 
-    let float = parameter_of(&compiled, "00000000-0000-0000-0000-0000000000b4", "value");
+    let float = parameter_of(&compiled, SINK_F64_2, "value");
     assert_eq!(float.resolved_type.name, "f64");
     assert_eq!(float.value, ParameterValue::Float(2.5));
 
@@ -389,7 +407,7 @@ fn literals_ride_the_connection_rules() {
     assert_eq!(text.resolved_type.name, "String");
     assert_eq!(text.value, ParameterValue::Str("hi".into()));
 
-    let boolean = parameter_of(&compiled, "00000000-0000-0000-0000-0000000000b5", "flag");
+    let boolean = parameter_of(&compiled, SINK_BOOL, "flag");
     assert_eq!(boolean.resolved_type.name, "bool");
     assert_eq!(boolean.value, ParameterValue::Bool(true));
 }
@@ -407,7 +425,7 @@ fn a_literal_nothing_bridges_fails_naming_node_input_and_both_types() {
 
     let error = single_error(messages);
     assert!(error.contains(SINK) && error.contains("`value`"), "{error}");
-    assert!(error.contains("string literal \"three\""), "{error}");
+    assert!(error.contains("literal \"three\""), "{error}");
     assert!(error.contains("declared types i32"), "{error}");
 }
 
@@ -423,8 +441,156 @@ fn a_literal_outside_the_conversion_source_range_fails() {
     ));
 
     let error = single_error(messages);
-    assert!(error.contains("integer literal 1099511627776"), "{error}");
+    assert!(error.contains("literal 1099511627776"), "{error}");
     assert!(error.contains("declared types f64"), "{error}");
+}
+
+#[test]
+fn a_literal_that_does_not_fit_its_exact_match_type_fails() {
+    let messages = compile_errors(&definition(
+        vec![with_parameter(
+            node(SINK_I8, "gamma/small_sink"),
+            "value",
+            ParameterValue::Int(300),
+        )],
+        vec![],
+    ));
+
+    let error = single_error(messages);
+    assert!(
+        error.contains(SINK_I8) && error.contains("literal 300"),
+        "{error}"
+    );
+    assert!(error.contains("declared types i8"), "{error}");
+
+    let messages = compile_errors(&definition(
+        vec![with_parameter(
+            node(SINK_U64, "gamma/unsigned_sink"),
+            "value",
+            ParameterValue::Int(-1),
+        )],
+        vec![],
+    ));
+
+    let error = single_error(messages);
+    assert!(
+        error.contains("literal -1") && error.contains("declared types u64"),
+        "{error}"
+    );
+
+    let messages = compile_errors(&definition(
+        vec![with_parameter(
+            node(SINK_F32, "gamma/float32_sink"),
+            "value",
+            ParameterValue::Float(1e300),
+        )],
+        vec![],
+    ));
+
+    let error = single_error(messages);
+    assert!(
+        error.contains(SINK_F32) && error.contains("declared types f32"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_literal_on_the_boundary_of_its_exact_match_type_compiles() {
+    let compiled = compile_ok(&definition(
+        vec![
+            with_parameter(
+                node(SINK_I8, "gamma/small_sink"),
+                "value",
+                ParameterValue::Int(127),
+            ),
+            with_parameter(
+                node(SINK_U64, "gamma/unsigned_sink"),
+                "value",
+                ParameterValue::Int(0),
+            ),
+            with_parameter(
+                node(SINK_F32, "gamma/float32_sink"),
+                "value",
+                ParameterValue::Float(3.4e38),
+            ),
+        ],
+        vec![],
+    ));
+
+    assert_eq!(
+        parameter_of(&compiled, SINK_I8, "value").value,
+        ParameterValue::Int(127)
+    );
+    assert_eq!(
+        parameter_of(&compiled, SINK_U64, "value").value,
+        ParameterValue::Int(0)
+    );
+    assert_eq!(
+        parameter_of(&compiled, SINK_F32, "value").value,
+        ParameterValue::Float(3.4e38)
+    );
+
+    // The lower integer boundary, and i64's maximum — a literal is an i64, so
+    // u64's own maximum is out of a literal's reach.
+    let compiled = compile_ok(&definition(
+        vec![
+            with_parameter(
+                node(SINK_I8, "gamma/small_sink"),
+                "value",
+                ParameterValue::Int(-128),
+            ),
+            with_parameter(
+                node(SINK_U64, "gamma/unsigned_sink"),
+                "value",
+                ParameterValue::Int(i64::MAX),
+            ),
+        ],
+        vec![],
+    ));
+
+    assert_eq!(
+        parameter_of(&compiled, SINK_I8, "value").value,
+        ParameterValue::Int(-128)
+    );
+    assert_eq!(
+        parameter_of(&compiled, SINK_U64, "value").value,
+        ParameterValue::Int(i64::MAX)
+    );
+}
+
+#[test]
+fn one_compile_reports_every_independent_defect() {
+    let messages = compile_errors(&definition(
+        vec![
+            node(SOURCE, "gamma/missing"),
+            with_parameter(
+                node(SINK, "gamma/int_sink"),
+                "value",
+                ParameterValue::Str("three".into()),
+            ),
+            node(PASS_1, "gamma/passthrough"),
+            node(PASS_2, "gamma/passthrough"),
+            node(SINK_TEXT, "gamma/string_sink"),
+        ],
+        vec![
+            edge(MISSING, "value", PASS_1, "value"),
+            edge(PASS_1, "value", PASS_2, "nope"),
+            edge(PASS_1, "value", SINK_TEXT, "text"),
+            edge(PASS_2, "value", PASS_2, "value"),
+        ],
+    ));
+
+    assert_eq!(messages.len(), 6, "{messages:?}");
+    let joined = messages.join("\n");
+    assert!(joined.contains("no linked plugin declares"), "{joined}");
+    assert!(joined.contains("not defined in the graph"), "{joined}");
+    assert!(joined.contains("has no input port `nope`"), "{joined}");
+    assert!(
+        joined.contains("no exact match and no declared conversion"),
+        "{joined}"
+    );
+    assert!(joined.contains("cycle:"), "{joined}");
+    assert!(joined.contains("literal \"three\""), "{joined}");
 }
 
 #[test]

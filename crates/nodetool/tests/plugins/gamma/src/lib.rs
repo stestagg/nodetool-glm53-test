@@ -79,6 +79,33 @@ node_type! {
 }
 
 node_type! {
+    type_ref: "gamma/small_sink",
+    label: "Small sink",
+    icon: "<svg/>",
+    plugin: "gamma",
+    inputs: [ value: "i8" ],
+    outputs: [],
+}
+
+node_type! {
+    type_ref: "gamma/unsigned_sink",
+    label: "Unsigned sink",
+    icon: "<svg/>",
+    plugin: "gamma",
+    inputs: [ value: "u64" ],
+    outputs: [],
+}
+
+node_type! {
+    type_ref: "gamma/float32_sink",
+    label: "Float32 sink",
+    icon: "<svg/>",
+    plugin: "gamma",
+    inputs: [ value: "f32" ],
+    outputs: [],
+}
+
+node_type! {
     type_ref: "gamma/passthrough",
     label: "Passthrough",
     icon: "<svg/>",
