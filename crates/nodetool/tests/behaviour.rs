@@ -671,6 +671,74 @@ async fn a_never_delivering_input_stalls_its_upstream_instead_of_buffering_its_s
     feeder.abort();
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_backlogged_stream_resumes_once_the_gate_opens_and_every_arrival_fires() {
+    let (tx, a) = fed("a");
+    let (b_tx, b) = fed("b");
+    let log = Log::default();
+    let mut behaviour = Pairer { log: log.clone() };
+    let mut inputs = [a, b];
+    let mut outputs = [];
+    let run = tokio::spawn(async move { drive(&mut behaviour, &mut inputs, &mut outputs).await });
+
+    // The other half of the backlog mechanism. While `b` still owes its
+    // first value, `a` floods more than the hand-offs can hold: the backlog
+    // fills, the driver stops polling `a`, its hand-off fills, and the
+    // feeder stalls — one hand-off's worth in the channel, one unprocessed.
+    let taken = Arc::new(AtomicUsize::new(0));
+    tokio::spawn({
+        let taken = taken.clone();
+        async move {
+            for value in 0..10_000 {
+                if tx.send(int(value)).await.is_err() {
+                    break;
+                }
+                taken.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert!(
+        log.runs().is_empty(),
+        "the gate is still closed: no run has fired"
+    );
+    assert_eq!(
+        taken.load(Ordering::SeqCst),
+        2 * HANDOFF_CAPACITY,
+        "the backlog filled: one hand-off's worth in the channel, one unprocessed"
+    );
+
+    // The gate opens into a full backlog. The queued runs must drain it:
+    // polling resumes, the stalled feeder finishes, every arrival fires.
+    // A driver that never resumed would hang here with `b` delivered and
+    // `a`'s tail unpolled — the timeout below turns that into a failure.
+    b_tx.send(int(1)).await.expect("the hand-off takes it");
+    drop(b_tx);
+
+    let outcome = tokio::time::timeout(Duration::from_millis(50), run)
+        .await
+        .expect("the node completed: the backlog drained once the gate opened");
+    outcome
+        .expect("the node task ran")
+        .expect("the node completes without an error");
+
+    let runs = log.runs();
+    assert_eq!(
+        runs.len(),
+        10_001,
+        "every `a` arrival fired its run, plus `b`'s own"
+    );
+    assert_eq!(
+        runs[0], "a a=0 b=1",
+        "the queued arrivals fired once the gate opened, pairing `b`'s held value"
+    );
+    assert_eq!(
+        runs[10_000], "a a=9999 b=1",
+        "the stream's tail fired too: polling resumed as the backlog drained"
+    );
+}
+
 #[tokio::test]
 async fn the_registry_hands_the_declared_behaviour_to_the_driver() {
     let node_type = registry::node_type("gamma/doubler").expect("declared by test plugin gamma");

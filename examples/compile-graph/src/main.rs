@@ -46,8 +46,9 @@ fn main() {
 /// Present a compiled parameter: the demo knows the base scalars it links,
 /// so it reads each value as the concrete type its resolved name declares —
 /// presentation lives here, with the listing, not in core, where the
-/// payload is erased. Anything else stays opaque, as it does everywhere
-/// outside the declaring plugin.
+/// payload is erased. Floats render through `Debug` so their kind shows: an
+/// integral float reads as `3.0`, never the integer `3`. Anything else
+/// stays opaque, as it does everywhere outside the declaring plugin.
 fn present(parameter: &CompiledParameter) -> String {
     let value = &parameter.value;
     let shown = match parameter.resolved_type.name {
@@ -61,8 +62,8 @@ fn present(parameter: &CompiledParameter) -> String {
         "u16" => value.get::<u16>().map(|&v| v.to_string()),
         "u32" => value.get::<u32>().map(|&v| v.to_string()),
         "u64" => value.get::<u64>().map(|&v| v.to_string()),
-        "f32" => value.get::<f32>().map(|&v| v.to_string()),
-        "f64" => value.get::<f64>().map(|&v| v.to_string()),
+        "f32" => value.get::<f32>().map(|v| format!("{v:?}")),
+        "f64" => value.get::<f64>().map(|v| format!("{v:?}")),
         _ => None,
     };
     shown.unwrap_or_else(|| format!("<{}>", parameter.resolved_type.name))

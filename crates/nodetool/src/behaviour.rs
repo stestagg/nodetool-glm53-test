@@ -274,7 +274,7 @@ pub async fn drive(
     // Each input's arrivals queued here, unprocessed. Once one reaches the
     // hand-off's capacity the driver stops polling that input, so its
     // bounded hand-off fills and the upstream stalls there — the driver
-    // never pools a whole stream in its own memory.
+    // never pulls a whole stream into its own memory.
     let mut backlog = vec![0usize; inputs.len()];
     loop {
         if delivered.iter().all(|&d| d) {
@@ -339,7 +339,10 @@ async fn next_arrival(inputs: &mut [Input], backlog: &[usize]) -> Option<(usize,
             if backlog[index] >= HANDOFF_CAPACITY {
                 // Full: leave the value in the hand-off, the upstream
                 // stalled on it. Not an end — polling resumes once the
-                // backlog drains.
+                // backlog drains. An input the gate still waits on can
+                // never take this branch: backlog grows only alongside
+                // `delivered = true`, so an undelivered input always has
+                // backlog 0 and is always polled.
                 waiting = true;
                 continue;
             }
