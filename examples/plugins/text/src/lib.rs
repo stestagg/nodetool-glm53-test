@@ -39,7 +39,7 @@ impl Behaviour for Words {
     }
 }
 
-fn words() -> Box<dyn Behaviour> {
+fn words(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Words)
 }
 
@@ -69,7 +69,7 @@ impl Behaviour for Drip {
     }
 }
 
-fn drip() -> Box<dyn Behaviour> {
+fn drip(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Drip)
 }
 
@@ -86,7 +86,7 @@ impl Behaviour for Uppercase {
     }
 }
 
-fn uppercase() -> Box<dyn Behaviour> {
+fn uppercase(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Uppercase)
 }
 
@@ -113,7 +113,7 @@ impl Behaviour for Split {
     }
 }
 
-fn split() -> Box<dyn Behaviour> {
+fn split(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Split)
 }
 
@@ -141,7 +141,7 @@ impl Behaviour for Check {
     }
 }
 
-fn check() -> Box<dyn Behaviour> {
+fn check(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Check)
 }
 

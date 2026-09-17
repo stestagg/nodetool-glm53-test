@@ -49,6 +49,21 @@
 //! its shape branches on what a node is called or which type it is, and a
 //! node type backed by a subgraph — its compiled body a nested compiled
 //! graph — slots into [`CompiledNode`] without reworking the shape.
+//!
+//! One node type can declare a set of its ports as one *family* — the same
+//! family name on several ports — whose members the ports spell out: the
+//! family resolves to one concrete type per instance, drawn from the
+//! members, under the same exact-or-declared-conversion rules every
+//! connection already follows. An exact agreement among the connected
+//! sources wins; otherwise the first declared member every source reaches
+//! — connections by one declared conversion, literals by fitting — is the
+//! resolution, walking the family's declaration order, never registry
+//! order. Sources that agree on nothing, and a family with no source at
+//! all, are compile errors naming the node, the ports, and their types.
+//! The resolution is recorded on the compiled node, where the behaviour
+//! builder stamps the instance's behaviour for the resolved type; a
+//! connection into or out of a family port is rebuilt against the
+//! resolution, so what the compiled graph carries is what will flow.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -97,6 +112,9 @@ pub fn compile(
 
     let mut connections = Vec::with_capacity(definition.edges.len());
     let mut fed_by = HashMap::<(Uuid, &'static str), Uuid>::new();
+    // Where each input's feed comes from, for the family sources below:
+    // the upstream instance, its port, and the resolved connection type.
+    let mut feeds = HashMap::<(Uuid, &'static str), (Uuid, &'static str, &'static DataType)>::new();
     for edge in &definition.edges {
         let from = instances.get(&edge.from);
         let to = instances.get(&edge.to);
@@ -142,14 +160,20 @@ pub fn compile(
 
         if let (Some(output), Some(input)) = (output, input) {
             match resolve_types(output.type_refs, input.type_refs, registry) {
-                Some((resolved_type, conversion)) => connections.push(Connection {
-                    from: edge.from,
-                    from_port: output.name,
-                    to: edge.to,
-                    to_port: input.name,
-                    resolved_type,
-                    conversion,
-                }),
+                Some((resolved_type, conversion)) => {
+                    feeds.insert(
+                        (edge.to, input.name),
+                        (edge.from, output.name, resolved_type),
+                    );
+                    connections.push(Connection {
+                        from: edge.from,
+                        from_port: output.name,
+                        to: edge.to,
+                        to_port: input.name,
+                        resolved_type,
+                        conversion,
+                    });
+                }
                 None => errors.push(format!(
                     "connection {} `{}` ({}) → {} `{}` ({}): no exact match and no declared conversion bridges them",
                     edge.from, edge.from_port, output.type_refs.join(", "), edge.to, edge.to_port, input.type_refs.join(", ")
@@ -158,7 +182,10 @@ pub fn compile(
         }
     }
 
-    let mut nodes = BTreeMap::new();
+    // Parameters resolve per node; a family port's literal defers until the
+    // family resolved, since the member it must fit is the family's choice.
+    let mut parameters_of = BTreeMap::<Uuid, BTreeMap<&'static str, CompiledParameter>>::new();
+    let mut literals_of = BTreeMap::<Uuid, Vec<(&'static Port, &'static ParameterValue)>>::new();
     for (uuid, (instance, node_type)) in &instances {
         let Some(node_type) = node_type else { continue };
         let mut parameters = BTreeMap::new();
@@ -177,27 +204,245 @@ pub fn compile(
                 ));
                 continue;
             }
-            match resolve_literal(literal, input.type_refs, registry) {
+            if input.family.is_some() {
+                literals_of.entry(*uuid).or_default().push((input, literal));
+            } else {
+                match resolve_literal(literal, input.type_refs, registry) {
+                    Some((resolved_type, value)) => {
+                        parameters.insert(input.name, CompiledParameter { resolved_type, value });
+                    }
+                    None => errors.push(format!(
+                        "node {} (`{}`): input `{}`: literal {literal} does not match declared types {} — no exact match and no declared conversion bridges them",
+                        uuid, node_type.type_ref, input.name, input.type_refs.join(", ")
+                    )),
+                }
+            }
+        }
+        parameters_of.insert(*uuid, parameters);
+    }
+
+    // One job per port family on one node instance: the family's ports, the
+    // member list they declare, and every source that constrains the
+    // resolution — a connected type, a parameter literal, or a connection
+    // from an upstream family output whose own resolution must come first.
+    let mut jobs = Vec::<FamilyJob>::new();
+    for (uuid, (_, node_type)) in &instances {
+        let Some(node_type) = node_type else { continue };
+        let mut grouped = BTreeMap::<&'static str, Vec<&'static Port>>::new();
+        for port in node_type.inputs.iter().chain(node_type.outputs.iter()) {
+            if let Some(family) = port.family {
+                grouped.entry(family).or_default().push(port);
+            }
+        }
+        for (name, ports) in grouped {
+            let members = ports[0].type_refs;
+            if ports.iter().any(|port| port.type_refs != members) {
+                errors.push(format!(
+                    "node {} (`{}`): the ports of its `{}` family declare different member sets ({}); a family resolves across one shared set",
+                    uuid,
+                    node_type.type_ref,
+                    name,
+                    ports.iter().map(|port| port.type_refs.join(", ")).collect::<Vec<_>>().join(" / ")
+                ));
+                continue;
+            }
+            let mut sources = Vec::new();
+            for input in ports.iter().filter(|port| {
+                node_type
+                    .inputs
+                    .iter()
+                    .any(|declared| declared.name == port.name)
+            }) {
+                if let Some((from, from_port, resolved_type)) = feeds.get(&(*uuid, input.name)) {
+                    let upstream_family = instances
+                        .get(from)
+                        .and_then(|(_, node_type)| *node_type)
+                        .and_then(|node_type| port(node_type.outputs, from_port))
+                        .and_then(|output| output.family);
+                    sources.push(match upstream_family {
+                        Some(family) => FamilySource::Deferred(input.name, *from, family),
+                        None => FamilySource::Type(input.name, resolved_type),
+                    });
+                } else if let Some(literal) = literals_of
+                    .get(uuid)
+                    .and_then(|literals| literals.iter().find(|(port, _)| port.name == input.name))
+                {
+                    sources.push(FamilySource::Literal(literal.0.name, literal.1));
+                }
+            }
+            jobs.push(FamilyJob {
+                node: *uuid,
+                type_ref: node_type.type_ref,
+                name,
+                members,
+                ports,
+                sources,
+            });
+        }
+    }
+
+    // Resolve every family. A family fed by an upstream family waits for
+    // that resolution; the loop runs until no job can make progress, which
+    // on an acyclic graph leaves every family resolved or failed.
+    let mut resolved = HashMap::<(Uuid, &'static str), &'static DataType>::new();
+    let mut failed = HashSet::<(Uuid, &'static str)>::new();
+    loop {
+        let mut progress = false;
+        for job in &mut jobs {
+            let key = (job.node, job.name);
+            if resolved.contains_key(&key) || failed.contains(&key) {
+                continue;
+            }
+            let mut ready = true;
+            for source in &mut job.sources {
+                if let FamilySource::Deferred(port, upstream, family) = source {
+                    if let Some(member) = resolved.get(&(*upstream, *family)) {
+                        *source = FamilySource::Type(port, member);
+                    } else if failed.contains(&(*upstream, *family)) {
+                        // The upstream already reported its own failure:
+                        // this family is its consequence, reported there.
+                        failed.insert(key);
+                        ready = false;
+                        break;
+                    } else {
+                        ready = false;
+                        break;
+                    }
+                }
+            }
+            if !ready {
+                continue;
+            }
+            progress = true;
+            match resolve_family(&job.sources, job.members, registry) {
+                FamilyResolution::Resolved(member) => {
+                    resolved.insert(key, member);
+                }
+                FamilyResolution::NoSource => {
+                    failed.insert(key);
+                    errors.push(format!(
+                        "node {} (`{}`): the ports of its `{}` family ({}) carry no connection and no parameter value — the family cannot resolve to a type",
+                        job.node,
+                        job.type_ref,
+                        job.name,
+                        job.ports.iter().map(|port| format!("`{}`", port.name)).collect::<Vec<_>>().join(", ")
+                    ));
+                }
+                FamilyResolution::Conflict => {
+                    failed.insert(key);
+                    errors.push(format!(
+                        "node {} (`{}`): the ports of its `{}` family cannot resolve to one type — {}",
+                        job.node,
+                        job.type_ref,
+                        job.name,
+                        job.sources.iter().map(source_describes).collect::<Vec<_>>().join(", ")
+                    ));
+                }
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+
+    // Fill the resolved families in, resolve each family literal against the
+    // member it must now fit, and rebuild every connection that touches a
+    // family port, so the compiled graph carries the types that will flow.
+    let mut families_of = BTreeMap::<Uuid, BTreeMap<&'static str, &'static DataType>>::new();
+    for ((uuid, family), member) in &resolved {
+        families_of
+            .entry(*uuid)
+            .or_default()
+            .insert(*family, *member);
+    }
+    for (uuid, literals) in &literals_of {
+        for (input, literal) in literals {
+            let Some(member) = resolved.get(&(*uuid, input.family.expect("a family port"))) else {
+                continue;
+            };
+            match resolve_literal(literal, &[member.name], registry) {
                 Some((resolved_type, value)) => {
-                    parameters.insert(input.name, CompiledParameter { resolved_type, value });
+                    parameters_of
+                        .entry(*uuid)
+                        .or_default()
+                        .insert(input.name, CompiledParameter { resolved_type, value });
                 }
                 None => errors.push(format!(
-                    "node {} (`{}`): input `{}`: literal {literal} does not match declared types {} — no exact match and no declared conversion bridges them",
-                    uuid, node_type.type_ref, input.name, input.type_refs.join(", ")
+                    "node {} (`{}`): input `{}`: literal {literal} does not fit the `{}` family's resolved type {}",
+                    uuid,
+                    instances.get(uuid).and_then(|(_, node_type)| node_type.map(|node_type| node_type.type_ref)).unwrap_or(""),
+                    input.name,
+                    input.family.expect("a family port"),
+                    member.name
                 )),
             }
         }
-        nodes.insert(
-            *uuid,
-            CompiledNode {
-                node_type,
-                label: instance
-                    .label
-                    .clone()
-                    .unwrap_or_else(|| node_type.label.to_owned()),
-                parameters,
-            },
-        );
+    }
+    for connection in &mut connections {
+        let Some(from_type) = instances
+            .get(&connection.from)
+            .and_then(|(_, node_type)| *node_type)
+        else {
+            continue;
+        };
+        let Some(to_type) = instances
+            .get(&connection.to)
+            .and_then(|(_, node_type)| *node_type)
+        else {
+            continue;
+        };
+        let from_family =
+            port(from_type.outputs, connection.from_port).and_then(|output| output.family);
+        let to_family = port(to_type.inputs, connection.to_port).and_then(|input| input.family);
+        if from_family.is_none() && to_family.is_none() {
+            continue;
+        }
+        let from_refs =
+            match from_family.and_then(|family| resolved.get(&(connection.from, family))) {
+                Some(member) => vec![member.name],
+                None => port(from_type.outputs, connection.from_port)
+                    .map(|output| output.type_refs.to_vec())
+                    .unwrap_or_default(),
+            };
+        let to_refs = match to_family.and_then(|family| resolved.get(&(connection.to, family))) {
+            Some(member) => vec![member.name],
+            None => port(to_type.inputs, connection.to_port)
+                .map(|input| input.type_refs.to_vec())
+                .unwrap_or_default(),
+        };
+        match resolve_types(&from_refs, &to_refs, registry) {
+            Some((resolved_type, conversion)) => {
+                connection.resolved_type = resolved_type;
+                connection.conversion = conversion;
+            }
+            None => errors.push(format!(
+                "connection {} `{}` → {} `{}`: the resolved family type cannot reach the other side",
+                connection.from, connection.from_port, connection.to, connection.to_port
+            )),
+        }
+    }
+
+    let mut nodes = BTreeMap::new();
+    for (uuid, (instance, node_type)) in &instances {
+        let Some(node_type) = node_type else { continue };
+        let compiled = CompiledNode {
+            node_type,
+            label: instance
+                .label
+                .clone()
+                .unwrap_or_else(|| node_type.label.to_owned()),
+            parameters: parameters_of.remove(uuid).unwrap_or_default(),
+            families: families_of.remove(uuid).unwrap_or_default(),
+        };
+        if let Some(check) = node_type.check_parameters {
+            for message in check(&compiled) {
+                errors.push(format!(
+                    "node {} (`{}`): {message}",
+                    uuid, node_type.type_ref
+                ));
+            }
+        }
+        nodes.insert(*uuid, compiled);
     }
 
     if errors.is_empty() {
@@ -234,6 +479,10 @@ pub struct CompiledNode {
     /// Values fixed for input ports as literals, by port name, each type
     /// resolved — and already converted where a declared conversion bridged.
     pub parameters: BTreeMap<&'static str, CompiledParameter>,
+    /// The concrete type each of the instance's port families resolved to,
+    /// by family name. A behaviour built over a family-declared node reads
+    /// values as the member its family resolved to.
+    pub families: BTreeMap<&'static str, &'static DataType>,
 }
 
 /// A parameter value that compiled: the data type the literal resolved to,
@@ -262,6 +511,115 @@ pub struct Connection {
 
 fn port<'p>(ports: &'p [Port], name: &str) -> Option<&'p Port> {
     ports.iter().find(|port| port.name == name)
+}
+
+/// One port family waiting to resolve on one node instance.
+struct FamilyJob<'g> {
+    node: Uuid,
+    type_ref: &'static str,
+    name: &'static str,
+    /// The members the family's ports declare, in declaration order — the
+    /// order the deterministic tiebreak walks.
+    members: &'static [&'static str],
+    /// The family's ports, for error messages.
+    ports: Vec<&'static Port>,
+    /// What constrains the resolution: one source per fed family input.
+    sources: Vec<FamilySource<'g>>,
+}
+
+/// One source a family's resolution must satisfy, fed into the family
+/// input port the source names.
+enum FamilySource<'g> {
+    /// A connection whose type already resolved.
+    Type(&'static str, &'static DataType),
+    /// A connection from an upstream family output: the concrete type is
+    /// that instance's resolution, known only once it resolves.
+    Deferred(&'static str, Uuid, &'static str),
+    /// A parameter literal: it pins no type, but the resolved member must
+    /// fit it.
+    Literal(&'static str, &'g ParameterValue),
+}
+
+/// What one family's sources agreed on.
+enum FamilyResolution {
+    /// The member every source reaches.
+    Resolved(&'static DataType),
+    /// No source at all: nothing connected, no literal.
+    NoSource,
+    /// Sources that cannot agree on one declared member.
+    Conflict,
+}
+
+/// Resolve one family: an exact agreement wins — every source a connected
+/// type, all the same declared member — otherwise the first declared member
+/// every source reaches by the connection rules, walking the family's
+/// declaration order. The walk never consults registry iteration order, so
+/// resolution is deterministic.
+fn resolve_family(
+    sources: &[FamilySource<'_>],
+    members: &[&'static str],
+    registry: &Registry,
+) -> FamilyResolution {
+    if sources.is_empty() {
+        return FamilyResolution::NoSource;
+    }
+    // Exact agreement: every source a connected type, all naming the same
+    // declared member.
+    let connected = sources
+        .iter()
+        .map(|source| match source {
+            FamilySource::Type(_, resolved_type) => Some(*resolved_type),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>();
+    if let Some(resolved_types) = connected {
+        let first = resolved_types[0];
+        if resolved_types
+            .iter()
+            .all(|resolved_type| resolved_type.name == first.name)
+            && members.contains(&first.name)
+        {
+            return FamilyResolution::Resolved(first);
+        }
+    }
+    for &member in members {
+        let Some(target) = registry.data_type(member) else {
+            continue;
+        };
+        let unified = sources.iter().all(|source| match source {
+            FamilySource::Type(_, resolved_type) => {
+                resolved_type.name == member
+                    || resolved_type
+                        .conversions
+                        .iter()
+                        .any(|conversion| conversion.target == target.id)
+            }
+            FamilySource::Literal(_, literal) => {
+                resolve_literal(literal, &[member], registry).is_some()
+            }
+            FamilySource::Deferred(..) => false,
+        });
+        if unified {
+            return FamilyResolution::Resolved(target);
+        }
+    }
+    FamilyResolution::Conflict
+}
+
+/// What one source says about itself, for the conflict error naming the
+/// ports and their types.
+fn source_describes(source: &FamilySource<'_>) -> String {
+    match source {
+        FamilySource::Type(port, resolved_type) => {
+            format!("`{port}` carries {}", resolved_type.name)
+        }
+        FamilySource::Deferred(port, uuid, family) => {
+            format!("`{port}` waits on node {uuid}'s `{family}` family")
+        }
+        FamilySource::Literal(port, literal) => {
+            format!("`{port}` holds the literal {literal:?}")
+        }
+    }
 }
 
 /// Resolve a connection's type across the two ports' declared unions, in

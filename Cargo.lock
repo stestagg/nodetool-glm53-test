@@ -149,6 +149,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nodetool-fizzbuzz"
+version = "0.1.0"
+dependencies = [
+ "nodetool",
+ "tokio",
+]
+
+[[package]]
 name = "nodetool-utility"
 version = "0.1.0"
 dependencies = [

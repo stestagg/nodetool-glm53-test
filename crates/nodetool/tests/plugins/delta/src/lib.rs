@@ -27,7 +27,7 @@ impl Behaviour for Counter {
     }
 }
 
-fn counter() -> Box<dyn Behaviour> {
+fn counter(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Counter)
 }
 
@@ -50,7 +50,7 @@ impl Behaviour for Pairer {
     }
 }
 
-fn pairer() -> Box<dyn Behaviour> {
+fn pairer(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Pairer)
 }
 
@@ -75,7 +75,7 @@ impl Behaviour for EchoF64 {
     }
 }
 
-fn echo_f64() -> Box<dyn Behaviour> {
+fn echo_f64(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(EchoF64)
 }
 
@@ -94,7 +94,7 @@ impl Behaviour for MixedSource {
     }
 }
 
-fn mixed_source() -> Box<dyn Behaviour> {
+fn mixed_source(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(MixedSource)
 }
 
@@ -107,7 +107,7 @@ impl Behaviour for Failer {
     }
 }
 
-fn failer() -> Box<dyn Behaviour> {
+fn failer(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Failer)
 }
 

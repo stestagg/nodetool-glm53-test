@@ -71,11 +71,13 @@ fn returns_descriptors_exactly_as_declared() {
         [
             nodetool::Port {
                 name: "a",
-                type_refs: &["i32"]
+                type_refs: &["i32"],
+                family: None
             },
             nodetool::Port {
                 name: "b",
-                type_refs: &["i32"]
+                type_refs: &["i32"],
+                family: None
             },
         ]
         .as_slice()
@@ -84,7 +86,8 @@ fn returns_descriptors_exactly_as_declared() {
         add.outputs,
         [nodetool::Port {
             name: "sum",
-            type_refs: &["i32"]
+            type_refs: &["i32"],
+            family: None
         }]
         .as_slice()
     );

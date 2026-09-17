@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/nodetool",
     "crates/nodetool-utility",
+    "crates/nodetool-fizzbuzz",
     "crates/nodetool/tests/plugins/alpha",
     "crates/nodetool/tests/plugins/beta",
     "crates/nodetool/tests/plugins/gamma",

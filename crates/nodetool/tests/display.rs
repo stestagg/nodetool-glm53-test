@@ -13,12 +13,15 @@ fn display_shows_the_grouping_and_every_port_with_its_type_references() {
         inputs: &[Port {
             name: "radius",
             type_refs: &["i32", "f64"],
+            family: None,
         }],
         outputs: &[Port {
             name: "shape",
             type_refs: &["shapes/shape"],
+            family: None,
         }],
         behaviour: None,
+        check_parameters: None,
     };
     let listing = node.to_string();
     assert!(listing.contains("Circle"), "label missing: {listing}");
@@ -56,8 +59,10 @@ fn display_omits_an_absent_sub_group() {
         outputs: &[Port {
             name: "tick",
             type_refs: &["bool"],
+            family: None,
         }],
         behaviour: None,
+        check_parameters: None,
     };
     assert!(!node.to_string().contains("sub-group"));
 }

@@ -31,6 +31,15 @@ scalar data types.
   node, declared through the same `node_type!` registration path and
   authoring API as any third-party plugin. Linking the crate into a binary
   is the whole integration step.
+- `crates/nodetool-fizzbuzz` — the first-party fizzbuzz node library, a
+  plugin crate like the utility one: a `Counter` source, the six
+  `Condition` comparisons (one node type per operation, under a condition
+  sub-group), and an `Output` terminus. It is the reference for the
+  generic-port idiom — one node type per node, its numeric ports declared
+  as one port family (the base numeric set) that the compiler resolves to
+  a single concrete type per instance, with the numeric logic written once
+  and stamped per resolved type (`src/numeric.rs` is the helper). Its
+  binary prints what the plugin contributes to the registry.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the tests
   (`alpha` is sub-grouped, `beta` is flat, `gamma` supplies the compiler
   tests' node types, `delta` supplies the engine tests' node types).
@@ -87,6 +96,7 @@ cargo run -p load-graph        # load a graph file, print it, show the round tri
 cargo run -p compile-graph     # compile each sample graph file, print the result
 cargo run -p run-node          # drive one behaviour-ful node with scripted streams
 cargo run -p run-graph         # run the pipeline sample headless, values as they arrive
+cargo run -p nodetool-fizzbuzz # what the fizzbuzz plugin contributes: nodes, ports, and the types each port spans
 ```
 
 The run-graph samples beyond the default select the demonstration:
@@ -126,9 +136,21 @@ the whole registration step; the first-party utility crate
 way. The macro's rustdoc is the guide — `cargo doc -p nodetool --open` — to
 the declaration form and its linker caveat. A node type declared with the
 optional `behaviour` arm runs: the named function builds a fresh behaviour per
-instance, implementing `nodetool::behaviour::Behaviour` against the input and
-output faces whose stream semantics that module's rustdoc settles. A type
-declared without `behaviour` is a descriptor alone.
+instance from the instance's compiled shape, implementing
+`nodetool::behaviour::Behaviour` against the input and output faces whose
+stream semantics that module's rustdoc settles. A type declared without
+`behaviour` is a descriptor alone.
+
+A node whose ports are generic over several types declares them as one *port
+family*: the ports carry the family name and the member types they span, and
+the compiler resolves the family to one concrete type per instance from the
+instance's connections and parameter literals — exact agreement first, then
+the first declared member every source reaches. The resolved type is recorded
+on the compiled node, so the behaviour builder stamps the instance for that
+type; `crates/nodetool-fizzbuzz` is the reference. The optional
+`check_parameters` arm names a function the compiler consults once the
+instance's parameters and families resolved, for validations the type rules
+cannot express — a zero step, say.
 
 Data types are the vocabulary ports refer to. Core ships the base scalars and
 declares their trivial conversions through the same mechanism a plugin uses;
