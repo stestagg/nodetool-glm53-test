@@ -33,3 +33,5 @@ Three questions the vision leaves open, settled here deliberately:
 - 2026-09-16 — REQ-14 (events driving live node updates in the editor) is met by stories 11, 16, and 17 building on what this story delivers; it is not this story's criterion, because nothing user-visible in the editor exists yet here.
 - 2026-09-16 — The engine notifies one observer; an embedder wanting several listeners composes them behind one observer (the trait makes that a few lines). The engine gains no multi-caster, keeping one of each mechanism.
 - 2026-09-16 — On a fail-fast run, story 06's engine abandons started nodes without a final per-node transition, so their derived status stays "running" until the failed run-finished event closes them. Stories 16 and 17 derive that closure from run-finished; no per-node "aborted" event should be invented for tidiness — that would be the second status mechanism the DoD forbids.
+
+- 2026-09-17: Implemented in pull request #44 (http://localhost:8080/gitea/localcode/nodetool/pulls/44).
