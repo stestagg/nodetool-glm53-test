@@ -35,3 +35,5 @@ Two settlements make the graph trustworthy rather than merely plausible; both ar
 - 2026-09-16 — The printing rule is one rule on purpose: the terminal completes every unconnected output, so the binary stays generic over graph files (REQ-68's "based on a graph file being provided") and the same rule serves UI mode later (REQ-69). Values on stdout, errors on stderr; no verbose flag, no output-port selection — nothing to configure until a run makes someone want it.
 
 - 2026-09-17: Implementation got stuck at "implement story": development: 10-fizzbuzz-headless-binary.md could not be made valid in 3 attempts: there are no commits on process/antirez-dev/auto-run-7e1abedf0c35-10-fizzbuzz-headless-binary-1 beyond main; process/antirez-dev/auto-run-7e1abedf0c35-10-fizzbuzz-headless-binary-1 is not pushed to origin at its current commit; push it; /work/handoff/pull-request.md was not written. The story went back to ready to be picked up again.
+
+- 2026-09-17: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
