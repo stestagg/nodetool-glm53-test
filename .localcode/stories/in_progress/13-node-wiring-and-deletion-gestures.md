@@ -1,6 +1,7 @@
 ---
 title: Node wiring and deletion gestures
 date: 2026-09-16
+pr_id: 48
 ---
 
 ## Description
