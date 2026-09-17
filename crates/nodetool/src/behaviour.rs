@@ -185,7 +185,15 @@ impl Input {
 pub struct Output {
     name: &'static str,
     senders: Vec<(mpsc::Sender<Value>, Option<ConvertFn>)>,
+    watch: Option<EmissionWatch>,
 }
+
+/// Handed each emission beside the deliveries: the port's name and the
+/// value as the behaviour emitted it — before any conversion a connection
+/// rides, whatever the deliveries then do with it. Handing is a one-way
+/// tell that never blocks the emission; what it carries the flow to is
+/// the installer's business, not the output's.
+pub type EmissionWatch = Box<dyn Fn(&'static str, &Value) + Send + Sync>;
 
 impl Output {
     /// An output with no downstream connections yet.
@@ -193,7 +201,20 @@ impl Output {
         Output {
             name,
             senders: Vec::new(),
+            watch: None,
         }
+    }
+
+    /// Install the emission watcher beside this output's deliveries —
+    /// wiring an engine installs, never a behaviour's concern. There is
+    /// one watcher per output: installing a second is a bug — it would
+    /// silently replace the installed wiring — so it panics.
+    pub fn watch_emissions(&mut self, watch: EmissionWatch) {
+        assert!(
+            self.watch.is_none(),
+            "this output already has an emission watcher; replacing installed wiring is a bug"
+        );
+        self.watch = Some(watch);
     }
 
     /// Wire one downstream input to this output: from here on, every
@@ -204,11 +225,16 @@ impl Output {
     }
 
     /// Emit a value: delivered to every connected downstream input, waiting
-    /// on each while its hand-off is full. A downstream that has ended —
-    /// its input gone — receives nothing more: the delivery is skipped,
-    /// which is that stream ending, not an error. A conversion that refuses
-    /// a value (`None`) ends the run, reported with the node and port.
+    /// on each while its hand-off is full. The emission watcher, if one is
+    /// installed, is told of the value as emitted and never holds the
+    /// emission up. A downstream that has ended — its input gone —
+    /// receives nothing more: the delivery is skipped, which is that
+    /// stream ending, not an error. A conversion that refuses a value
+    /// (`None`) ends the run, reported with the node and port.
     pub async fn emit(&mut self, value: Value) {
+        if let Some(watch) = &self.watch {
+            watch(self.name, &value);
+        }
         for (sender, convert) in &mut self.senders {
             let value = match convert {
                 Some(convert) => convert(&value).unwrap_or_else(|| {

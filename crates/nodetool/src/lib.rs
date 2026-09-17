@@ -4,7 +4,8 @@
 //! file format ([`graph`]), the compiler that turns a definition into a
 //! runnable graph ([`compile`]), the node authoring API with the stream
 //! semantics behaviour programs against ([`behaviour`]), and the engine
-//! that runs a compiled graph as live, streaming execution ([`engine`]).
+//! that runs a compiled graph as live, streaming execution and tells an
+//! optional events observer what happens as the run unfolds ([`engine`]).
 //!
 //! Core knows what a node type *is* — a stable type reference, a label, an
 //! icon, a grouping, typed ports, and the behaviour each instance runs —
