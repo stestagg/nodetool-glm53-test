@@ -368,7 +368,7 @@ async fn each_arrival_fires_a_comparison_against_the_held_value() {
 }
 
 #[test]
-fn the_plugin_declares_one_counter_six_conditions_and_one_output() {
+fn the_plugin_declares_one_counter_seven_conditions_one_case_and_one_output() {
     let mut fizzbuzz: Vec<_> = registry::node_types()
         .filter(|node_type| node_type.plugin == "fizzbuzz")
         .map(|node_type| (node_type.type_ref, node_type.sub_group, node_type.label))
@@ -378,7 +378,9 @@ fn the_plugin_declares_one_counter_six_conditions_and_one_output() {
     assert_eq!(
         fizzbuzz,
         vec![
+            ("fizzbuzz/case", None, "Case selection"),
             ("fizzbuzz/counter", None, "Counter"),
+            ("fizzbuzz/divisible", Some("condition"), "Divisible"),
             ("fizzbuzz/eq", Some("condition"), "Equal"),
             ("fizzbuzz/ge", Some("condition"), "Greater or equal"),
             ("fizzbuzz/gt", Some("condition"), "Greater"),
@@ -388,4 +390,240 @@ fn the_plugin_declares_one_counter_six_conditions_and_one_output() {
             ("fizzbuzz/output", None, "Output"),
         ]
     );
+}
+
+/// Drives the divisible condition with one divisor value and a scripted
+/// count stream; returns the booleans it emitted, in order.
+async fn drive_divisible(divisor: i32, counts: &[i32], divisor_first: bool) -> Vec<bool> {
+    let mut behaviour = behaviour_of("fizzbuzz/divisible", "i32");
+    let (a_tx, a_rx) = handoff();
+    let (b_tx, b_rx) = handoff();
+    let (result_tx, mut result_rx) = handoff();
+    let driven = tokio::spawn(async move {
+        let mut inputs = [Input::new("a", a_rx), Input::new("b", b_rx)];
+        let mut outputs = [Output::new("result")];
+        outputs[0].connect(result_tx, None);
+        drive(behaviour.as_mut(), &mut inputs, &mut outputs).await
+    });
+    let send_divisor = || async {
+        b_tx.send(Value::new(scalars::I32, divisor))
+            .await
+            .expect("the stream takes the value");
+    };
+    if divisor_first {
+        send_divisor().await;
+    }
+    for count in counts {
+        a_tx.send(Value::new(scalars::I32, *count))
+            .await
+            .expect("the stream takes the value");
+    }
+    if !divisor_first {
+        send_divisor().await;
+    }
+    drop(a_tx);
+    drop(b_tx);
+    driven
+        .await
+        .expect("the node task ran")
+        .expect("the condition completed");
+    let mut results = Vec::new();
+    while let Some(value) = result_rx.recv().await {
+        results.push(*value.get::<bool>().expect("the result is a bool"));
+    }
+    results
+}
+
+#[tokio::test]
+async fn divisibility_emits_one_boolean_per_count_whether_the_divisor_arrives_first_or_last() {
+    assert_eq!(
+        drive_divisible(3, &[1, 2, 3, 4, 5, 6], true).await,
+        [false, false, true, false, false, true]
+    );
+    assert_eq!(
+        drive_divisible(3, &[1, 2, 3, 4, 5, 6], false).await,
+        [false, false, true, false, false, true]
+    );
+}
+
+#[tokio::test]
+async fn divisibility_by_zero_is_never_true() {
+    assert_eq!(drive_divisible(0, &[0, 3, 9], true).await, [false; 3]);
+}
+
+#[tokio::test]
+async fn divisibility_spans_the_family_like_its_siblings() {
+    let mut behaviour = behaviour_of("fizzbuzz/divisible", "f64");
+    let (a_tx, a_rx) = handoff();
+    let (b_tx, b_rx) = handoff();
+    let (result_tx, mut result_rx) = handoff();
+    let driven = tokio::spawn(async move {
+        let mut inputs = [Input::new("a", a_rx), Input::new("b", b_rx)];
+        let mut outputs = [Output::new("result")];
+        outputs[0].connect(result_tx, None);
+        drive(behaviour.as_mut(), &mut inputs, &mut outputs).await
+    });
+    b_tx.send(Value::new(scalars::F64, 1.5)).await.unwrap();
+    for value in [3.0f64, 4.5, 5.0] {
+        a_tx.send(Value::new(scalars::F64, value)).await.unwrap();
+    }
+    drop(a_tx);
+    drop(b_tx);
+    driven
+        .await
+        .expect("the node task ran")
+        .expect("the condition completed");
+    let mut results = Vec::new();
+    while let Some(value) = result_rx.recv().await {
+        results.push(*value.get::<bool>().expect("the result is a bool"));
+    }
+    assert_eq!(results, [true, true, false]);
+}
+
+/// Drives the case selection with three scripted streams; returns the
+/// strings it emitted, in order.
+async fn drive_case(counts: &[i32], fizz: &[bool], buzz: &[bool]) -> Vec<String> {
+    let mut behaviour = behaviour_of("fizzbuzz/case", "i32");
+    let (count_tx, count_rx) = handoff();
+    let (fizz_tx, fizz_rx) = handoff();
+    let (buzz_tx, buzz_rx) = handoff();
+    let (text_tx, mut text_rx) = handoff();
+    let driven = tokio::spawn(async move {
+        let mut inputs = [
+            Input::new("count", count_rx),
+            Input::new("fizz", fizz_rx),
+            Input::new("buzz", buzz_rx),
+        ];
+        let mut outputs = [Output::new("text")];
+        outputs[0].connect(text_tx, None);
+        drive(behaviour.as_mut(), &mut inputs, &mut outputs).await
+    });
+    for (count, fizz, buzz) in round_robin(counts, fizz, buzz) {
+        count_tx
+            .send(Value::new(scalars::I32, count))
+            .await
+            .expect("the stream takes the value");
+        fizz_tx
+            .send(Value::new(scalars::BOOL, fizz))
+            .await
+            .expect("the stream takes the value");
+        buzz_tx
+            .send(Value::new(scalars::BOOL, buzz))
+            .await
+            .expect("the stream takes the value");
+    }
+    drop(count_tx);
+    drop(fizz_tx);
+    drop(buzz_tx);
+    driven
+        .await
+        .expect("the node task ran")
+        .expect("the case selection completed");
+    let mut strings = Vec::new();
+    while let Some(value) = text_rx.recv().await {
+        strings.push(
+            value
+                .get::<String>()
+                .expect("the text port is a String")
+                .clone(),
+        );
+    }
+    strings
+}
+
+/// The three streams' values as one send at a time, count by count.
+fn round_robin<'a>(
+    counts: &'a [i32],
+    fizz: &'a [bool],
+    buzz: &'a [bool],
+) -> impl Iterator<Item = (i32, bool, bool)> + 'a {
+    counts
+        .iter()
+        .zip(fizz)
+        .zip(buzz)
+        .map(|((&count, &fizz), &buzz)| (count, fizz, buzz))
+}
+
+fn fizzbuzz_line(count: i32) -> String {
+    match (count % 3 == 0, count % 5 == 0) {
+        (true, true) => "FizzBuzz".to_owned(),
+        (true, false) => "Fizz".to_owned(),
+        (false, true) => "Buzz".to_owned(),
+        (false, false) => count.to_string(),
+    }
+}
+
+#[tokio::test]
+async fn the_case_selection_emits_one_string_per_count_in_count_order() {
+    let counts: Vec<i32> = (1..=15).collect();
+    let fizz: Vec<bool> = counts.iter().map(|&count| count % 3 == 0).collect();
+    let buzz: Vec<bool> = counts.iter().map(|&count| count % 5 == 0).collect();
+
+    let strings = drive_case(&counts, &fizz, &buzz).await;
+
+    let expected: Vec<String> = counts.iter().map(|&count| fizzbuzz_line(count)).collect();
+    assert_eq!(strings, expected);
+}
+
+#[tokio::test]
+async fn the_case_selection_pairs_whole_streams_arriving_stream_by_stream() {
+    // Each stream arrives whole, in its own order; only the interleaving
+    // across streams differs from the round-robin drive. The k-th arrival
+    // of each stream still pairs.
+    let counts: Vec<i32> = (1..=15).collect();
+    let fizz: Vec<bool> = counts.iter().map(|&count| count % 3 == 0).collect();
+    let buzz: Vec<bool> = counts.iter().map(|&count| count % 5 == 0).collect();
+
+    let mut behaviour = behaviour_of("fizzbuzz/case", "i32");
+    let (count_tx, count_rx) = handoff();
+    let (fizz_tx, fizz_rx) = handoff();
+    let (buzz_tx, buzz_rx) = handoff();
+    let (text_tx, mut text_rx) = handoff();
+    let driven = tokio::spawn(async move {
+        let mut inputs = [
+            Input::new("count", count_rx),
+            Input::new("fizz", fizz_rx),
+            Input::new("buzz", buzz_rx),
+        ];
+        let mut outputs = [Output::new("text")];
+        outputs[0].connect(text_tx, None);
+        drive(behaviour.as_mut(), &mut inputs, &mut outputs).await
+    });
+    for count in &counts {
+        count_tx
+            .send(Value::new(scalars::I32, *count))
+            .await
+            .expect("the stream takes the value");
+    }
+    drop(count_tx);
+    for &flag in &fizz {
+        fizz_tx
+            .send(Value::new(scalars::BOOL, flag))
+            .await
+            .expect("the stream takes the value");
+    }
+    drop(fizz_tx);
+    for &flag in &buzz {
+        buzz_tx
+            .send(Value::new(scalars::BOOL, flag))
+            .await
+            .expect("the stream takes the value");
+    }
+    drop(buzz_tx);
+    driven
+        .await
+        .expect("the node task ran")
+        .expect("the case selection completed");
+    let mut strings = Vec::new();
+    while let Some(value) = text_rx.recv().await {
+        strings.push(
+            value
+                .get::<String>()
+                .expect("the text port is a String")
+                .clone(),
+        );
+    }
+
+    let expected: Vec<String> = counts.iter().map(|&count| fizzbuzz_line(count)).collect();
+    assert_eq!(strings, expected);
 }

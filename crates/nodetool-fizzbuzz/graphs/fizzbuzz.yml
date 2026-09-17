@@ -1,0 +1,44 @@
+schema_version: 1
+name: fizzbuzz
+nodes:
+  - uuid: 00000000-0000-0000-0000-100000000001
+    type_ref: fizzbuzz/counter
+    label: counter
+    parameters:
+      start: 1
+      stop: 100
+      step: 1
+  - uuid: 00000000-0000-0000-0000-100000000002
+    type_ref: fizzbuzz/divisible
+    label: by three
+    parameters:
+      b: 3
+  - uuid: 00000000-0000-0000-0000-100000000003
+    type_ref: fizzbuzz/divisible
+    label: by five
+    parameters:
+      b: 5
+  - uuid: 00000000-0000-0000-0000-100000000004
+    type_ref: fizzbuzz/case
+    label: case selection
+edges:
+  - from: 00000000-0000-0000-0000-100000000001
+    from_port: count
+    to: 00000000-0000-0000-0000-100000000002
+    to_port: a
+  - from: 00000000-0000-0000-0000-100000000001
+    from_port: count
+    to: 00000000-0000-0000-0000-100000000003
+    to_port: a
+  - from: 00000000-0000-0000-0000-100000000001
+    from_port: count
+    to: 00000000-0000-0000-0000-100000000004
+    to_port: count
+  - from: 00000000-0000-0000-0000-100000000002
+    from_port: result
+    to: 00000000-0000-0000-0000-100000000004
+    to_port: fizz
+  - from: 00000000-0000-0000-0000-100000000003
+    from_port: result
+    to: 00000000-0000-0000-0000-100000000004
+    to_port: buzz

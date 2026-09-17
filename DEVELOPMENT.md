@@ -43,14 +43,20 @@ scalar data types.
   authoring API as any third-party plugin. Linking the crate into a binary
   is the whole integration step.
 - `crates/nodetool-fizzbuzz` — the first-party fizzbuzz node library, a
-  plugin crate like the utility one: a `Counter` source, the six
+  plugin crate like the utility one: a `Counter` source, the seven
   `Condition` comparisons (one node type per operation, under a condition
-  sub-group), and an `Output` terminus. It is the reference for the
-  generic-port idiom — one node type per node, its numeric ports declared
-  as one port family (the base numeric set) that the compiler resolves to
-  a single concrete type per instance, with the numeric logic written once
-  and stamped per resolved type (`src/numeric.rs` is the helper). Its
-  binary prints what the plugin contributes to the registry.
+  sub-group — the six comparisons beside the `Divisible` divisibility
+  test), the `Case selection` that pairs a count with its two divisibility
+  streams and emits each count's fizzbuzz string, and an `Output`
+  terminus. It is the reference for the generic-port idiom — one node type
+  per node, its numeric ports declared as one port family (the base
+  numeric set) that the compiler resolves to a single concrete type per
+  instance, with the numeric logic written once and stamped per resolved
+  type (`src/numeric.rs` is the helper). Its binary is the headless
+  runner: given a graph file path it loads, compiles, and runs the graph,
+  and every output the graph leaves unconnected prints to the terminal as
+  it arrives — one line per value, in its plain string form. The shipped
+  graph is `graphs/fizzbuzz.yml`, the classic fizzbuzz.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the tests
   (`alpha` is sub-grouped, `beta` is flat, `gamma` supplies the compiler
   tests' node types, `delta` supplies the engine tests' node types).
@@ -114,7 +120,8 @@ cargo run -p load-graph        # load a graph file, print it, show the round tri
 cargo run -p compile-graph     # compile each sample graph file, print the result
 cargo run -p run-node          # drive one behaviour-ful node with scripted streams
 cargo run -p run-graph         # run the pipeline sample headless, values as they arrive
-cargo run -p nodetool-fizzbuzz # what the fizzbuzz plugin contributes: nodes, ports, and the types each port spans
+cargo run -p nodetool-fizzbuzz -- crates/nodetool-fizzbuzz/graphs/fizzbuzz.yml
+                             # the fizzbuzz run: one hundred lines, as they arrive
 cargo run -p visual            # the editor on http://127.0.0.1:8420
 cargo run -p visual -- examples/visual/graphs/sample.yml  # the editor on a graph file
 ```
