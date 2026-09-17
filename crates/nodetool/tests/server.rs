@@ -1,7 +1,11 @@
-//! The editor server's operations against the held definition: the
-//! listing, the create, move, label, parameter, wire, unhook, and delete
-//! operations, and every malformed operation path. The transport — the
+//! The editor server's operations against the held session: the listing,
+//! the create, move, label, parameter, wire, unhook, and delete
+//! operations, the file operations — launch-with-file, open, save, fresh
+//! graph — and every malformed operation path. The transport — the
 //! greeting, the envelope, the served socket — is connection.rs's.
+
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use nodetool::graph;
 use nodetool::registry;
@@ -11,11 +15,14 @@ use test_plugin_alpha as _;
 use test_plugin_beta as _;
 
 fn editor() -> Editor {
-    Editor::new(graph::GraphDefinition::empty())
+    Editor::new(graph::GraphDefinition::empty(), None)
 }
 
-fn editor_holding(graph: &str) -> Editor {
-    Editor::new(graph::load(graph).expect("the test seeds a loadable definition"))
+fn editor_holding(text: &str) -> Editor {
+    Editor::new(
+        graph::load(text).expect("the test seeds a loadable definition"),
+        None,
+    )
 }
 
 fn send(editor: &Editor, message: &str) -> Value {
@@ -904,4 +911,436 @@ fn a_created_node_is_a_definition_node_the_compiler_takes() {
     assert_eq!(definition["schema_version"], graph::SCHEMA_VERSION);
     assert!(definition["nodes"][0].get("parameters").is_none());
     assert_eq!(definition["edges"], json!([]));
+}
+
+const SECOND: &str = "schema_version: 1
+name: second
+nodes:
+  - uuid: 0a6b3e72-9c15-4d8f-b3e7-4c8a1f6d9b23
+    type_ref: beta/identity
+    metadata:
+      position: { x: 30, y: 40 }
+edges: []";
+
+/// A unique path under the system temp directory, so test runs never
+/// collide; the file itself the test writes and removes.
+fn temp_path(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("nodetool-{name}-{}.yml", uuid::Uuid::new_v4()))
+}
+
+/// A graph file on disk carrying `text`: what open and save need.
+fn written_graph(name: &str, text: &str) -> PathBuf {
+    let path = temp_path(name);
+    fs::write(&path, text).expect("the test writes its graph file");
+    path
+}
+
+fn path_field(path: &Path) -> String {
+    serde_json::to_string(&path.to_string_lossy().into_owned()).unwrap()
+}
+
+/// The file state the editor holds: the current file and the
+/// unsaved-changes marker, as any connection sees it.
+fn held_file(editor: &Editor) -> Value {
+    send(editor, r#"{"id": 0, "type": "get_definition"}"#)["file"].clone()
+}
+
+#[test]
+fn launching_on_a_file_seeds_the_definition_and_names_it() {
+    let file = written_graph("launch", SEEDED);
+    let path = file.to_string_lossy().into_owned();
+    let editor = Editor::new(graph::load(SEEDED).unwrap(), Some(path.clone()));
+
+    let reply = send(&editor, r#"{"id": 1, "type": "get_definition"}"#);
+    assert_eq!(reply["graph"]["name"], "seeded");
+    assert_eq!(
+        reply["file"],
+        json!({ "path": path, "dirty": false }),
+        "the launched file is the current one, the definition clean"
+    );
+
+    let _ = fs::remove_file(&file);
+}
+
+#[test]
+fn open_replaces_the_definition_and_pushes_it_to_every_connection() {
+    let editor = editor_holding(SEEDED);
+    let file = written_graph("open", SECOND);
+    let path = file.to_string_lossy().into_owned();
+    let mut watchers = [editor.subscribe(), editor.subscribe()];
+
+    let opened = send(
+        &editor,
+        &format!(
+            r#"{{"id": 1, "type": "open_file", "path": {}}}"#,
+            path_field(&file)
+        ),
+    );
+    assert_eq!(opened["type"], "file_opened");
+    assert_eq!(opened["id"], 1);
+
+    // The opened definition is the loader's, whole: the same one the
+    // launch door seeds from the same text — nodes, parameters,
+    // metadata, edges — so the round trip rides on open placing it
+    // verbatim.
+    let definition = held_definition(&editor);
+    assert_eq!(definition, held_definition(&editor_holding(SECOND)));
+    assert_eq!(
+        held_file(&editor),
+        json!({ "path": path, "dirty": false }),
+        "the opened file is the current one, the definition clean"
+    );
+    for watcher in &mut watchers {
+        let pushed = push(watcher);
+        assert_eq!(pushed["type"], "definition");
+        assert_eq!(
+            pushed["graph"], definition,
+            "the push carries the whole opened definition"
+        );
+        assert_eq!(pushed["file"], json!({ "path": path, "dirty": false }));
+    }
+
+    let _ = fs::remove_file(&file);
+}
+
+#[test]
+fn a_failed_open_names_the_path_and_leaves_the_session_untouched() {
+    let file = written_graph("current", SEEDED);
+    let path = file.to_string_lossy().into_owned();
+    let editor = Editor::new(graph::load(SEEDED).unwrap(), Some(path.clone()));
+    create(&editor, 1, "alpha/add");
+    let before = held_definition(&editor);
+    let broken = written_graph(
+        "broken",
+        "schema_version: 1\nnodes: []\nedges: []\nsurprise: true\n",
+    );
+
+    // A path that cannot be read reports the read failure; content the
+    // loader rejects reports the load error, naming what and where.
+    let missing = send(
+        &editor,
+        r#"{"id": 2, "type": "open_file", "path": "/nodetool-missing-dir/graph.yml"}"#,
+    );
+    assert_eq!(missing["type"], "error");
+    assert!(
+        missing["error"]
+            .as_str()
+            .unwrap()
+            .contains("/nodetool-missing-dir/graph.yml"),
+        "names the path: {missing}"
+    );
+
+    let refused = send(
+        &editor,
+        &format!(
+            r#"{{"id": 3, "type": "open_file", "path": {}}}"#,
+            path_field(&broken)
+        ),
+    );
+    assert_eq!(refused["type"], "error");
+    let message = refused["error"].as_str().unwrap();
+    assert!(
+        message.contains(&broken.to_string_lossy().into_owned()),
+        "names the file: {message}"
+    );
+    assert!(message.contains("surprise"), "names the fault: {message}");
+
+    assert_eq!(
+        held_definition(&editor),
+        before,
+        "the held definition is untouched"
+    );
+    assert_eq!(
+        held_file(&editor),
+        json!({ "path": path, "dirty": true }),
+        "the current file and the unsaved state are untouched"
+    );
+    let usable = send(&editor, r#"{"id": 4, "type": "get_definition"}"#);
+    assert_eq!(usable["id"], 4, "the connection is still usable");
+
+    let _ = fs::remove_file(&file);
+    let _ = fs::remove_file(&broken);
+}
+
+/// A file the loader accepts but the browser's JSON push cannot carry:
+/// its metadata holds a non-finite float key.
+const UNCARRIABLE: &str = "schema_version: 1
+nodes:
+  - uuid: 0a6b3e72-9c15-4d8f-b3e7-4c8a1f6d9b23
+    type_ref: t
+    metadata:
+      .inf: note
+edges: []";
+
+#[test]
+fn an_open_of_a_file_the_browser_cannot_carry_fails_and_leaves_the_session_untouched() {
+    let file = written_graph("current", SEEDED);
+    let path = file.to_string_lossy().into_owned();
+    let editor = Editor::new(graph::load(SEEDED).unwrap(), Some(path.clone()));
+    let before = held_definition(&editor);
+    let uncarriable = written_graph("uncarriable", UNCARRIABLE);
+
+    let refused = send(
+        &editor,
+        &format!(
+            r#"{{"id": 1, "type": "open_file", "path": {}}}"#,
+            path_field(&uncarriable)
+        ),
+    );
+    assert_eq!(refused["type"], "error");
+    let message = refused["error"].as_str().unwrap();
+    assert!(
+        message.contains(&uncarriable.to_string_lossy().into_owned()),
+        "names the file: {message}"
+    );
+    assert!(message.contains("key"), "names the fault: {message}");
+
+    assert_eq!(
+        held_definition(&editor),
+        before,
+        "the held definition is untouched"
+    );
+    assert_eq!(
+        held_file(&editor),
+        json!({ "path": path, "dirty": false }),
+        "the current file and the clean state are untouched"
+    );
+    let usable = send(&editor, r#"{"id": 2, "type": "get_definition"}"#);
+    assert_eq!(usable["id"], 2, "the connection is still usable");
+
+    let _ = fs::remove_file(&file);
+    let _ = fs::remove_file(&uncarriable);
+}
+
+#[test]
+fn save_writes_the_document_the_definition_dumps() {
+    let editor = editor_holding(SEEDED);
+    let file = temp_path("save");
+
+    let saved = send(
+        &editor,
+        &format!(
+            r#"{{"id": 1, "type": "save_file", "path": {}}}"#,
+            path_field(&file)
+        ),
+    );
+    assert_eq!(saved["type"], "file_saved");
+    assert_eq!(saved["id"], 1);
+
+    let held = graph::load(SEEDED).unwrap();
+    let written = fs::read_to_string(&file).expect("the save wrote the file");
+    assert_eq!(
+        written,
+        graph::dump(&held),
+        "the file is the definition through the format's own dump, nothing invented"
+    );
+    assert_eq!(
+        graph::load(&written).unwrap(),
+        held,
+        "the format's own round-trip fidelity holds through the editor's door"
+    );
+
+    let _ = fs::remove_file(&file);
+}
+
+#[test]
+fn a_save_retargets_the_current_file_and_pushes_the_state_to_every_connection() {
+    let editor = editor();
+    let first = written_graph("first", SECOND);
+    let second = temp_path("second");
+    let mut watchers = [editor.subscribe(), editor.subscribe()];
+
+    // The first save of an untitled graph names the file; the answer
+    // becomes the graph's file once the save succeeds.
+    let saved = send(
+        &editor,
+        &format!(
+            r#"{{"id": 1, "type": "save_file", "path": {}}}"#,
+            path_field(&first)
+        ),
+    );
+    assert_eq!(saved["type"], "file_saved");
+    for watcher in &mut watchers {
+        let pushed = push(watcher);
+        assert_eq!(pushed["type"], "file");
+        assert_eq!(pushed["path"], first.to_string_lossy().into_owned());
+        assert_eq!(pushed["dirty"], json!(false));
+    }
+
+    // An edit dirties; the plain save writes the current file again,
+    // naming no path.
+    let adder = create(&editor, 2, "alpha/add");
+    let saved = send(&editor, r#"{"id": 3, "type": "save_file"}"#);
+    assert_eq!(saved["type"], "file_saved");
+    let written = fs::read_to_string(&first).unwrap();
+    assert!(
+        written.contains(&adder),
+        "the edit reached the file: {written}"
+    );
+    assert_eq!(
+        held_file(&editor),
+        json!({ "path": first.to_string_lossy().into_owned(), "dirty": false })
+    );
+
+    // Saving elsewhere re-targets the same way, one save mechanism.
+    let saved = send(
+        &editor,
+        &format!(
+            r#"{{"id": 4, "type": "save_file", "path": {}}}"#,
+            path_field(&second)
+        ),
+    );
+    assert_eq!(saved["type"], "file_saved");
+    assert_eq!(
+        held_file(&editor),
+        json!({ "path": second.to_string_lossy().into_owned(), "dirty": false })
+    );
+    assert_eq!(
+        fs::read_to_string(&second).unwrap(),
+        fs::read_to_string(&first).unwrap(),
+        "the same document landed at both files"
+    );
+
+    let _ = fs::remove_file(&first);
+    let _ = fs::remove_file(&second);
+}
+
+#[test]
+fn a_first_save_without_a_path_is_refused() {
+    let editor = editor();
+    let refused = send(&editor, r#"{"id": 1, "type": "save_file"}"#);
+    assert_eq!(refused["type"], "error");
+    assert!(
+        refused["error"].as_str().unwrap().contains("path"),
+        "the error says what is missing: {refused}"
+    );
+    assert_eq!(held_file(&editor), json!({ "path": null, "dirty": false }));
+}
+
+#[test]
+fn a_failed_save_names_the_path_and_leaves_the_session_untouched() {
+    let file = written_graph("save-fail", SEEDED);
+    let path = file.to_string_lossy().into_owned();
+    let editor = Editor::new(graph::load(SEEDED).unwrap(), Some(path.clone()));
+    create(&editor, 1, "alpha/add");
+    let before = held_definition(&editor);
+
+    let refused = send(
+        &editor,
+        r#"{"id": 2, "type": "save_file", "path": "/nodetool-missing-dir/graph.yml"}"#,
+    );
+    assert_eq!(refused["type"], "error");
+    let message = refused["error"].as_str().unwrap();
+    assert!(
+        message.contains("/nodetool-missing-dir/graph.yml"),
+        "names the path: {message}"
+    );
+
+    assert_eq!(
+        held_definition(&editor),
+        before,
+        "the held definition is untouched"
+    );
+    assert_eq!(
+        held_file(&editor),
+        json!({ "path": path, "dirty": true }),
+        "the current file and the unsaved state are untouched"
+    );
+    let usable = send(&editor, r#"{"id": 3, "type": "get_definition"}"#);
+    assert_eq!(usable["id"], 3, "the connection is still usable");
+
+    let _ = fs::remove_file(&file);
+}
+
+#[test]
+fn the_dirty_rule_edits_set_it_and_open_save_and_fresh_clear_it() {
+    let editor = editor();
+    let mut watcher = editor.subscribe();
+
+    // An edit sets it, and the state travels beside the definition it
+    // belongs to.
+    let adder = create(&editor, 1, "alpha/add");
+    assert_eq!(held_file(&editor)["dirty"], json!(true));
+    let pushed = push(&mut watcher);
+    assert_eq!(pushed["type"], "definition");
+    assert_eq!(pushed["file"]["dirty"], json!(true));
+
+    // A save clears it.
+    let file = temp_path("dirty");
+    send(
+        &editor,
+        &format!(
+            r#"{{"id": 2, "type": "save_file", "path": {}}}"#,
+            path_field(&file)
+        ),
+    );
+    assert_eq!(held_file(&editor)["dirty"], json!(false));
+
+    // An edit that changes nothing sets it not: unhooking an input with
+    // no wire leaves the marker as it was.
+    let unhooked = send(
+        &editor,
+        &format!(r#"{{"id": 3, "type": "unhook", "to": "{adder}", "to_port": "b"}}"#),
+    );
+    assert_eq!(unhooked["type"], "unhooked");
+    assert_eq!(
+        held_file(&editor)["dirty"],
+        json!(false),
+        "a no-op edit sets nothing"
+    );
+
+    // An open — the current file, even — replaces the graph and clears it.
+    create(&editor, 3, "alpha/add");
+    send(
+        &editor,
+        &format!(
+            r#"{{"id": 4, "type": "open_file", "path": {}}}"#,
+            path_field(&file)
+        ),
+    );
+    assert_eq!(
+        held_file(&editor),
+        json!({ "path": file.to_string_lossy().into_owned(), "dirty": false })
+    );
+
+    // The fresh-graph control clears it and returns to untitled in one
+    // step.
+    create(&editor, 5, "alpha/add");
+    let created = send(&editor, r#"{"id": 6, "type": "new_graph"}"#);
+    assert_eq!(created["type"], "graph_created");
+    assert_eq!(created["id"], 6);
+    assert_eq!(held_file(&editor), json!({ "path": null, "dirty": false }));
+    let definition = held_definition(&editor);
+    assert_eq!(definition["nodes"], json!([]));
+    assert_eq!(definition["edges"], json!([]));
+
+    let _ = fs::remove_file(&file);
+}
+
+#[test]
+fn malformed_file_operations_are_errors_and_leave_the_connection_usable() {
+    let editor = editor();
+
+    for (message, id) in [
+        (r#"{"id": 1, "type": "open_file"}"#, 1),
+        (r#"{"id": 2, "type": "open_file", "path": 3}"#, 2),
+        (
+            r#"{"id": 3, "type": "open_file", "path": "x", "extra": true}"#,
+            3,
+        ),
+        (r#"{"id": 4, "type": "save_file", "path": 3}"#, 4),
+        (
+            r#"{"id": 5, "type": "save_file", "path": "x", "extra": true}"#,
+            5,
+        ),
+        (r#"{"id": 6, "type": "new_graph", "extra": true}"#, 6),
+    ] {
+        let reply = send(&editor, message);
+        assert_eq!(reply["type"], "error", "for {message}");
+        assert_eq!(reply["id"], id, "for {message}");
+    }
+
+    let usable = send(&editor, r#"{"id": 7, "type": "get_definition"}"#);
+    assert_eq!(usable["id"], 7, "the connection is still usable");
+    assert_eq!(usable["graph"]["nodes"], json!([]), "nothing landed");
 }

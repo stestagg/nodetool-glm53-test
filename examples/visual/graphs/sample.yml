@@ -1,0 +1,26 @@
+schema_version: 1
+name: editor sample
+nodes:
+- uuid: 3d1a0f56-8b47-4c2e-9a35-6f1d2b4c8e70
+  type_ref: shapes/circle
+  label: The circle
+  parameters:
+    radius: 3
+  metadata:
+    position:
+      x: 320
+      y: 120
+- uuid: 8f4c2d91-5e30-4b7a-a6c8-1d9e3f5b2a44
+  type_ref: fizzbuzz/counter
+  label: Not linked here
+  metadata:
+    position:
+      x: 80
+      y: 300
+- uuid: 0a6b3e72-9c15-4d8f-b3e7-4c8a1f6d9b23
+  type_ref: text/uppercase
+edges:
+- from: 3d1a0f56-8b47-4c2e-9a35-6f1d2b4c8e70
+  from_port: shape
+  to: 0a6b3e72-9c15-4d8f-b3e7-4c8a1f6d9b23
+  to_port: text

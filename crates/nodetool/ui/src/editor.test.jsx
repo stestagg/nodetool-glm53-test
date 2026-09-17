@@ -1,13 +1,22 @@
 // The definition-to-canvas mappings are pure: data in, node and wire
 // shapes out, no DOM and no React Flow — as is the reading of a finished
-// wire drag. The visible proof exercises them by hand once; these tests
+// wire drag, the save's ask-or-not decision, and the discard guard's
+// condition. The visible proof exercises them by hand once; these tests
 // pin them: the placeholder and grid shapes the editor's real data never
 // produces (no linked binary carries an unknown type reference, nothing
 // yet writes a placeless node), the scalar-input classification off the
-// listing's base-scalar fact, and the wire-drag partition, whose
-// release-on-a-port ending must never unhook.
+// listing's base-scalar fact, the wire-drag partition, whose
+// release-on-a-port ending must never unhook, and the file chrome's two
+// destructive-if-wrong decisions — when a save asks for its path, and
+// when a replacement asks about discarding.
 import { describe, expect, it } from 'vitest'
-import { offPortUnhook, toEdges, toNodes } from './editor.jsx'
+import {
+  hasUnsavedChanges,
+  offPortUnhook,
+  saveAsksForPath,
+  toEdges,
+  toNodes,
+} from './editor.jsx'
 
 describe('toNodes', () => {
   it('renders an unknown type reference as the placeholder, labelled with the stored override else the type reference, selectable for its label edit', () => {
@@ -194,5 +203,28 @@ describe('offPortUnhook', () => {
   it('an input with no wire changes nothing', () => {
     const state = { fromHandle: { type: 'target', nodeId: 'u9', id: 'value' }, isValid: null }
     expect(offPortUnhook(edges, state)).toBeNull()
+  })
+})
+
+describe('saveAsksForPath', () => {
+  it('saving elsewhere always asks', () => {
+    expect(saveAsksForPath({ path: 'graphs/a.yml', dirty: false }, true)).toBe(true)
+  })
+
+  it('the first save of an untitled graph asks', () => {
+    expect(saveAsksForPath(null, false)).toBe(true)
+    expect(saveAsksForPath({ path: null, dirty: false }, false)).toBe(true)
+  })
+
+  it('a plain save of a named file writes it without asking', () => {
+    expect(saveAsksForPath({ path: 'graphs/a.yml', dirty: true }, false)).toBe(false)
+  })
+})
+
+describe('hasUnsavedChanges', () => {
+  it('a dirty graph has them; a clean or not-yet-known one has not', () => {
+    expect(hasUnsavedChanges({ path: 'graphs/a.yml', dirty: true })).toBe(true)
+    expect(hasUnsavedChanges({ path: null, dirty: false })).toBe(false)
+    expect(hasUnsavedChanges(null)).toBe(false)
   })
 })

@@ -10,7 +10,7 @@ use nodetool::server::{greeting, Editor};
 use serde_json::{json, Value};
 
 fn editor() -> Editor {
-    Editor::new(graph::GraphDefinition::empty())
+    Editor::new(graph::GraphDefinition::empty(), None)
 }
 
 fn send(editor: &Editor, message: &str) -> Value {

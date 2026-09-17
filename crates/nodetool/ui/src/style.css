@@ -46,6 +46,54 @@ body {
   min-height: 0;
 }
 
+/* The file chrome: the name of the file being edited — untitled until a
+   first save names one — its unsaved-changes marker, and the file
+   controls. */
+
+.chrome {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.file-name {
+  font-weight: 600;
+  /* The name yields before the controls do: a long path truncates
+     instead of pushing Save off-screen. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-dirty {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.chrome-space {
+  flex: 1;
+}
+
+.chrome button {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--panel);
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.chrome button:hover {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+
 /* The palette, docked on the left; the right edge stays free for the
    editing sidebar. */
 
