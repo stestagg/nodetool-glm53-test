@@ -1,6 +1,7 @@
 ---
 title: Trivial utility node library
 date: 2026-09-16
+pr_id: 45
 ---
 
 ## Description
