@@ -1,6 +1,7 @@
 ---
 title: Graph wiring and headless execution
 date: 2026-09-16
+pr_id: 43
 ---
 
 ## Description
