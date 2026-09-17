@@ -16,4 +16,5 @@ members = [
     "examples/compile-graph",
     "examples/run-node",
     "examples/run-graph",
+    "examples/visual",
 ]

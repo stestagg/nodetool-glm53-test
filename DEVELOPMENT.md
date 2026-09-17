@@ -11,6 +11,7 @@ scalar data types.
 
 - A stable Rust toolchain, via [rustup](https://rustup.rs).
 - A C toolchain for linking (`cc`/gcc).
+- Node.js with npm, for building the editor UI the server embeds.
 
 ## Layout
 
@@ -24,8 +25,17 @@ scalar data types.
   that runs a compiled graph as live, streaming execution and tells an
   optional events observer what happens as the run unfolds
   (`nodetool::engine`; its rustdoc is the run lifecycle's spec), the
-  runtime value (`nodetool::Value`), and the registry. Core contains no
-  node types: a node library is always a plugin crate, first-party or not.
+  runtime value (`nodetool::Value`), the registry, and the editor server
+  (`nodetool::server`): a small HTTP server that serves the embedded UI
+  over one address and speaks a JSON envelope protocol over one websocket
+  connection per browser, holding the graph definition as the one
+  authoritative state. Core contains no node types: a node library is
+  always a plugin crate, first-party or not.
+- `crates/nodetool/ui` — the editor UI the server embeds and serves: a
+  React application whose canvas is React Flow under a light Blueprint
+  look, with the palette of node types docked on the left. `npm install &&
+  npm run build` in that directory produces `dist/`, which the server's
+  binary includes at build time.
 - `crates/nodetool-utility` — the first-party utility node library, a plugin
   crate whose only dependency is `nodetool`: an `If` router and a `Format`
   node, declared through the same `node_type!` registration path and
@@ -80,7 +90,11 @@ scalar data types.
 
 ## Build and check
 
+The editor UI builds first; the server embeds its output, so the Rust
+workspace does not build without it:
+
 ```sh
+(cd crates/nodetool/ui && npm install && npm run build && npm test)
 cargo build
 cargo test --workspace
 cargo clippy --workspace --all-targets
@@ -97,7 +111,16 @@ cargo run -p compile-graph     # compile each sample graph file, print the resul
 cargo run -p run-node          # drive one behaviour-ful node with scripted streams
 cargo run -p run-graph         # run the pipeline sample headless, values as they arrive
 cargo run -p nodetool-fizzbuzz # what the fizzbuzz plugin contributes: nodes, ports, and the types each port spans
+cargo run -p visual            # the editor on http://127.0.0.1:8420
 ```
+
+`visual` starts the editor server: open the printed address in a browser
+and find the palette of every node type the linked plugins contribute on
+the left and the canvas beside it. Dragging a type onto the canvas creates
+a node where it dropped; dragging a node moves it; a click selects;
+background drag pans; scroll zooms. The server holds the graph:
+a reload or a second tab shows the same graph, and an edit in one appears
+in the other.
 
 The run-graph samples beyond the default select the demonstration:
 

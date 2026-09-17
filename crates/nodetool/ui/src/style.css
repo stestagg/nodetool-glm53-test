@@ -1,0 +1,215 @@
+/* The editor shell in the light Blueprint look: cool greys and white
+   panels, one blue accent carrying focus and selection, compact nodes. */
+
+:root {
+  --text: #182026;
+  --muted: #5c7080;
+  --border: #d3d8de;
+  --panel: #ffffff;
+  --canvas: #f6f7f9;
+  --titlebar: #edf1f5;
+  --hover: #f0f4f8;
+  --accent: #2d72d2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--canvas);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The palette, docked on the left; the right edge stays free for the
+   editing sidebar. */
+
+.palette {
+  width: 230px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.palette-title {
+  margin: 0;
+  padding: 10px 12px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.palette-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.palette-item {
+  padding: 6px 12px;
+  cursor: grab;
+}
+
+.palette-item:hover {
+  background: var(--hover);
+}
+
+.palette-item:active {
+  cursor: grabbing;
+}
+
+.palette-label {
+  font-size: 13px;
+}
+
+.palette-plugin {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.palette-empty {
+  margin: 0;
+  padding: 4px 12px 12px;
+  color: var(--muted);
+}
+
+/* The canvas. */
+
+.canvas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.canvas .react-flow {
+  height: 100%;
+}
+
+.canvas-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+/* A node: title bar on top, inputs down the left, outputs down the right,
+   nothing else — compact, Blender-style. */
+
+.node {
+  min-width: 130px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(17, 20, 24, 0.15);
+  font-size: 12px;
+}
+
+.node.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(45, 114, 210, 0.35);
+}
+
+.node-title {
+  padding: 4px 8px;
+  background: var(--titlebar);
+  border-bottom: 1px solid var(--border);
+  border-radius: 2px 2px 0 0;
+  font-weight: 600;
+  cursor: grab;
+}
+
+.node-ports {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.node-inputs,
+.node-outputs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.port {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 12px;
+}
+
+.port.out {
+  justify-content: flex-end;
+}
+
+.port .react-flow__handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #8f99a8;
+  border: 1px solid #68707a;
+  border-radius: 50%;
+}
+
+.port.in .react-flow__handle {
+  left: -4px;
+}
+
+.port.out .react-flow__handle {
+  right: -4px;
+}
+
+/* An unknown-typed node: visibly inert, saying what it cannot show. */
+
+.node.placeholder {
+  border-style: dashed;
+  background: var(--canvas);
+}
+
+.node-unknown {
+  padding: 5px 10px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* The status line. */
+
+.status {
+  min-height: 22px;
+  padding: 2px 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}

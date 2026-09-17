@@ -6,6 +6,10 @@
 //! semantics behaviour programs against ([`behaviour`]), and the engine
 //! that runs a compiled graph as live, streaming execution and tells an
 //! optional events observer what happens as the run unfolds ([`engine`]).
+//! The [`server`] module is the server side of the visual experience: a
+//! small HTTP server that serves the embedded editor UI and speaks the
+//! websocket protocol the editor's browser half rides, holding the graph
+//! definition as the one authoritative state.
 //!
 //! Core knows what a node type *is* — a stable type reference, a label, an
 //! icon, a grouping, typed ports, and the behaviour each instance runs —
@@ -39,6 +43,7 @@ pub mod graph;
 mod node_type;
 pub mod registry;
 pub mod scalars;
+pub mod server;
 mod value;
 
 pub use behaviour::BehaviourFn;
