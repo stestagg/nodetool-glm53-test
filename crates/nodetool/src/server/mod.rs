@@ -2,27 +2,35 @@
 //! embedded UI over one address and speaks the JSON envelope protocol over
 //! one websocket connection per browser.
 //!
-//! The server owns the graph. It holds the in-memory definition — the same
-//! document the files carry and the compiler takes — and the browser is a
-//! synced view of it: every edit is an operation applied here, and the
-//! whole updated definition is pushed to every connection, so a reload or
-//! a second tab simply asks for the definition again. One graph state, not
+//! The server owns the graph and the file it belongs to. It holds the
+//! in-memory definition — the same document the files carry and the
+//! compiler takes — and the browser is a synced view of it: every edit is
+//! an operation applied here, and the whole updated definition is pushed
+//! to every connection, so a reload or a second tab simply asks for the
+//! definition again. The file state — the path being edited and whether
+//! the definition has unsaved changes — travels beside the definition
+//! wherever the definition travels, and is pushed alone when a save
+//! changes it without touching the definition. One graph state, not
 //! two; edits land last-write-wins, with no locking, presence, or merge
-//! ceremony, for a local single-user tool.
+//! ceremony, for a local single-user tool. Opening and saving go through
+//! the one file format's loader and dump, so a file the headless run
+//! takes is the file the editor edits.
 //!
 //! The websocket is untrusted input at a parse boundary: a message that
 //! fails to parse, is not a JSON object, names an unknown type, or carries
 //! unknown fields is answered with an error naming the problem, the
 //! connection stays open, and nothing can crash or corrupt the server.
 
+use std::fs;
 use std::io;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::graph::{Edge, GraphDefinition};
+use crate::graph::{self, Edge, GraphDefinition};
 use crate::NodeType;
 use uuid::Uuid;
 
@@ -43,22 +51,38 @@ enum Outbound {
     Pong(Vec<u8>),
 }
 
-/// The editing server: the held definition, the palette listing of every
+/// The editing session: the held definition, the file it belongs to —
+/// none while the graph is untitled — and whether the definition has
+/// changed since that file was last opened or saved. One lock over the
+/// three, so a file operation cannot interleave with an edit.
+struct Session {
+    graph: GraphDefinition,
+    file: Option<String>,
+    dirty: bool,
+}
+
+/// The editing server: the held session, the palette listing of every
 /// linked plugin's node types, and the push channel every connection rides.
 pub struct Editor {
-    graph: Mutex<GraphDefinition>,
+    session: Mutex<Session>,
     listing: Vec<&'static NodeType>,
     base_scalars: serde_json::Map<String, Value>,
     pushes: broadcast::Sender<String>,
 }
 
 impl Editor {
-    /// An editor holding `definition` — empty for a fresh graph — and
-    /// listing the node types the linked plugins contribute.
-    pub fn new(definition: GraphDefinition) -> Editor {
+    /// An editor holding `definition` and the file it came from, if any —
+    /// `None` for a fresh, untitled graph. Launching on a graph file hands
+    /// the loader's definition and the file's path here; the definition is
+    /// clean until an edit lands.
+    pub fn new(definition: GraphDefinition, file: Option<String>) -> Editor {
         let (pushes, _) = broadcast::channel(64);
         Editor {
-            graph: Mutex::new(definition),
+            session: Mutex::new(Session {
+                graph: definition,
+                file,
+                dirty: false,
+            }),
             listing: protocol::node_type_listing(),
             base_scalars: protocol::base_scalars(),
             pushes,
@@ -116,6 +140,9 @@ impl Editor {
             "wire" => self.wire(&mut fields),
             "unhook" => self.unhook(&mut fields),
             "delete_node" => self.delete_node(&mut fields),
+            "open_file" => self.open_file(&mut fields),
+            "save_file" => self.save_file(&mut fields),
+            "new_graph" => self.new_graph(&mut fields),
             other => Err(format!("unknown message type `{other}`")),
         };
         match reply {
@@ -146,17 +173,17 @@ impl Editor {
 
     fn get_definition(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
         protocol::done(fields)?;
-        let graph = self
-            .graph
+        let session = self
+            .session
             .lock()
-            .expect("the graph lock is never poisoned")
-            .clone();
-        match serde_json::to_value(&graph) {
-            Ok(graph) => Ok(json!({ "type": "definition", "graph": graph })),
-            Err(error) => Err(format!(
-                "the held definition cannot be carried as JSON: {error}"
-            )),
-        }
+            .expect("the session lock is never poisoned");
+        let graph = serde_json::to_value(&session.graph)
+            .map_err(|error| format!("the held definition cannot be carried as JSON: {error}"))?;
+        Ok(json!({
+            "type": "definition",
+            "graph": graph,
+            "file": protocol::file_state(session.file.as_deref(), session.dirty),
+        }))
     }
 
     fn create_node(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
@@ -182,9 +209,13 @@ impl Editor {
         };
         node.metadata
             .insert("position".into(), position.metadata_entry().into());
-        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
-        graph.nodes.push(node);
-        self.push_definition(&graph);
+        let mut session = self
+            .session
+            .lock()
+            .expect("the session lock is never poisoned");
+        session.graph.nodes.push(node);
+        session.dirty = true;
+        self.push_definition(&session);
         Ok(json!({ "type": "node_created", "uuid": uuid }))
     }
 
@@ -192,13 +223,17 @@ impl Editor {
         let uuid = protocol::take_uuid(fields, "uuid")?;
         let position = protocol::take_position(fields, "position")?;
         protocol::done(fields)?;
-        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
+        let mut session = self
+            .session
+            .lock()
+            .expect("the session lock is never poisoned");
         // The move records where the node rests; the rest of its metadata
         // is the node's own bookkeeping and stays untouched.
-        Self::node_mut(&mut graph, uuid)?
+        Self::node_mut(&mut session.graph, uuid)?
             .metadata
             .insert("position".into(), position.metadata_entry().into());
-        self.push_definition(&graph);
+        session.dirty = true;
+        self.push_definition(&session);
         Ok(json!({ "type": "node_moved" }))
     }
 
@@ -221,9 +256,14 @@ impl Editor {
         let uuid = protocol::take_uuid(fields, "uuid")?;
         let label = protocol::take_string(fields, "label")?;
         protocol::done(fields)?;
-        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
-        Self::node_mut(&mut graph, uuid)?.label = if label.is_empty() { None } else { Some(label) };
-        self.push_definition(&graph);
+        let mut session = self
+            .session
+            .lock()
+            .expect("the session lock is never poisoned");
+        Self::node_mut(&mut session.graph, uuid)?.label =
+            if label.is_empty() { None } else { Some(label) };
+        session.dirty = true;
+        self.push_definition(&session);
         Ok(json!({ "type": "label_set" }))
     }
 
@@ -239,8 +279,12 @@ impl Editor {
         let input = protocol::take_string(fields, "input")?;
         let value = protocol::take_parameter(fields, "value")?;
         protocol::done(fields)?;
-        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
-        if graph
+        let mut session = self
+            .session
+            .lock()
+            .expect("the session lock is never poisoned");
+        if session
+            .graph
             .edges
             .iter()
             .any(|edge| edge.to == uuid && edge.to_port == input)
@@ -249,7 +293,7 @@ impl Editor {
                 "input `{input}` of node {uuid} receives a connection; a connected input carries no parameter value"
             ));
         }
-        let node = Self::node_mut(&mut graph, uuid)?;
+        let node = Self::node_mut(&mut session.graph, uuid)?;
         match value {
             Some(value) => {
                 node.parameters.insert(input, value);
@@ -258,7 +302,8 @@ impl Editor {
                 node.parameters.remove(&input);
             }
         }
-        self.push_definition(&graph);
+        session.dirty = true;
+        self.push_definition(&session);
         Ok(json!({ "type": "parameter_set" }))
     }
 
@@ -281,9 +326,13 @@ impl Editor {
         let to = protocol::take_uuid(fields, "to")?;
         let to_port = protocol::take_string(fields, "to_port")?;
         protocol::done(fields)?;
-        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
+        let mut session = self
+            .session
+            .lock()
+            .expect("the session lock is never poisoned");
+        let graph = &mut session.graph;
         for uuid in [from, to] {
-            Self::require_node(&graph, uuid)?;
+            Self::require_node(graph, uuid)?;
         }
         // An input carries one value source: the landing wire replaces
         // whatever upstream edge and parameter literal the input held.
@@ -299,7 +348,8 @@ impl Editor {
             to,
             to_port,
         });
-        self.push_definition(&graph);
+        session.dirty = true;
+        self.push_definition(&session);
         Ok(json!({ "type": "wired" }))
     }
 
@@ -310,12 +360,17 @@ impl Editor {
         let to = protocol::take_uuid(fields, "to")?;
         let to_port = protocol::take_string(fields, "to_port")?;
         protocol::done(fields)?;
-        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
-        Self::require_node(&graph, to)?;
-        graph
+        let mut session = self
+            .session
+            .lock()
+            .expect("the session lock is never poisoned");
+        Self::require_node(&session.graph, to)?;
+        session
+            .graph
             .edges
             .retain(|edge| edge.to != to || edge.to_port != to_port);
-        self.push_definition(&graph);
+        session.dirty = true;
+        self.push_definition(&session);
         Ok(json!({ "type": "unhooked" }))
     }
 
@@ -324,24 +379,100 @@ impl Editor {
     fn delete_node(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
         let uuid = protocol::take_uuid(fields, "uuid")?;
         protocol::done(fields)?;
-        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
-        Self::require_node(&graph, uuid)?;
-        graph.nodes.retain(|node| node.uuid != uuid);
-        graph
+        let mut session = self
+            .session
+            .lock()
+            .expect("the session lock is never poisoned");
+        Self::require_node(&session.graph, uuid)?;
+        session.graph.nodes.retain(|node| node.uuid != uuid);
+        session
+            .graph
             .edges
             .retain(|edge| edge.from != uuid && edge.to != uuid);
-        self.push_definition(&graph);
+        session.dirty = true;
+        self.push_definition(&session);
         Ok(json!({ "type": "node_deleted" }))
     }
 
-    /// Push the whole updated definition to every connection — never the
-    /// operation. The browser holds no graph state of its own, so a push it
-    /// can render without applying or merging anything is the one shape
-    /// that can never diverge from what the server holds. Called with the
-    /// graph still locked, so the pushes leave in the order the operations
-    /// applied and an older snapshot can never arrive after a newer one.
-    fn push_definition(&self, graph: &GraphDefinition) {
-        let message = match protocol::definition_message(graph) {
+    /// Open a graph file: the story 03 loader parses it structurally and
+    /// the held definition is replaced — loading is structural only, so a
+    /// file referencing types this binary never linked opens with
+    /// placeholders, nothing judged but the document's shape. The file
+    /// becomes the current one and the definition is clean. Reading and
+    /// parsing happen before the session is touched: a failure is
+    /// reported naming the path and what and where, and the held graph and
+    /// current file stay as they were.
+    fn open_file(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
+        let path = protocol::take_string(fields, "path")?;
+        protocol::done(fields)?;
+        let text = fs::read_to_string(Path::new(&path))
+            .map_err(|error| format!("cannot read `{path}`: {error}"))?;
+        let graph = graph::load(&text).map_err(|error| format!("cannot open `{path}`: {error}"))?;
+        let mut session = self
+            .session
+            .lock()
+            .expect("the session lock is never poisoned");
+        session.graph = graph;
+        session.file = Some(path);
+        session.dirty = false;
+        self.push_definition(&session);
+        Ok(json!({ "type": "file_opened" }))
+    }
+
+    /// Save the held definition as YAML through the format's own dump —
+    /// exactly what the definition is, schema version and all, nothing
+    /// invented at save time. The target is the path the message names —
+    /// a first save or a save elsewhere — or the current file; a save with
+    /// no target and none held is refused. The whole document is written
+    /// or none of it, and only a completed save retargets the current file
+    /// and clears the unsaved-changes state.
+    fn save_file(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
+        let asked = protocol::take_optional_string(fields, "path")?;
+        protocol::done(fields)?;
+        let mut session = self
+            .session
+            .lock()
+            .expect("the session lock is never poisoned");
+        let target = asked.or_else(|| session.file.clone()).ok_or_else(|| {
+            "nothing to save to: an untitled graph's first save must name a path".to_owned()
+        })?;
+        let document = graph::dump(&session.graph);
+        write_whole(Path::new(&target), &document)
+            .map_err(|error| format!("cannot save to `{target}`: {error}"))?;
+        session.file = Some(target);
+        session.dirty = false;
+        self.push_file(&session);
+        Ok(json!({ "type": "file_saved" }))
+    }
+
+    /// Start a fresh graph: an empty, untitled definition, clean. The same
+    /// replace path an open takes, completing the file model.
+    fn new_graph(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
+        protocol::done(fields)?;
+        let mut session = self
+            .session
+            .lock()
+            .expect("the session lock is never poisoned");
+        session.graph = GraphDefinition::empty();
+        session.file = None;
+        session.dirty = false;
+        self.push_definition(&session);
+        Ok(json!({ "type": "graph_created" }))
+    }
+
+    /// Push the whole updated definition, with the file state beside it,
+    /// to every connection — never the operation. The browser holds no
+    /// graph state of its own, so a push it can render without applying
+    /// or merging anything is the one shape that can never diverge from
+    /// what the server holds. Called with the session still locked, so the
+    /// pushes leave in the order the operations applied and an older
+    /// snapshot can never arrive after a newer one.
+    fn push_definition(&self, session: &Session) {
+        let message = match protocol::definition_message(
+            &session.graph,
+            session.file.as_deref(),
+            session.dirty,
+        ) {
             Ok(message) => message,
             Err(error) => protocol::error_reply(
                 None,
@@ -349,6 +480,15 @@ impl Editor {
             ),
         };
         let _ = self.pushes.send(message);
+    }
+
+    /// Push the file state alone: the one file change that leaves the
+    /// definition untouched, a save.
+    fn push_file(&self, session: &Session) {
+        let _ = self.pushes.send(protocol::file_message(
+            session.file.as_deref(),
+            session.dirty,
+        ));
     }
 
     async fn accept(self: &Arc<Self>, mut stream: TcpStream) -> io::Result<()> {
@@ -472,4 +612,22 @@ impl Editor {
         pump.abort();
         Ok(())
     }
+}
+
+/// Write a document so the target ends up holding it whole or keeps its
+/// old content: the text lands in a sibling temporary file first and is
+/// renamed over the target only once complete, so a failed save never
+/// leaves the target half-written. The temporary file is cleaned up on
+/// the way out of a failure.
+fn write_whole(path: &Path, text: &str) -> io::Result<()> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("graph");
+    let temp = path.with_file_name(format!(".{name}.{}.tmp", Uuid::new_v4().simple()));
+    let written = fs::write(&temp, text).and_then(|()| fs::rename(&temp, path));
+    if written.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    written
 }

@@ -28,9 +28,9 @@ scalar data types.
   runtime value (`nodetool::Value`), the registry, and the editor server
   (`nodetool::server`): a small HTTP server that serves the embedded UI
   over one address and speaks a JSON envelope protocol over one websocket
-  connection per browser, holding the graph definition as the one
-  authoritative state. Core contains no node types: a node library is
-  always a plugin crate, first-party or not.
+  connection per browser, holding the graph definition and the file being
+  edited as the one authoritative state. Core contains no node types: a
+  node library is always a plugin crate, first-party or not.
 - `crates/nodetool/ui` — the editor UI the server embeds and serves: a
   React application whose canvas is React Flow under a light Blueprint
   look, with the palette of node types docked on the left and the editing
@@ -113,6 +113,7 @@ cargo run -p run-node          # drive one behaviour-ful node with scripted stre
 cargo run -p run-graph         # run the pipeline sample headless, values as they arrive
 cargo run -p nodetool-fizzbuzz # what the fizzbuzz plugin contributes: nodes, ports, and the types each port spans
 cargo run -p visual            # the editor on http://127.0.0.1:8420
+cargo run -p visual -- examples/visual/graphs/sample.yml  # the editor on a graph file
 ```
 
 `visual` starts the editor server: open the printed address in a browser
@@ -137,6 +138,26 @@ Delete (or Backspace) removes the selected node together with its wires.
 Nothing is checked while editing — types, ports, and cycles are judged
 when a run is started. The server holds the graph: a reload or a second
 tab shows the same graph, and an edit in one appears in the other.
+
+The editor's graph lives in a graph file. The chrome names the file being
+edited — untitled until a first save — with an unsaved-changes marker
+whenever the definition has changed since the last open or save; a reload
+or a second tab shows the same name and marker. New returns to an empty,
+untitled graph; Open loads a graph file from a path the editor asks for;
+Save writes the graph to the file being edited, asking for a path only on
+the first save of an untitled graph; Save as always asks. Opening a file —
+another file or the current one — or starting fresh, over unsaved changes
+asks before discarding them. Files are read and written server-side
+through the one graph file format (`nodetool::graph`), so a file the
+editor saves is a file `run-graph` runs, and a file the headless path
+loads is a file the editor opens. A load or save failure is reported in
+the status line naming the path and the fault, leaving the held graph and
+file untouched. Launched on a path (`cargo run -p visual -- <file>`) the
+editor opens already showing that graph; the sample ships in
+`examples/visual/graphs/` and exercises the three node placements — a node
+at its recorded position, a node with no position on the deterministic
+fallback, and a node whose type the binary never linked rendered as an
+inert placeholder.
 
 The run-graph samples beyond the default select the demonstration:
 

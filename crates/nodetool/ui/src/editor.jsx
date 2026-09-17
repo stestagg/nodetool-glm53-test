@@ -122,6 +122,7 @@ export function offPortUnhook(edges, state) {
 export function Editor() {
   const [listing, setListing] = useState(null)
   const [graph, setGraph] = useState(null)
+  const [file, setFile] = useState(null)
   const [nodes, setNodes] = useState([])
   const [status, setStatus] = useState({ text: 'connecting…', error: false })
   const protocol = useRef(null)
@@ -157,10 +158,17 @@ export function Editor() {
         onOpen: (request) => {
           protocol.current = request
           request('list_node_types').then(setListing, showError)
-          request('get_definition').then(setGraph, showError)
+          request('get_definition').then(({ graph, file }) => {
+            setGraph(graph)
+            setFile(file)
+          }, showError)
         },
         onGreeting: () => setStatus({ text: '' }),
-        onDefinition: setGraph,
+        onDefinition: (graph, file) => {
+          setGraph(graph)
+          setFile(file)
+        },
+        onFile: ({ path, dirty }) => setFile({ path, dirty }),
         onError: showError,
         onClosed: () =>
           setStatus({ text: 'connection lost — reload the page', error: true }),
@@ -239,6 +247,52 @@ export function Editor() {
     event.dataTransfer.dropEffect = 'move'
   }, [])
 
+  // The one guard over loss: replacing the held graph — opening another
+  // file or the same one, or starting fresh — asks before discarding
+  // unsaved changes, and nowhere else.
+  const confirmDiscard = useCallback(() => {
+    if (file?.dirty !== true) return true
+    return window.confirm('The graph has unsaved changes. Discard them?')
+  }, [file])
+
+  const newGraph = useCallback(() => {
+    if (protocol.current === null || !confirmDiscard()) return
+    protocol.current('new_graph').catch(showError)
+  }, [confirmDiscard, showError])
+
+  const openFile = useCallback(() => {
+    if (protocol.current === null || !confirmDiscard()) return
+    const path = window.prompt('Open graph file')
+    if (path === null) return
+    protocol
+      .current('open_file', { path })
+      .then(() =>
+        // The opened graph replaces the one any selection points into.
+        setNodes((current) =>
+          current.map((node) => ({ ...node, selected: false })),
+        ),
+      )
+      .catch(showError)
+  }, [confirmDiscard, showError])
+
+  // One save mechanism under both chrome entries: a save always knows its
+  // target — the current file — and asks only for the first save of an
+  // untitled graph or when saving elsewhere; the answer becomes the file
+  // once the save succeeds.
+  const save = useCallback(
+    (elsewhere) => {
+      if (protocol.current === null) return
+      if (elsewhere || file?.path == null) {
+        const path = window.prompt('Save graph to', file?.path ?? '')
+        if (path === null) return
+        protocol.current('save_file', { path }).catch(showError)
+      } else {
+        protocol.current('save_file').catch(showError)
+      }
+    },
+    [file, showError],
+  )
+
   // The sidebar's node: the one the canvas holds selected, read off the
   // same node state the canvas draws, so a definition push swaps its
   // contents with everything else.
@@ -271,6 +325,17 @@ export function Editor() {
   return (
     <EditContext.Provider value={edit}>
       <div className="app">
+        <header className="chrome">
+          <span className="file-name">{file?.path ?? 'untitled'}</span>
+          {file?.dirty === true && (
+            <span className="file-dirty">unsaved changes</span>
+          )}
+          <span className="chrome-space" />
+          <button onClick={newGraph}>New</button>
+          <button onClick={openFile}>Open</button>
+          <button onClick={() => save(false)}>Save</button>
+          <button onClick={() => save(true)}>Save as</button>
+        </header>
         <div className="workspace">
           <aside className="palette">
             <h1 className="palette-title">Nodes</h1>

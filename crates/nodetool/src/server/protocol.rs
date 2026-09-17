@@ -82,12 +82,36 @@ fn ports_json(ports: &[Port]) -> Value {
     )
 }
 
-/// The whole definition, serialised as JSON under the same schema the
-/// files carry — parameters, edges, and metadata verbatim. Fails only when
-/// the definition carries something JSON cannot, which the caller reports
-/// instead of papering over.
-pub fn definition_message(graph: &GraphDefinition) -> Result<String, serde_json::Error> {
-    serde_json::to_string(&json!({ "type": "definition", "graph": graph }))
+/// The file state that travels beside the definition: the file being
+/// edited — none while the graph is untitled — and whether the held
+/// definition has changed since it was last opened or saved. Every
+/// connection renders its chrome from here, so no tab keeps file
+/// bookkeeping of its own.
+pub fn file_state(file: Option<&str>, dirty: bool) -> Value {
+    json!({ "path": file, "dirty": dirty })
+}
+
+/// The whole definition with the file state beside it — the message every
+/// connection renders the editor from. Fails only when the definition
+/// carries something JSON cannot, which the caller reports instead of
+/// papering over.
+pub fn definition_message(
+    graph: &GraphDefinition,
+    file: Option<&str>,
+    dirty: bool,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&json!({
+        "type": "definition",
+        "graph": graph,
+        "file": file_state(file, dirty),
+    }))
+}
+
+/// The file state pushed alone, for a change that leaves the definition
+/// untouched — a save.
+pub fn file_message(file: Option<&str>, dirty: bool) -> String {
+    serde_json::to_string(&json!({ "type": "file", "path": file, "dirty": dirty }))
+        .expect("the file state always serialises")
 }
 
 /// An error reply, echoing the id of the request it answers when it can.
@@ -105,6 +129,19 @@ pub fn take_string(fields: &mut Map<String, Value>, name: &str) -> Result<String
         Some(Value::String(text)) => Ok(text),
         Some(_) => Err(format!("`{name}` must be a string")),
         None => Err(format!("missing field `{name}`")),
+    }
+}
+
+/// Take one optional string field out of a message's fields; absent means
+/// the field was not sent, which for a path means "the current file".
+pub fn take_optional_string(
+    fields: &mut Map<String, Value>,
+    name: &str,
+) -> Result<Option<String>, String> {
+    match fields.remove(name) {
+        None => Ok(None),
+        Some(Value::String(text)) => Ok(Some(text)),
+        Some(_) => Err(format!("`{name}` must be a string")),
     }
 }
 
