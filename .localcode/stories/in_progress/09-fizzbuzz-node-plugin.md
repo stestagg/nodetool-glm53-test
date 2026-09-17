@@ -1,6 +1,7 @@
 ---
 title: Fizzbuzz node plugin
 date: 2026-09-16
+pr_id: 46
 ---
 
 ## Description
