@@ -17,6 +17,15 @@ export function useEdit() {
   return useContext(EditContext)
 }
 
+// The editing lock a run holds: while a run is on, the definition is held
+// still, and every field is inert — a value's views show what is stored
+// and take no edit. The shell provides it once; the fields read it.
+export const LockContext = createContext(false)
+
+export function useLocked() {
+  return useContext(LockContext)
+}
+
 // The rule for which inputs get an editable field: a declared type that
 // is a core base scalar makes the port scalar-possible. A type reference
 // the listing does not classify reads as not-a-base-scalar; so does a
@@ -51,11 +60,12 @@ export function commitParameter(edit, uuid, input, text) {
 // discards an uncommitted draft, and an unchanged commit sends nothing.
 // The draft is local; the stored value arrives by definition push and
 // re-seeds the field whenever it changes, so neither view of the stored
-// value is authoritative in the browser.
+// value is authoritative in the browser. A run's lock disables the field.
 export function Field({ value, placeholder = '', onCommit, className = '', ...rest }) {
   const stored = scalarText(value)
   const [draft, setDraft] = useState(stored)
   useEffect(() => setDraft(stored), [stored])
+  const locked = useLocked()
   const commit = () => {
     if (draft !== stored) onCommit(draft)
   }
@@ -64,6 +74,7 @@ export function Field({ value, placeholder = '', onCommit, className = '', ...re
       className={`field nodrag ${className}`}
       value={draft}
       placeholder={placeholder}
+      disabled={locked}
       onChange={(event) => setDraft(event.target.value)}
       onKeyDown={(event) => {
         if (event.key === 'Enter') commit()

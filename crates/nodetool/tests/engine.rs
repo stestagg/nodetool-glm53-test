@@ -1,17 +1,21 @@
 //! The engine: whole-graph wiring and the run lifecycle. Fan-out across
 //! nodes, a literal held across a graph's arrivals, a connection's
 //! conversion applied as values cross, completion only when every node is
-//! done, fail-fast, values consumed as they arrive, the empty graph, and
-//! runs starting clean — every run observed through the run's own consumer
-//! attachments, which are just one more downstream.
+//! done, fail-fast, the stop that ends a run beside its natural ends,
+//! values consumed as they arrive, the empty graph, and runs starting
+//! clean — every run observed through the run's own consumer attachments,
+//! which are just one more downstream.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
+use tokio::sync::watch;
 use tokio::sync::{mpsc, Notify};
 
+use nodetool::async_trait;
 use nodetool::compile::{self, CompiledGraph};
-use nodetool::engine::Run;
+use nodetool::engine::{Event, Observer, Run, RunOutcome};
 use nodetool::graph::{Edge, GraphDefinition, Mapping, NodeInstance, ParameterValue};
 use nodetool::registry::Registry;
 use test_plugin_delta as _;
@@ -538,5 +542,188 @@ async fn a_conversion_that_refuses_a_value_ends_the_run_naming_the_node() {
     assert!(
         message.contains("the conversion declared on output `mixed` does not take this value"),
         "what went wrong told: {message}"
+    );
+}
+
+/// An observer that forwards every event to the test through an unbounded
+/// channel, in delivery order.
+struct Forwarded(mpsc::UnboundedSender<Event>);
+
+#[async_trait]
+impl Observer for Forwarded {
+    async fn observe(&self, event: Event) {
+        let _ = self.0.send(event);
+    }
+}
+
+/// Attaches the forwarding observer and hands back its timeline.
+fn observed(run: &mut Run<'_>) -> mpsc::UnboundedReceiver<Event> {
+    let (forward, timeline) = mpsc::unbounded_channel();
+    run.observe(Arc::new(Forwarded(forward)));
+    timeline
+}
+
+/// Reads a timeline up to and including run finished — the run's last
+/// event, sent last, delivered in order — so the timeline is complete
+/// once read.
+async fn until_finished(mut timeline: mpsc::UnboundedReceiver<Event>) -> Vec<Event> {
+    let mut events = Vec::new();
+    while let Some(event) = timeline.recv().await {
+        let finished = matches!(event, Event::RunFinished { .. });
+        events.push(event);
+        if finished {
+            break;
+        }
+    }
+    events
+}
+
+/// The graph story-05's gate lets a user build: the pairer's second
+/// input is neither connected nor parameterised, so its gate never
+/// opens and the run makes no progress without error.
+fn hung_graph() -> &'static CompiledGraph {
+    compiled(
+        vec![node(COUNTER, "delta/counter"), node(PAIRER, "delta/pairer")],
+        vec![edge(COUNTER, "out", PAIRER, "a")],
+    )
+}
+
+#[tokio::test]
+async fn a_stop_ends_a_run_that_makes_no_progress() {
+    let compiled = hung_graph();
+    let mut run = Run::new(compiled);
+    let timeline = observed(&mut run);
+    let (stop, stopped) = watch::channel(false);
+    run.stop_on(stopped);
+    let started = tokio::spawn(run.start());
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        !started.is_finished(),
+        "the gate can never open, so the run waits without ending"
+    );
+    let _ = stop.send(true);
+
+    tokio::time::timeout(Duration::from_secs(1), started)
+        .await
+        .expect("the stop ends the hung run promptly")
+        .expect("the run task ran")
+        .expect("a stopped run is no error");
+    let events = until_finished(timeline).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(Event::RunFinished {
+                outcome: RunOutcome::Stopped
+            })
+        ),
+        "the stopped outcome is the run's last event: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_stop_ends_a_run_mid_stream_and_abandons_what_is_in_flight() {
+    let compiled = compiled(
+        vec![
+            node(COUNTER, "delta/counter"),
+            node(DOUBLER_1, "gamma/doubler"),
+        ],
+        vec![edge(COUNTER, "out", DOUBLER_1, "value")],
+    );
+    let mut run = Run::new(compiled);
+    let timeline = observed(&mut run);
+    let (gate, mut received) = gated(&mut run, DOUBLER_1, "value", 1);
+    let (stop, stopped) = watch::channel(false);
+    run.stop_on(stopped);
+    let started = tokio::spawn(run.start());
+
+    assert_eq!(
+        received.recv().await,
+        Some(2),
+        "a value is consumed as it arrives"
+    );
+    assert!(
+        !started.is_finished(),
+        "the stream has far to go, the run is still on"
+    );
+    let _ = stop.send(true);
+
+    tokio::time::timeout(Duration::from_secs(1), started)
+        .await
+        .expect("the stop ends the run promptly, the rest of the stream abandoned")
+        .expect("the run task ran")
+        .expect("a stopped run is no error");
+    drop(gate);
+    assert!(
+        drained(received).await.is_empty(),
+        "nothing further is delivered once the run is stopped"
+    );
+    let events = until_finished(timeline).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(Event::RunFinished {
+                outcome: RunOutcome::Stopped
+            })
+        ),
+        "the stopped outcome is the run's last event: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_stop_asked_before_the_run_begins_still_ends_it_as_stopped() {
+    let compiled = hung_graph();
+    let mut run = Run::new(compiled);
+    let timeline = observed(&mut run);
+    let (stop, stopped) = watch::channel(false);
+    run.stop_on(stopped);
+    let _ = stop.send(true);
+    let started = tokio::spawn(run.start());
+
+    started
+        .await
+        .expect("the run task ran")
+        .expect("a stop before the run begins is no error");
+    let events = until_finished(timeline).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(Event::RunFinished {
+                outcome: RunOutcome::Stopped
+            })
+        ),
+        "the stopped outcome is the run's last event: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_stopped_run_leaves_the_compiled_graph_starting_clean() {
+    let compiled = compiled(
+        vec![
+            node(COUNTER, "delta/counter"),
+            node(DOUBLER_1, "gamma/doubler"),
+        ],
+        vec![edge(COUNTER, "out", DOUBLER_1, "value")],
+    );
+
+    let mut run = Run::new(compiled);
+    let (gate, mut received) = gated(&mut run, DOUBLER_1, "value", 1);
+    let (stop, stopped) = watch::channel(false);
+    run.stop_on(stopped);
+    let started = tokio::spawn(run.start());
+    assert_eq!(received.recv().await, Some(2));
+    let _ = stop.send(true);
+    tokio::time::timeout(Duration::from_secs(1), started)
+        .await
+        .expect("the stop ends the run promptly")
+        .expect("the run task ran")
+        .expect("a stopped run is no error");
+    drop(gate);
+
+    let received = full_stream(compiled, DOUBLER_1, "value").await;
+    assert_eq!(
+        received,
+        doubled_values(),
+        "the same compiled graph runs again, whole and clean"
     );
 }

@@ -94,6 +94,27 @@ body {
   border-color: var(--accent);
 }
 
+/* A quieted control — the editing lock a run holds — reads as present
+   but inert, not gone. */
+.chrome button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chrome button:disabled:hover {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+/* The canvas gestures quiet with the chrome: the palette item, the node
+   title, and the port handles keep their look but lose the grab cursor
+   that invites a drag the lock has taken away. */
+.app.locked .palette-item,
+.app.locked .node-title,
+.app.locked .react-flow__handle {
+  cursor: default;
+}
+
 /* The palette, docked on the left; the right edge stays free for the
    editing sidebar. */
 
@@ -380,6 +401,12 @@ body {
   color: var(--muted);
 }
 
+.field:disabled {
+  color: var(--muted);
+  background: var(--canvas);
+  cursor: default;
+}
+
 /* An input's small field on the node itself, under its name. */
 
 .port-field {
@@ -401,6 +428,9 @@ body {
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--muted);
+  /* A compile failure reports one error per line; default whitespace
+     would fold them into one run-together paragraph. */
+  white-space: pre-line;
 }
 
 .status.error {

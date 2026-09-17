@@ -13,6 +13,8 @@ import { describe, expect, it } from 'vitest'
 import {
   hasUnsavedChanges,
   offPortUnhook,
+  runControl,
+  runStatusText,
   saveAsksForPath,
   toEdges,
   toNodes,
@@ -226,5 +228,53 @@ describe('hasUnsavedChanges', () => {
     expect(hasUnsavedChanges({ path: 'graphs/a.yml', dirty: true })).toBe(true)
     expect(hasUnsavedChanges({ path: null, dirty: false })).toBe(false)
     expect(hasUnsavedChanges(null)).toBe(false)
+  })
+})
+
+describe('runControl', () => {
+  it('flips Start↔Stop with the run state, the states mutually exclusive', () => {
+    expect(runControl({ running: false, outcome: null }, { nodes: [{}] })).toEqual({
+      running: false,
+      label: 'Start',
+      enabled: true,
+    })
+    expect(runControl({ running: true }, { nodes: [{}] })).toEqual({
+      running: true,
+      label: 'Stop',
+      enabled: true,
+    })
+  })
+
+  it('an empty definition has nothing to run: Start disabled, Stop unaffected', () => {
+    expect(runControl({ running: false, outcome: null }, { nodes: [] }).enabled).toBe(false)
+    expect(runControl(null, null).enabled).toBe(false)
+    expect(runControl({ running: true }, { nodes: [] }).enabled).toBe(true)
+  })
+
+  it('a run state not yet resynced reads as an idle start', () => {
+    expect(runControl(null, { nodes: [{}] })).toEqual({
+      running: false,
+      label: 'Start',
+      enabled: true,
+    })
+  })
+})
+
+describe('runStatusText', () => {
+  it('a running run says so; an outcome tells how it ended', () => {
+    expect(runStatusText({ running: true })).toBe('running')
+    expect(runStatusText({ running: false, outcome: 'completed' })).toBe('run completed')
+    expect(runStatusText({ running: false, outcome: 'stopped' })).toBe('run stopped')
+  })
+
+  it('a failed run names what failed', () => {
+    expect(
+      runStatusText({ running: false, outcome: 'failed', error: 'node Failer: the failer ran' }),
+    ).toBe('run failed: node Failer: the failer ran')
+  })
+
+  it('an idle run with no outcome says nothing', () => {
+    expect(runStatusText({ running: false, outcome: null })).toBe('')
+    expect(runStatusText(null)).toBe('')
   })
 })

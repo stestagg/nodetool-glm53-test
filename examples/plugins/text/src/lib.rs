@@ -73,6 +73,40 @@ fn drip(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Drip)
 }
 
+/// The pause between a ticker's values: one fixed rhythm, no author-facing
+/// knob — the node exists so a run lasts long enough to watch and to stop,
+/// where every other node the shipped plugins build completes in
+/// microseconds.
+const TICK_PAUSE: Duration = Duration::from_millis(100);
+
+/// A slow source: fired once by its count literal, it counts from one
+/// through the count, a pause between values. A count of nothing completes
+/// at once; a large one outlasts any gesture, the run's length the user's
+/// to end.
+struct Ticker;
+
+#[async_trait]
+impl Behaviour for Ticker {
+    async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        let count = io
+            .input("count")
+            .current()
+            .and_then(|value| value.get::<i64>().copied())
+            .expect("the run is gated on this input's first value");
+        for value in 1..=count {
+            io.output("value")
+                .emit(Value::new(scalars::I64, value))
+                .await;
+            tokio::time::sleep(TICK_PAUSE).await;
+        }
+        Ok(Flow::Complete)
+    }
+}
+
+fn ticker(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
+    Box::new(Ticker)
+}
+
 struct Uppercase;
 
 #[async_trait]
@@ -183,6 +217,16 @@ node_type! {
     behaviour: split,
     inputs: [ text: "String", separator: "String" ],
     outputs: [ parts: "String" ],
+}
+
+node_type! {
+    type_ref: "text/ticker",
+    label: "Ticker",
+    icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="6" fill="none" stroke="#333" stroke-width="1.5"/><path d="M8 8V3M8 8l3 3" stroke="#333" stroke-width="1.5" fill="none"/></svg>"##,
+    plugin: "text",
+    behaviour: ticker,
+    inputs: [ count: "i64" ],
+    outputs: [ value: "i64" ],
 }
 
 node_type! {
