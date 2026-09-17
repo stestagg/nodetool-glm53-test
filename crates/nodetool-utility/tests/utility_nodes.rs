@@ -1,10 +1,11 @@
 //! The utility nodes, proven one node at a time and through the compiler: the
 //! If routing every pairing decision's value to exactly one selected output,
 //! the stream semantics' first-value gating and held-value re-routing
-//! arriving unchanged, the Format's two modes across the base scalars,
-//! completion by the default rule, and the compile-time union — the
-//! connection the union and declared conversions cannot bridge failing with
-//! the standard error.
+//! arriving unchanged, the Format's two modes across the base scalars with
+//! the unfed-template hazard pinned, completion by the default rule, and the
+//! compile-time union — exact matches riding no conversion, a plugin custom
+//! type bridged by its own declared conversion, and the connection neither
+//! can bridge failing with the standard error.
 
 use std::time::Duration;
 
@@ -43,6 +44,31 @@ nodetool::node_type! {
     plugin: "utility-test",
     inputs: [],
     outputs: [ value: "String" ],
+}
+
+// A custom type whose own declared conversion into `String` is the bridge
+// the union cannot supply: the sibling of the unbridgeable `thing`.
+const WORD: nodetool::Uuid = nodetool::uuid!("00000000-0000-0000-0000-080000000002");
+
+struct Word(String);
+
+fn word_as_string(value: &Value) -> Option<Value> {
+    Some(Value::new(scalars::STRING, value.get::<Word>()?.0.clone()))
+}
+
+nodetool::data_type! {
+    id: WORD,
+    name: "utility-test/word",
+    conversions: [ nodetool::scalars::STRING => word_as_string ],
+}
+
+nodetool::node_type! {
+    type_ref: "utility-test/word_source",
+    label: "Word source",
+    icon: "<svg/>",
+    plugin: "utility-test",
+    inputs: [],
+    outputs: [ value: "utility-test/word" ],
 }
 
 const SOURCE: &str = "00000000-0000-0000-0000-0800000000a1";
@@ -160,7 +186,7 @@ async fn each_pairing_decision_routes_the_held_value_to_exactly_one_selected_out
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_condition_change_re_routes_the_held_value_under_the_new_condition() {
     let (condition_tx, condition) = fed("condition");
     let (value_tx, value) = fed("value");
@@ -173,14 +199,27 @@ async fn a_condition_change_re_routes_the_held_value_under_the_new_condition() {
         drive(node.as_mut(), &mut inputs, &mut outputs).await
     });
 
-    condition_tx
-        .send(Value::new(scalars::BOOL, true))
-        .await
-        .expect("the hand-off takes it");
+    // The value arrives while the condition holds none: it queues behind the
+    // closed gate, and the sleeps below hand each next send to the driver
+    // alone, so the interleaving is the test's, not the polling order's.
     value_tx
         .send(Value::new(scalars::STRING, "alpha".to_owned()))
         .await
         .expect("the hand-off takes it");
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    // The condition's first value opens the gate: the value's own arrival and
+    // the condition's each fire a run under the true condition, each routing
+    // the value to exactly one output.
+    condition_tx
+        .send(Value::new(scalars::BOOL, true))
+        .await
+        .expect("the hand-off takes it");
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    // The changed condition's arrival re-runs the held value under the new
+    // condition: `alpha` reaches `else` too, on both outputs across the run,
+    // every decision still delivering to exactly one of them.
     condition_tx
         .send(Value::new(scalars::BOOL, false))
         .await
@@ -193,13 +232,13 @@ async fn a_condition_change_re_routes_the_held_value_under_the_new_condition() {
         .expect("the node completes");
     assert_eq!(
         drained(then_rx).await,
-        ["alpha"],
-        "the decision while the condition held true"
+        ["alpha", "alpha"],
+        "both runs under the true condition routed the value to `then`"
     );
     assert_eq!(
         drained(else_rx).await,
-        ["alpha", "alpha"],
-        "the changed condition re-routed the held value: the false arrival's run, then the value's own arrival pairing the latest condition"
+        ["alpha"],
+        "the false arrival re-routed the held value to `else`: the value ran on both outputs across the run"
     );
 }
 
@@ -313,7 +352,7 @@ async fn the_format_without_a_template_yields_the_values_plain_string_form() {
         drive(node.as_mut(), &mut inputs, &mut outputs).await
     });
 
-    // The empty template — the parameter left unset in a graph file — formats
+    // The empty template — a graph file's `template: ""` parameter — formats
     // each value's plain string form.
     template_tx
         .send(Value::new(scalars::STRING, String::new()))
@@ -340,6 +379,41 @@ async fn the_format_without_a_template_yields_the_values_plain_string_form() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_format_whose_template_input_is_never_fed_hangs_the_run() {
+    let (value_tx, value) = fed("value");
+    let (text_out, mut text_rx) = collected("text");
+    let mut node = behaviour_of("utility/format");
+    let run = tokio::spawn(async move {
+        let mut inputs = [Input::unconnected("template"), value];
+        let mut outputs = [text_out];
+        drive(node.as_mut(), &mut inputs, &mut outputs).await
+    });
+
+    // A graph file's missing `template` parameter leaves the input
+    // unconnected: the degenerate stream never delivers, the gate never
+    // opens, and the arriving values queue forever — the run hangs, and
+    // nothing is emitted. This is the settled gate semantics, pinned here so
+    // a driver change cannot turn it into something else silently.
+    value_tx
+        .send(Value::new(scalars::I32, 1))
+        .await
+        .expect("the hand-off takes it");
+    drop(value_tx);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), run)
+            .await
+            .is_err(),
+        "the run never completes while the template input is unfed"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(10), text_rx.recv())
+            .await
+            .is_err(),
+        "no run fired, so the node emitted nothing"
+    );
+}
+
 #[test]
 fn the_utility_crate_contributes_exactly_its_two_node_types() {
     let mut contributed: Vec<&str> = registry::node_types()
@@ -355,7 +429,7 @@ fn the_utility_crate_contributes_exactly_its_two_node_types() {
 }
 
 #[test]
-fn a_connection_across_the_union_and_its_declared_conversions_compiles() {
+fn an_exact_union_member_match_compiles_without_a_conversion() {
     let compiled = compile::compile(
         &definition(
             vec![
@@ -387,6 +461,36 @@ fn a_connection_across_the_union_and_its_declared_conversions_compiles() {
         resolved,
         ["String", "i8"],
         "the first connection matches its exact member; the union-to-union one resolves to the first declared member both sides share"
+    );
+}
+
+#[test]
+fn a_plugin_custom_type_reaches_format_through_its_declared_conversion() {
+    let compiled = compile::compile(
+        &definition(
+            vec![
+                node(SOURCE, "utility-test/word_source"),
+                node(FORMATTER, "utility/format"),
+            ],
+            vec![edge(SOURCE, "value", FORMATTER, "value")],
+        ),
+        &Registry::collect(),
+    )
+    .expect("the word type's own declared conversion bridges it into the union");
+    let connection = &compiled.connections[0];
+    assert_eq!(
+        connection.resolved_type.name, "String",
+        "the conversion targets the union's String member"
+    );
+    let conversion = connection
+        .conversion
+        .expect("the connection rides the word type's declared conversion");
+    let converted = (conversion.convert)(&Value::new(WORD, Word("alpha".to_owned())))
+        .expect("the declared conversion converts the word");
+    assert_eq!(
+        converted.get::<String>().map(String::as_str),
+        Some("alpha"),
+        "the bridged value lands as the String the format formats"
     );
 }
 

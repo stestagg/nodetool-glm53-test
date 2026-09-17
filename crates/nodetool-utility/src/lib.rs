@@ -1,6 +1,6 @@
 //! The first-party library of trivial utility nodes: an `If` router and a
-//! `Format`-to-string node — the only two the requirements name. The crate is
-//! a plugin like any other: its only dependency is `nodetool`, its node types
+//! `Format`-to-string node. The crate is a plugin like any other: its only
+//! dependency is `nodetool`, its node types
 //! are declared through the one `node_type!` registration path with their
 //! behaviour through the one authoring API, and linking it into a binary is
 //! the whole integration step. Core branches on nothing about which nodes
@@ -15,6 +15,7 @@ use nodetool::async_trait;
 
 use nodetool::behaviour::{Behaviour, Error, Flow, Io, Trigger};
 use nodetool::node_type;
+use nodetool::registry;
 use nodetool::scalars;
 use nodetool::Value;
 
@@ -22,9 +23,6 @@ use nodetool::Value;
 /// `Display` renders it, a string as itself. `None` for a payload that is not
 /// a base scalar — a value a compiled connection could not have delivered.
 fn string_form(value: &Value) -> Option<String> {
-    if let Some(text) = value.get::<String>() {
-        return Some(text.clone());
-    }
     macro_rules! scalars {
         ($($ty:ty),* $(,)?) => {$(
             if let Some(form) = value.get::<$ty>().map(ToString::to_string) {
@@ -32,7 +30,7 @@ fn string_form(value: &Value) -> Option<String> {
             }
         )*};
     }
-    scalars!(bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64);
+    scalars!(String, bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64);
     None
 }
 
@@ -69,9 +67,13 @@ fn if_behaviour() -> Box<dyn Behaviour> {
 }
 
 /// Converts each incoming value to a `String`: with a format template, the
-/// value's string form substituted at the template's first `{}`; an empty
-/// template — the parameter left unset — leaves the value's plain string
-/// form. The template's own arrival fills its held value like any other.
+/// value's string form substituted at the template's first `{}` — a template
+/// without one emits itself verbatim, the value going nowhere; an empty
+/// template leaves the value's plain string form. The template's own arrival
+/// fills its held value like any other. The template input must deliver a
+/// first value before any run fires — in a graph file, the `template`
+/// parameter, `""` for the plain form; left unconnected and unset, the node
+/// never fires and the run hangs.
 struct Format;
 
 #[async_trait]
@@ -83,10 +85,10 @@ impl Behaviour for Format {
             .expect("the run is gated on this input's first value")
             .clone();
         let form = string_form(&value).ok_or_else(|| {
-            format!(
-                "the value of type id {} is not a base scalar this node formats",
-                value.type_id()
-            )
+            let name = registry::data_type_by_id(value.type_id())
+                .map(|data_type| data_type.name)
+                .unwrap_or("an unregistered type");
+            format!("the value of type {name} is not a base scalar this node formats")
         })?;
         let text = match io
             .input("template")

@@ -7,6 +7,8 @@ nodes:
   - uuid: 00000000-0000-0000-0000-400000000002
     type_ref: utility/if
     label: router
+    # The condition literal's arrival re-runs the held value, so the first
+    # routed value prints more than once.
     parameters:
       condition: true
   - uuid: 00000000-0000-0000-0000-400000000003
@@ -17,6 +19,10 @@ nodes:
   - uuid: 00000000-0000-0000-0000-400000000004
     type_ref: utility/format
     label: else format
+    # Unselected in this run, so it stays parameter-free — a fed template on
+    # an unselected branch hangs the run instead of completing it. Were this
+    # branch selected, its template input would need feeding, the empty
+    # string asking for the plain form.
 edges:
   - from: 00000000-0000-0000-0000-400000000001
     from_port: out

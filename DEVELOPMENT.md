@@ -99,6 +99,15 @@ cargo run -p run-graph if-true      # the utility If steers to `then`, the Forma
 cargo run -p run-graph if-false     # the same graph steered to `else`, the Format's plain string form
 ```
 
+Two things to expect from the `if` samples. The first routed value prints
+more than once — the condition literal's arrival re-runs the held value and
+the template literal's arrival fires its own run, so the first value prints
+three times before later values print once; that is the stream semantics'
+pairing, not a duplication. And a Format's `template` input must be fed for
+the node to fire, `template: ""` being how a graph asks for the plain form,
+while a Format on an unselected branch never fires and must carry no
+template: a fed template there hangs the run instead of completing it.
+
 Adding the `observe` flag subscribes the printing observer, so the
 engine's event timeline prints beside whatever the sample shows — the run
 itself is the same either way:
