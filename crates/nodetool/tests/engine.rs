@@ -62,9 +62,13 @@ fn definition(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> GraphDefinition {
     }
 }
 
-fn compiled(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> CompiledGraph {
-    compile::compile(&definition(nodes, edges), &Registry::collect())
-        .expect("the definition compiles")
+/// Compiles and hands the graph back for the whole process: a run may be
+/// spawned as its own task, which borrows its graph for `'static`.
+fn compiled(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> &'static CompiledGraph {
+    Box::leak(Box::new(
+        compile::compile(&definition(nodes, edges), &Registry::collect())
+            .expect("the definition compiles"),
+    ))
 }
 
 /// The counter's whole stream.
@@ -118,13 +122,23 @@ fn gated(
         for _ in 0..taken {
             let value = values.recv().await.expect("the stream carries values");
             forward
-                .send(value.get::<i32>().copied().expect("the port is declared i32"))
+                .send(
+                    value
+                        .get::<i32>()
+                        .copied()
+                        .expect("the port is declared i32"),
+                )
                 .expect("the test reads what it forwarded");
         }
         held.notified().await;
         while let Some(value) = values.recv().await {
             forward
-                .send(value.get::<i32>().copied().expect("the port is declared i32"))
+                .send(
+                    value
+                        .get::<i32>()
+                        .copied()
+                        .expect("the port is declared i32"),
+                )
                 .expect("the test reads what it forwarded");
         }
         Ok(())
@@ -154,7 +168,7 @@ async fn one_emission_reaches_every_connected_downstream_node() {
             edge(COUNTER, "out", ECHO_2, "value"),
         ],
     );
-    let mut run = Run::new(&compiled);
+    let mut run = Run::new(compiled);
     let first = forwarded(&mut run, ECHO_1, "value");
     let second = forwarded(&mut run, ECHO_2, "value");
 
@@ -178,19 +192,23 @@ async fn a_constant_literal_pairs_against_every_arrival_in_a_whole_graph() {
         ],
         vec![edge(COUNTER, "out", PAIRER, "a")],
     );
-    let mut run = Run::new(&compiled);
+    let mut run = Run::new(compiled);
     let sums = forwarded(&mut run, PAIRER, "sum");
 
     run.start().await.expect("the run completes");
 
+    let sums = drained(sums).await;
     assert_eq!(
-        drained(sums).await,
-        counter_values()
-            .into_iter()
-            .map(|value| value + 10)
-            .collect::<Vec<_>>(),
-        "every arrival paired against the literal's held value, not only the first"
+        sums.len(),
+        51,
+        "every arrival fired its run, and the literal's own arrival did too: {sums:?}"
     );
+    for expected in 11..=60 {
+        assert!(
+            sums.contains(&expected),
+            "arrival {expected} paired against the held literal, not only the first: {sums:?}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -199,7 +217,7 @@ async fn the_run_ends_only_when_every_node_is_complete() {
         vec![node(COUNTER, "delta/counter"), node(ECHO_1, "delta/echo")],
         vec![edge(COUNTER, "out", ECHO_1, "value")],
     );
-    let mut run = Run::new(&compiled);
+    let mut run = Run::new(compiled);
     // The consumer parks after one value: the echo's backlog is far from
     // drained and the source stalls behind it, so the nodes are still
     // working.
@@ -217,7 +235,7 @@ async fn the_run_ends_only_when_every_node_is_complete() {
         .await
         .expect("the run task ran")
         .expect("the run completes");
-    assert_eq!(drained(received).await, counter_values());
+    assert_eq!(drained(received).await, (2..=50).collect::<Vec<_>>());
 }
 
 #[tokio::test]
@@ -226,7 +244,7 @@ async fn the_run_does_not_end_while_a_wired_consumer_holds_an_undelivered_value(
         vec![node(COUNTER, "delta/counter"), node(ECHO_1, "delta/echo")],
         vec![edge(COUNTER, "out", ECHO_1, "value")],
     );
-    let mut run = Run::new(&compiled);
+    let mut run = Run::new(compiled);
     // Every node is done — the source exhausted, the echo through its last
     // emission — but the hand-off the consumer is wired through still holds
     // undelivered values, and the consumer is still working.
@@ -255,7 +273,7 @@ async fn values_are_consumed_as_they_arrive_while_the_run_is_still_going() {
         vec![node(COUNTER, "delta/counter"), node(ECHO_1, "delta/echo")],
         vec![edge(COUNTER, "out", ECHO_1, "value")],
     );
-    let mut run = Run::new(&compiled);
+    let mut run = Run::new(compiled);
     let (gate, mut received) = gated(&mut run, ECHO_1, "value", 1);
     let started = tokio::spawn(run.start());
 
@@ -271,7 +289,7 @@ async fn values_are_consumed_as_they_arrive_while_the_run_is_still_going() {
         .await
         .expect("the run task ran")
         .expect("the run completes");
-    assert_eq!(drained(received).await, counter_values());
+    assert_eq!(drained(received).await, (2..=50).collect::<Vec<_>>());
 }
 
 #[tokio::test]
@@ -287,7 +305,7 @@ async fn the_first_behaviour_error_ends_the_run_naming_the_node() {
             edge(COUNTER, "out", ECHO_1, "value"),
         ],
     );
-    let mut run = Run::new(&compiled);
+    let mut run = Run::new(compiled);
     // Work unrelated to the failure, parked forever on a gate the test
     // never opens: fail-fast ends the run anyway, where waiting for it
     // would hang.
@@ -297,7 +315,9 @@ async fn the_first_behaviour_error_ends_the_run_naming_the_node() {
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), started)
         .await
         .expect("fail-fast ends the run although unrelated work is parked forever");
-    let error = outcome.expect("the run task ran").expect_err("the run failed");
+    let error = outcome
+        .expect("the run task ran")
+        .expect_err("the run failed");
     let message = error.to_string();
     assert!(
         message.contains("the guard"),
@@ -319,13 +339,18 @@ async fn a_consumer_error_ends_the_run_like_a_downstream_failure() {
         vec![node(COUNTER, "delta/counter"), node(ECHO_1, "delta/echo")],
         vec![edge(COUNTER, "out", ECHO_1, "value")],
     );
-    let mut run = Run::new(&compiled);
+    let mut run = Run::new(compiled);
     let (forward, mut received) = mpsc::unbounded_channel();
     let node: Uuid = ECHO_1.parse().unwrap();
     run.consume(node, "value", move |mut values| async move {
         let first = values.recv().await.expect("the stream carries values");
         forward
-            .send(first.get::<i32>().copied().expect("the port is declared i32"))
+            .send(
+                first
+                    .get::<i32>()
+                    .copied()
+                    .expect("the port is declared i32"),
+            )
             .expect("the test reads what it forwarded");
         Err("the consumer gave up".into())
     });
@@ -350,10 +375,7 @@ async fn a_consumer_error_ends_the_run_like_a_downstream_failure() {
         message.contains("Echo"),
         "the node named by its default label: {message}"
     );
-    assert!(
-        message.contains(ECHO_1),
-        "the node's uuid named: {message}"
-    );
+    assert!(message.contains(ECHO_1), "the node's uuid named: {message}");
     assert!(
         message.contains("the consumer gave up"),
         "what went wrong told: {message}"
@@ -363,7 +385,7 @@ async fn a_consumer_error_ends_the_run_like_a_downstream_failure() {
 #[tokio::test]
 async fn a_node_without_behaviour_ends_the_run_naming_it() {
     let compiled = compiled(vec![node(PASSTHROUGH, "gamma/passthrough")], vec![]);
-    let error = Run::new(&compiled)
+    let error = Run::new(compiled)
         .start()
         .await
         .expect_err("nothing runs a behaviour-less node");
@@ -385,7 +407,7 @@ async fn a_node_without_behaviour_ends_the_run_naming_it() {
 #[tokio::test]
 async fn an_output_with_no_downstream_neither_blocks_nor_fails_the_run() {
     let compiled = compiled(vec![node(COUNTER, "delta/counter")], vec![]);
-    Run::new(&compiled)
+    Run::new(compiled)
         .start()
         .await
         .expect("the source completes and its discarded values cost nothing");
@@ -394,7 +416,7 @@ async fn an_output_with_no_downstream_neither_blocks_nor_fails_the_run() {
 #[tokio::test]
 async fn an_empty_graph_finishes_immediately() {
     let compiled = compiled(vec![], vec![]);
-    Run::new(&compiled)
+    Run::new(compiled)
         .start()
         .await
         .expect("nothing to run: the run is done");

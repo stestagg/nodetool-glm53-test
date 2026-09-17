@@ -1,6 +1,8 @@
 //! Example nodetool plugin: flat text nodes, no sub-groups. Every node is
 //! declared through the authoring API — descriptor and behaviour together.
 
+use std::time::Duration;
+
 use nodetool::async_trait;
 
 use nodetool::behaviour::{Behaviour, Error, Flow, Io, Trigger};
@@ -23,12 +25,16 @@ struct Words;
 impl Behaviour for Words {
     async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
         // A self-driving source: fired once at the node's start, its lines
-        // emitted, and the node complete when the run returns.
-        for line in ["alpha, beta, gamma", "one, one, one"] {
-            io.output("out")
-                .emit(Value::new(scalars::STRING, line.to_owned()))
-                .await;
-        }
+        // emitted, and the node complete when the run returns. It produces
+        // on its own schedule — the gap between its lines lets a run's
+        // consumers be seen mid-stream, before the second line's parts land.
+        io.output("out")
+            .emit(Value::new(scalars::STRING, "alpha, beta, gamma".to_owned()))
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        io.output("out")
+            .emit(Value::new(scalars::STRING, "one, one, one".to_owned()))
+            .await;
         Ok(Flow::Complete)
     }
 }
@@ -43,7 +49,9 @@ struct Uppercase;
 impl Behaviour for Uppercase {
     async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
         let text = current_string(io, "text").to_uppercase();
-        io.output("text").emit(Value::new(scalars::STRING, text)).await;
+        io.output("text")
+            .emit(Value::new(scalars::STRING, text))
+            .await;
         Ok(Flow::Continue)
     }
 }
@@ -56,8 +64,13 @@ struct Split;
 
 #[async_trait]
 impl Behaviour for Split {
-    async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
-        // Every run fires after the gate, so each input holds a value; the
+    async fn process(&mut self, trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        // Each text arrival splits; the separator's own arrival merely
+        // fills its held value — nothing new to split.
+        let Trigger::Arrival("text") = trigger else {
+            return Ok(Flow::Continue);
+        };
+        // The run fires after the gate, so each input holds a value; the
         // separator's single value survives its stream's end.
         let text = current_string(io, "text");
         let separator = current_string(io, "separator");

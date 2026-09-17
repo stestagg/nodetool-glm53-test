@@ -17,32 +17,56 @@ use nodetool::graph;
 use nodetool::registry::Registry;
 use nodetool::{uuid, Uuid};
 
-/// The splitter, whose `parts` output the demo consumes — the same output
-/// the graph's own downstream nodes take.
-const SPLITTER: Uuid = uuid!("00000000-0000-0000-0000-100000000002");
+/// A built-in sample graph.
+struct Sample {
+    name: &'static str,
+    text: &'static str,
+    /// The node whose output the demo consumes — the same output the
+    /// graph's own downstream nodes take. A sample that cannot reach a run
+    /// carries none.
+    consumed: Option<Uuid>,
+}
 
 /// The built-in sample graphs, by the name that selects them.
-const SAMPLES: &[(&str, &str)] = &[
-    ("pipeline", include_str!("../graphs/pipeline.yml")),
-    ("failing", include_str!("../graphs/failure.yml")),
-    ("broken", include_str!("../graphs/broken.yml")),
-    ("uncompilable", include_str!("../graphs/uncompilable.yml")),
+const SAMPLES: &[Sample] = &[
+    Sample {
+        name: "pipeline",
+        text: include_str!("../graphs/pipeline.yml"),
+        consumed: Some(uuid!("00000000-0000-0000-0000-100000000002")),
+    },
+    Sample {
+        name: "failing",
+        text: include_str!("../graphs/failure.yml"),
+        consumed: Some(uuid!("00000000-0000-0000-0000-200000000002")),
+    },
+    Sample {
+        name: "broken",
+        text: include_str!("../graphs/broken.yml"),
+        consumed: None,
+    },
+    Sample {
+        name: "uncompilable",
+        text: include_str!("../graphs/uncompilable.yml"),
+        consumed: None,
+    },
 ];
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::process::ExitCode {
-    let asked = std::env::args().nth(1).unwrap_or_else(|| "pipeline".to_owned());
-    let Some((_, text)) = SAMPLES.iter().find(|(name, _)| *name == asked) else {
+    let asked = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "pipeline".to_owned());
+    let Some(sample) = SAMPLES.iter().find(|sample| sample.name == asked) else {
         let names = SAMPLES
             .iter()
-            .map(|(name, _)| *name)
+            .map(|sample| sample.name)
             .collect::<Vec<_>>()
             .join(", ");
         eprintln!("no sample named {asked:?}; samples: {names}");
         return std::process::ExitCode::from(2);
     };
 
-    let definition = match graph::load(text) {
+    let definition = match graph::load(sample.text) {
         Ok(definition) => definition,
         Err(error) => {
             eprintln!("load error: {error}");
@@ -60,7 +84,10 @@ async fn main() -> std::process::ExitCode {
     };
 
     let mut run = Run::new(&compiled);
-    run.consume(SPLITTER, "parts", |mut parts| async move {
+    let consumed = sample
+        .consumed
+        .expect("every sample that reaches a run names the node the demo consumes");
+    run.consume(consumed, "parts", |mut parts| async move {
         while let Some(value) = parts.recv().await {
             println!(
                 "emitted {}",

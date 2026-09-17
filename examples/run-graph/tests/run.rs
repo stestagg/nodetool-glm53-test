@@ -23,15 +23,11 @@ fn run(sample: &str) -> (String, String, Option<i32>) {
 fn the_pipeline_sample_prints_its_values_as_they_arrive_and_completes() {
     let (out, err, code) = run("pipeline");
     assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
-    for part in ["alpha", "beta", "gamma", "one"] {
-        assert!(
-            out.contains(&format!("emitted {part}\n")),
-            "the value printed as it arrived: {out}"
-        );
-    }
-    assert!(
-        out.contains("the run completed\n"),
-        "the run's completion printed last: {out}"
+    assert_eq!(err, "", "nothing on the error stream: {err}");
+    assert_eq!(
+        out,
+        "emitted alpha\nemitted beta\nemitted gamma\nemitted one\nemitted one\nemitted one\nthe run completed\n",
+        "each value printed as it arrived, the completion last"
     );
 }
 
@@ -100,8 +96,5 @@ fn compile_errors_end_the_path_printed_and_non_zero() {
 fn an_unknown_sample_is_refused() {
     let (_, err, code) = run("no-such-sample");
     assert_eq!(code, Some(2), "the unknown sample refused: {err}");
-    assert!(
-        err.contains("no sample named"),
-        "the refusal named: {err}"
-    );
+    assert!(err.contains("no sample named"), "the refusal named: {err}");
 }

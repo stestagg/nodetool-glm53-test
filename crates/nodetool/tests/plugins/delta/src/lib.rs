@@ -60,7 +60,9 @@ struct Echo;
 impl Behaviour for Echo {
     async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
         let value = current_i32(io, "value");
-        io.output("value").emit(Value::new(scalars::I32, value)).await;
+        io.output("value")
+            .emit(Value::new(scalars::I32, value))
+            .await;
         Ok(Flow::Continue)
     }
 }

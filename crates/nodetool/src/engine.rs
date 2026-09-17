@@ -61,6 +61,10 @@ struct ConsumerWiring {
 /// emits from the run's start, in order, then its end.
 type Consumer = Box<dyn FnOnce(Receiver<Value>) -> ConsumerStream + Send>;
 
+/// One output's wired downstreams: a hand-off sender per connection, each
+/// with the conversion its connection rides.
+type Downstream = Vec<(Sender<Value>, Option<ConvertFn>)>;
+
 type ConsumerStream = Pin<Box<dyn Future<Output = Result<(), behaviour::Error>> + Send>>;
 
 impl<'g> Run<'g> {
@@ -131,8 +135,7 @@ impl<'g> Run<'g> {
         // Each connection rides one bounded hand-off: the sender the
         // upstream output holds, the receiver the downstream input holds,
         // and the connection's conversion applied as values cross.
-        let mut senders: HashMap<(Uuid, &'static str), Vec<(Sender<Value>, Option<ConvertFn>)>> =
-            HashMap::new();
+        let mut senders: HashMap<(Uuid, &'static str), Downstream> = HashMap::new();
         let mut receivers: HashMap<(Uuid, &'static str), Receiver<Value>> = HashMap::new();
         for connection in &graph.connections {
             let (sender, receiver) = handoff();
