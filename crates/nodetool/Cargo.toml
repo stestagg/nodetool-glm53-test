@@ -7,11 +7,13 @@ edition = "2021"
 async-trait = "0.1"
 inventory = "0.3"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 serde_yaml = "0.9"
-tokio = { version = "1", default-features = false, features = ["sync", "rt"] }
-uuid = { version = "1", default-features = false, features = ["std", "serde"] }
+tokio = { version = "1", default-features = false, features = ["sync", "rt", "net", "io-util", "macros"] }
+uuid = { version = "1", default-features = false, features = ["std", "serde", "v4"] }
 
 [dev-dependencies]
+serde_json = "1"
 test-plugin-alpha = { path = "tests/plugins/alpha" }
 test-plugin-beta = { path = "tests/plugins/beta" }
 test-plugin-gamma = { path = "tests/plugins/gamma" }

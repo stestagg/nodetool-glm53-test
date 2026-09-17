@@ -85,6 +85,19 @@ pub struct GraphDefinition {
     pub edges: Vec<Edge>,
 }
 
+impl GraphDefinition {
+    /// A definition with no name, no nodes, and no edges: the graph a fresh
+    /// editor starts from.
+    pub fn empty() -> GraphDefinition {
+        GraphDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+}
+
 /// One node instance. Not a type: an instance carries the type reference of
 /// the node type it instantiates, plus everything that is this node's own.
 #[derive(Clone, Debug, PartialEq, Serialize)]
