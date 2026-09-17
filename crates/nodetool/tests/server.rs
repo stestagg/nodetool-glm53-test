@@ -1,7 +1,7 @@
 //! The editor server: the envelope's round trip, the greeting, the listing
-//! and definition requests, the create and move operations against the held
-//! definition, every malformed path, and the served address end to end over
-//! real sockets.
+//! and definition requests, the create, move, wire, unhook, and delete
+//! operations against the held definition, every malformed path, and the
+//! served address end to end over real sockets.
 
 use std::sync::Arc;
 
@@ -31,6 +31,21 @@ fn push(receiver: &mut tokio::sync::broadcast::Receiver<String>) -> Value {
 
 fn held_definition(editor: &Editor) -> Value {
     send(editor, r#"{"id": 0, "type": "get_definition"}"#)["graph"].clone()
+}
+
+/// Create one node at a fixed spot, answering its uuid: the setup step the
+/// wire, unhook, and delete tests build graphs from, positions being
+/// incidental to them.
+fn create(editor: &Editor, id: u64, type_ref: &str) -> String {
+    send(
+        editor,
+        &format!(
+            r#"{{"id": {id}, "type": "create_node", "type_ref": "{type_ref}", "position": {{"x": 0, "y": 0}}}}"#
+        ),
+    )["uuid"]
+        .as_str()
+        .unwrap()
+        .to_owned()
 }
 
 const SEEDED: &str = "schema_version: 1
@@ -305,9 +320,296 @@ fn malformed_input_is_answered_with_an_error_and_leaves_the_connection_usable() 
     assert_eq!(usable["graph"]["nodes"], json!([]));
 }
 
-// The served address end to end: the editor shell over HTTP, the upgrade to
-// the websocket endpoint, the greeting push, and one request answered with
-// the id it echoed.
+#[test]
+fn wire_creates_the_edge_and_pushes_it_to_every_connection() {
+    let editor = editor();
+    let a = create(&editor, 1, "alpha/add");
+    let b = create(&editor, 2, "beta/identity");
+    let mut watchers = [editor.subscribe(), editor.subscribe()];
+
+    let wired = send(
+        &editor,
+        &format!(
+            r#"{{"id": 3, "type": "wire", "from": "{a}", "from_port": "sum", "to": "{b}", "to_port": "value"}}"#
+        ),
+    );
+    assert_eq!(wired["type"], "wired");
+    assert_eq!(wired["id"], 3);
+
+    let definition = held_definition(&editor);
+    assert_eq!(
+        definition["edges"],
+        json!([{
+            "from": a,
+            "from_port": "sum",
+            "to": b,
+            "to_port": "value",
+        }]),
+        "the edge lands in the definition exactly as the operation named it"
+    );
+
+    // The push reaches every connection, each with the whole updated
+    // definition.
+    for watcher in &mut watchers {
+        let pushed = push(watcher);
+        assert_eq!(pushed["type"], "definition");
+        assert_eq!(pushed["graph"]["edges"].as_array().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn one_output_feeds_any_number_of_inputs() {
+    let editor = editor();
+    let adder = create(&editor, 1, "alpha/add");
+    let mut edges = Vec::new();
+    for id in [2, 3] {
+        let identity = create(&editor, id, "beta/identity");
+        send(
+            &editor,
+            &format!(
+                r#"{{"id": {id}, "type": "wire", "from": "{adder}", "from_port": "sum", "to": "{identity}", "to_port": "value"}}"#
+            ),
+        );
+        edges.push(json!({
+            "from": adder,
+            "from_port": "sum",
+            "to": identity,
+            "to_port": "value",
+        }));
+    }
+    assert_eq!(
+        held_definition(&editor)["edges"],
+        json!(edges),
+        "each downstream input carries its own wire"
+    );
+}
+
+#[test]
+fn a_wire_on_an_occupied_input_replaces_the_old_wire_and_any_literal() {
+    let editor = editor_holding(SEEDED);
+    let adder = "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33";
+    let identity = create(&editor, 1, "beta/identity");
+    let tick = create(&editor, 2, "beta/tick");
+
+    // The adder's `a` input holds the literal 2; the first wire replaces it.
+    send(
+        &editor,
+        &format!(
+            r#"{{"id": 3, "type": "wire", "from": "{identity}", "from_port": "value", "to": "{adder}", "to_port": "a"}}"#
+        ),
+    );
+    let definition = held_definition(&editor);
+    let adder_node = &definition["nodes"][0];
+    assert_eq!(
+        definition["edges"],
+        json!([{ "from": identity, "from_port": "value", "to": adder, "to_port": "a" }]),
+    );
+    assert!(
+        adder_node.get("parameters").is_none(),
+        "an input carries a connection or a literal, never both: {adder_node}"
+    );
+
+    // The second wire replaces the first on the same input.
+    send(
+        &editor,
+        &format!(
+            r#"{{"id": 4, "type": "wire", "from": "{tick}", "from_port": "tick", "to": "{adder}", "to_port": "a"}}"#
+        ),
+    );
+    let definition = held_definition(&editor);
+    assert_eq!(
+        definition["edges"],
+        json!([{ "from": tick, "from_port": "tick", "to": adder, "to_port": "a" }]),
+        "the input's old upstream is gone everywhere"
+    );
+}
+
+#[test]
+fn a_wire_from_a_nodes_output_to_its_own_input_lands() {
+    let editor = editor();
+    let identity = create(&editor, 1, "beta/identity");
+
+    let wired = send(
+        &editor,
+        &format!(
+            r#"{{"id": 2, "type": "wire", "from": "{identity}", "from_port": "value", "to": "{identity}", "to_port": "value"}}"#
+        ),
+    );
+    assert_eq!(wired["type"], "wired", "edit time rejects no wire");
+    assert_eq!(
+        held_definition(&editor)["edges"],
+        json!([{ "from": identity, "from_port": "value", "to": identity, "to_port": "value" }]),
+        "compile time is what judges cycles, when a run starts"
+    );
+}
+
+#[test]
+fn unhook_removes_the_edge_and_is_idempotent() {
+    let editor = editor();
+    let adder = create(&editor, 1, "alpha/add");
+    let identity = create(&editor, 2, "beta/identity");
+    send(
+        &editor,
+        &format!(
+            r#"{{"id": 3, "type": "wire", "from": "{identity}", "from_port": "value", "to": "{adder}", "to_port": "a"}}"#
+        ),
+    );
+
+    let unhooked = send(
+        &editor,
+        &format!(r#"{{"id": 4, "type": "unhook", "to": "{adder}", "to_port": "a"}}"#),
+    );
+    assert_eq!(unhooked["type"], "unhooked");
+    assert_eq!(unhooked["id"], 4);
+    assert_eq!(
+        held_definition(&editor)["edges"],
+        json!([]),
+        "the input returns to unconnected"
+    );
+
+    // Unhooking again — or an input that never carried a wire — changes
+    // nothing and answers the same.
+    let again = send(
+        &editor,
+        &format!(r#"{{"id": 5, "type": "unhook", "to": "{adder}", "to_port": "b"}}"#),
+    );
+    assert_eq!(again["type"], "unhooked");
+    assert_eq!(
+        held_definition(&editor)["nodes"].as_array().unwrap().len(),
+        2,
+        "unhooking never touches nodes"
+    );
+}
+
+#[test]
+fn delete_removes_the_node_and_cascades_its_edges() {
+    let editor = editor();
+    let adder = create(&editor, 1, "alpha/add");
+    let identity = create(&editor, 2, "beta/identity");
+    let tick = create(&editor, 3, "beta/tick");
+    send(
+        &editor,
+        &format!(
+            r#"{{"id": 4, "type": "wire", "from": "{adder}", "from_port": "sum", "to": "{identity}", "to_port": "value"}}"#
+        ),
+    );
+    send(
+        &editor,
+        &format!(
+            r#"{{"id": 5, "type": "wire", "from": "{tick}", "from_port": "tick", "to": "{adder}", "to_port": "b"}}"#
+        ),
+    );
+
+    let deleted = send(
+        &editor,
+        &format!(r#"{{"id": 6, "type": "delete_node", "uuid": "{adder}"}}"#),
+    );
+    assert_eq!(deleted["type"], "node_deleted");
+    assert_eq!(deleted["id"], 6);
+
+    let definition = held_definition(&editor);
+    let uuids: Vec<_> = definition["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["uuid"].clone())
+        .collect();
+    assert_eq!(
+        json!(uuids),
+        json!([identity, tick]),
+        "only the deleted node goes"
+    );
+    assert_eq!(
+        definition["edges"],
+        json!([]),
+        "no dangling edges are left behind"
+    );
+}
+
+#[test]
+fn wire_unhook_and_delete_naming_an_unknown_node_are_errors() {
+    let editor = editor_holding(SEEDED);
+    let before = send(&editor, r#"{"id": 1, "type": "get_definition"}"#);
+    let unknown = "0d5c1e2a-3b4c-4d5e-8f90-1a2b3c4d5e6f";
+
+    let wired = send(
+        &editor,
+        &format!(
+            r#"{{"id": 2, "type": "wire", "from": "{unknown}", "from_port": "sum", "to": "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33", "to_port": "a"}}"#
+        ),
+    );
+    assert_eq!(wired["type"], "error");
+    assert!(
+        wired["error"].as_str().unwrap().contains("no node"),
+        "the error names the problem: {wired}"
+    );
+
+    let landed = send(
+        &editor,
+        &format!(
+            r#"{{"id": 3, "type": "wire", "from": "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33", "from_port": "sum", "to": "{unknown}", "to_port": "a"}}"#
+        ),
+    );
+    assert_eq!(landed["type"], "error");
+
+    let unhooked = send(
+        &editor,
+        &format!(r#"{{"id": 4, "type": "unhook", "to": "{unknown}", "to_port": "a"}}"#),
+    );
+    assert_eq!(unhooked["type"], "error");
+
+    let deleted = send(
+        &editor,
+        &format!(r#"{{"id": 5, "type": "delete_node", "uuid": "{unknown}"}}"#),
+    );
+    assert_eq!(deleted["type"], "error");
+
+    let after = send(&editor, r#"{"id": 6, "type": "get_definition"}"#);
+    assert_eq!(
+        before["graph"], after["graph"],
+        "the definition is untouched"
+    );
+    assert_eq!(after["id"], 6, "the connection is still usable");
+}
+
+#[test]
+fn malformed_wire_unhook_and_delete_are_errors_and_leave_the_connection_usable() {
+    let editor = editor();
+
+    for (message, id) in [
+        (r#"{"id": 1, "type": "wire"}"#, 1),
+        (
+            r#"{"id": 2, "type": "wire", "from": "x", "from_port": "sum", "to": "y", "to_port": "a"}"#,
+            2,
+        ),
+        (
+            r#"{"id": 3, "type": "wire", "from": "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33", "from_port": 1, "to": "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33", "to_port": "a"}"#,
+            3,
+        ),
+        (
+            r#"{"id": 4, "type": "wire", "from": "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33", "from_port": "sum", "to": "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33", "to_port": "a", "extra": true}"#,
+            4,
+        ),
+        (r#"{"id": 5, "type": "unhook", "to": "not a uuid"}"#, 5),
+        (r#"{"id": 6, "type": "unhook"}"#, 6),
+        (r#"{"id": 7, "type": "delete_node", "uuid": 9}"#, 7),
+        (r#"{"id": 8, "type": "delete_node"}"#, 8),
+    ] {
+        let reply = send(&editor, message);
+        assert_eq!(reply["type"], "error", "for {message}");
+        assert_eq!(reply["id"], id, "for {message}");
+    }
+
+    let usable = send(&editor, r#"{"id": 9, "type": "get_definition"}"#);
+    assert_eq!(usable["id"], 9);
+    assert_eq!(usable["graph"]["edges"], json!([]));
+    assert_eq!(
+        usable["graph"]["nodes"].as_array().unwrap().len(),
+        0,
+        "nothing landed"
+    );
+}
+
 #[tokio::test]
 async fn serves_the_page_and_answers_over_the_websocket() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

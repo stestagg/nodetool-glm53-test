@@ -8,6 +8,7 @@
 //! malformed to carry an id has none.
 
 use serde_json::{json, Map, Value};
+use uuid::Uuid;
 
 use crate::graph::{GraphDefinition, Mapping, SCHEMA_VERSION};
 use crate::registry;
@@ -88,6 +89,12 @@ pub fn take_string(fields: &mut Map<String, Value>, name: &str) -> Result<String
         Some(_) => Err(format!("`{name}` must be a string")),
         None => Err(format!("missing field `{name}`")),
     }
+}
+
+/// Take one required uuid field out of a message's fields.
+pub fn take_uuid(fields: &mut Map<String, Value>, name: &str) -> Result<Uuid, String> {
+    let text = take_string(fields, name)?;
+    Uuid::parse_str(&text).map_err(|_| format!("`{name}` must be a uuid"))
 }
 
 /// A drop or resting position, as the browser measures it.

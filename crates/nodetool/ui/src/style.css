@@ -190,6 +190,13 @@ body {
   right: -4px;
 }
 
+/* A wire reaches this input: the port dot carries the accent. */
+
+.port.connected .react-flow__handle {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 /* An unknown-typed node: visibly inert, saying what it cannot show. */
 
 .node.placeholder {
