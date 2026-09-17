@@ -210,3 +210,5 @@ product binary (24).
   enters for the file path, matching story 11's two-serialisations-one-model
   line. Whatever schema room story 23's groups need rides the same loader
   and dump untouched. (REQ-44)
+
+- 2026-09-17: Implemented in pull request #50 (http://localhost:8080/gitea/localcode/nodetool/pulls/50).
