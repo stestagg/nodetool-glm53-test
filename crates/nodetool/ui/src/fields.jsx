@@ -1,0 +1,76 @@
+// The scalar field both views of an input's value share: the node's
+// inline field and the sidebar's parameter row render and commit the same
+// scalar text, so an edit in either view appears in the other. Which
+// inputs get a field is read off the listing's base-scalar fact — an
+// input whose declared types include a core base scalar, whatever union
+// it declares; an input declared only on plugin custom types is opaque
+// to the editor and gets none.
+
+import { createContext, useContext, useEffect, useState } from 'react'
+
+// The editing seam the field commits through: the editor's request
+// function, provided once at the shell. Null until the connection is
+// live.
+export const EditContext = createContext(null)
+
+export function useEdit() {
+  return useContext(EditContext)
+}
+
+// The rule for which inputs get an editable field: a declared type that
+// is a core base scalar makes the port scalar-possible. A type reference
+// the listing does not classify reads as not-a-base-scalar; so does a
+// listing not yet arrived.
+export function scalarPossible(port, baseScalars = {}) {
+  return port.type_refs.some((ref) => baseScalars[ref] === true)
+}
+
+// A stored scalar as its text, for a field to show: the boolean,
+// integer, or float as written, the string bare, no value as empty — the
+// same empty that commits as unset. A JSON null in the definition — what
+// a non-finite float becomes, which the envelope cannot carry — reads as
+// empty too: the field never shows a value the definition does not hold.
+// (An integer past 2^53 rounds through the JSON number the same way: the
+// envelope's precision, not the reading's.)
+export function scalarText(value) {
+  if (value === undefined || value === null) return ''
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  return String(value)
+}
+
+// Commit an input's value through the editing seam. Empty text unsets —
+// the definition holds no empty-string stand-in — anything else crosses
+// as the raw text: the server reads it by the file format's own reading,
+// so what is stored is what a hand-written file would carry.
+export function commitParameter(edit, uuid, input, text) {
+  if (text === '') edit('set_parameter', { uuid, input })
+  else edit('set_parameter', { uuid, input, value: text })
+}
+
+// The commit-cycling field: Enter or leaving the field commits, Escape
+// discards an uncommitted draft, and an unchanged commit sends nothing.
+// The draft is local; the stored value arrives by definition push and
+// re-seeds the field whenever it changes, so neither view of the stored
+// value is authoritative in the browser.
+export function Field({ value, placeholder = '', onCommit, className = '', ...rest }) {
+  const stored = scalarText(value)
+  const [draft, setDraft] = useState(stored)
+  useEffect(() => setDraft(stored), [stored])
+  const commit = () => {
+    if (draft !== stored) onCommit(draft)
+  }
+  return (
+    <input
+      className={`field nodrag ${className}`}
+      value={draft}
+      placeholder={placeholder}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') commit()
+        else if (event.key === 'Escape') setDraft(stored)
+      }}
+      onBlur={commit}
+      {...rest}
+    />
+  )
+}

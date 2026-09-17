@@ -10,7 +10,7 @@
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::graph::{GraphDefinition, Mapping, SCHEMA_VERSION};
+use crate::graph::{GraphDefinition, Mapping, ParameterValue, SCHEMA_VERSION};
 use crate::registry;
 use crate::{NodeType, Port};
 
@@ -37,6 +37,23 @@ pub fn node_type_listing() -> Vec<&'static NodeType> {
     let mut types: Vec<&'static NodeType> = registry::node_types().collect();
     types.sort_by_key(|node_type| node_type.type_ref);
     types
+}
+
+/// The listing's base-scalar fact: per registered type reference, whether
+/// the type is one of core's base scalars. One flat fact the browser's
+/// field rule reads — computed here, where core's own scalar set is
+/// known, so the browser hardcodes no scalar names of its own. A type
+/// reference the registry does not know is absent, which reads as
+/// not-a-base-scalar.
+pub fn base_scalars() -> Map<String, Value> {
+    let mut facts = Map::new();
+    for data_type in registry::data_types() {
+        facts.insert(
+            data_type.name.to_owned(),
+            Value::Bool(crate::scalars::is_base_scalar(data_type.id)),
+        );
+    }
+    facts
 }
 
 pub fn node_type_json(node_type: &NodeType) -> Value {
@@ -95,6 +112,26 @@ pub fn take_string(fields: &mut Map<String, Value>, name: &str) -> Result<String
 pub fn take_uuid(fields: &mut Map<String, Value>, name: &str) -> Result<Uuid, String> {
     let text = take_string(fields, name)?;
     Uuid::parse_str(&text).map_err(|_| format!("`{name}` must be a uuid"))
+}
+
+/// Take one optional parameter commit out of a message's fields. Absent
+/// means the edit clears — an unset input is unset. Present, it is the
+/// typed text carried as a string, and the server reads it by the file
+/// format's own reading ([`crate::graph::read_parameter_text`]), so what
+/// a commit stores is exactly what a hand-written file stores — the
+/// browser hardcodes no scalar rules of its own.
+pub fn take_parameter(
+    fields: &mut Map<String, Value>,
+    name: &str,
+) -> Result<Option<ParameterValue>, String> {
+    let text = match fields.remove(name) {
+        None => return Ok(None),
+        Some(Value::String(text)) => text,
+        Some(_) => return Err(format!("`{name}` must be a string")),
+    };
+    crate::graph::read_parameter_text(&text)
+        .map(Some)
+        .map_err(|message| format!("`{name}` {message}"))
 }
 
 /// A drop or resting position, as the browser measures it.

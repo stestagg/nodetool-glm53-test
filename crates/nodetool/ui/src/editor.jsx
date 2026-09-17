@@ -1,11 +1,13 @@
 // The editor shell: a react-flow style canvas under light Blueprint
 // chrome, with the palette of every linked plugin's node types docked on
-// the left and the right edge kept free for the editing sidebar. The
-// browser holds no authoritative graph state — it requests the definition
-// on load, renders what the server holds, and every edit lands server-side
-// and is pushed back. Drags follow the pointer locally; one operation
-// commits where a dragged node rests, where a wire lands, or which node a
-// key press deletes.
+// the left and the editing sidebar docked on the right while a node is
+// selected. The browser holds no authoritative graph state — it requests
+// the listing and the definition on load, renders what the server holds,
+// and every edit lands server-side and is pushed back. Drags follow the
+// pointer locally; one operation commits where a dragged node rests,
+// where a wire lands, which node a key press deletes, and what a field
+// commit holds — the sidebar and the node's inline fields both committing
+// through the same seam, both views of one stored value.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -15,8 +17,10 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { NODE_TYPE, connect } from './protocol.js'
+import { EditContext, scalarPossible } from './fields.jsx'
 import { SelfLoopEdge } from './edges.jsx'
 import { PlaceholderNode, TypeNode } from './nodes.jsx'
+import { Sidebar } from './sidebar.jsx'
 
 const nodeTypes = { type: TypeNode, placeholder: PlaceholderNode }
 const edgeTypes = { selfloop: SelfLoopEdge }
@@ -34,7 +38,7 @@ function recordedPosition(node) {
   return undefined
 }
 
-export function toNodes(graph, types) {
+export function toNodes(graph, types, baseScalars) {
   const byRef = new Map((types ?? []).map((type) => [type.type_ref, type]))
   const placeless = graph.nodes
     .filter((node) => recordedPosition(node) === undefined)
@@ -62,8 +66,10 @@ export function toNodes(graph, types) {
         position,
         type: 'placeholder',
         data: { label: node.label ?? node.type_ref },
+        // Ports unknown, so no dragging or deletion — but the label is
+        // the one attribute its sidebar can edit, so selection stays.
         draggable: false,
-        selectable: false,
+        selectable: true,
         deletable: false,
       }
     }
@@ -71,7 +77,14 @@ export function toNodes(graph, types) {
       id: node.uuid,
       position,
       type: 'type',
-      data: { node, type, wiredInputs: wiredInputs.get(node.uuid) ?? [] },
+      data: {
+        node,
+        type,
+        wiredInputs: wiredInputs.get(node.uuid) ?? [],
+        scalarInputs: type.inputs
+          .filter((port) => scalarPossible(port, baseScalars))
+          .map((port) => port.name),
+      },
     }
   })
 }
@@ -107,12 +120,19 @@ export function offPortUnhook(edges, state) {
 }
 
 export function Editor() {
-  const [types, setTypes] = useState(null)
+  const [listing, setListing] = useState(null)
   const [graph, setGraph] = useState(null)
   const [nodes, setNodes] = useState([])
-  const [status, setStatus] = useState('connecting…')
+  const [status, setStatus] = useState({ text: 'connecting…', error: false })
   const protocol = useRef(null)
-  const { screenToFlowPosition } = useReactFlow()
+  const canvasRef = useRef(null)
+  const { screenToFlowPosition, getViewport, setViewport } = useReactFlow()
+
+  // An error is the one message the user must not miss; the status line
+  // paints it red.
+  const showError = useCallback((text) => {
+    setStatus({ text, error: true })
+  }, [])
 
   useEffect(() => {
     if (graph === null) return
@@ -120,7 +140,7 @@ export function Editor() {
     // replaces what is drawn, never what the user has picked or holds.
     setNodes((current) => {
       const before = new Map(current.map((node) => [node.id, node]))
-      return toNodes(graph, types).map((node) => {
+      return toNodes(graph, listing?.types, listing?.baseScalars).map((node) => {
         const held = before.get(node.id)
         return {
           ...node,
@@ -129,23 +149,32 @@ export function Editor() {
         }
       })
     })
-  }, [graph, types])
+  }, [graph, listing])
 
   useEffect(
     () =>
       connect({
         onOpen: (request) => {
           protocol.current = request
-          request('list_node_types').then(setTypes, setStatus)
-          request('get_definition').then(setGraph, setStatus)
+          request('list_node_types').then(setListing, showError)
+          request('get_definition').then(setGraph, showError)
         },
-        onGreeting: () => setStatus(''),
+        onGreeting: () => setStatus({ text: '' }),
         onDefinition: setGraph,
-        onError: setStatus,
-        onClosed: () => setStatus('connection lost — reload the page'),
+        onError: showError,
+        onClosed: () =>
+          setStatus({ text: 'connection lost — reload the page', error: true }),
       }),
-    [],
+    [showError],
   )
+
+  // The editing seam every field commit rides: one operation out, the
+  // definition push re-rendering both views. An error — a commit for a
+  // since-connected input, say — lands in the status line, the definition
+  // untouched.
+  const edit = useCallback((type, fields) => {
+    protocol.current?.(type, fields)?.catch(showError)
+  }, [showError])
 
   const onNodesChange = useCallback((changes) => {
     // A remove change is the server's to apply: the delete operation goes
@@ -153,7 +182,7 @@ export function Editor() {
     // canvas, and the view never holds a deletion the server refused.
     for (const change of changes) {
       if (change.type === 'remove' && protocol.current !== null) {
-        protocol.current('delete_node', { uuid: change.id }).catch(setStatus)
+        protocol.current('delete_node', { uuid: change.id }).catch(showError)
       }
     }
     setNodes((current) =>
@@ -162,15 +191,15 @@ export function Editor() {
         current,
       ),
     )
-  }, [])
+  }, [showError])
 
   const onNodeDragStop = useCallback((_event, node) => {
     if (node.type === 'placeholder' || protocol.current === null) return
     protocol.current('move_node', {
       uuid: node.id,
       position: { x: node.position.x, y: node.position.y },
-    }).catch(setStatus)
-  }, [])
+    }).catch(showError)
+  }, [showError])
 
   const onConnect = useCallback((connection) => {
     if (protocol.current === null) return
@@ -179,17 +208,17 @@ export function Editor() {
       from_port: connection.sourceHandle,
       to: connection.target,
       to_port: connection.targetHandle,
-    }).catch(setStatus)
-  }, [])
+    }).catch(showError)
+  }, [showError])
 
   const onConnectEnd = useCallback(
     (_event, state) => {
       const unhook = offPortUnhook(graph?.edges ?? [], state)
       if (unhook !== null && protocol.current !== null) {
-        protocol.current('unhook', unhook).catch(setStatus)
+        protocol.current('unhook', unhook).catch(showError)
       }
     },
-    [graph],
+    [graph, showError],
   )
 
   const onDrop = useCallback(
@@ -200,9 +229,9 @@ export function Editor() {
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
       protocol
         .current('create_node', { type_ref: typeRef, position })
-        .catch(setStatus)
+        .catch(showError)
     },
-    [screenToFlowPosition],
+    [screenToFlowPosition, showError],
   )
 
   const onDragOver = useCallback((event) => {
@@ -210,74 +239,110 @@ export function Editor() {
     event.dataTransfer.dropEffect = 'move'
   }, [])
 
+  // The sidebar's node: the one the canvas holds selected, read off the
+  // same node state the canvas draws, so a definition push swaps its
+  // contents with everything else.
+  const selectedUuid = nodes.find((node) => node.selected)?.id ?? null
+  const selected = graph?.nodes.find((node) => node.uuid === selectedUuid)
+  const selectedWiredInputs = (graph?.edges ?? [])
+    .filter((edge) => edge.to === selectedUuid)
+    .map((edge) => edge.to_port)
+
+  // Opening the dock shrinks the canvas beneath it, and a node sitting in
+  // the lost width would vanish under the very panel it is being edited
+  // in. When the selection lands covered, pan just enough that it clears
+  // the dock's edge; an already-visible node stays where it is.
+  useEffect(() => {
+    if (selectedUuid === null) return
+    const canvas = canvasRef.current
+    const node = canvas?.querySelector(`[data-id="${selectedUuid}"]`)
+    if (node === null || node === undefined) return
+    const covered =
+      node.getBoundingClientRect().right + 24 - canvas.getBoundingClientRect().right
+    if (covered <= 0) return
+    const view = getViewport()
+    setViewport({ x: view.x - covered / view.zoom, y: view.y, zoom: view.zoom })
+  }, [selectedUuid, getViewport, setViewport])
+
+  const types = listing?.types
   const empty =
-    graph !== null && graph.nodes.length === 0 && types !== null && types.length > 0
+    graph !== null && graph.nodes.length === 0 && types !== undefined && types.length > 0
 
   return (
-    <div className="app">
-      <div className="workspace">
-        <aside className="palette">
-          <h1 className="palette-title">Nodes</h1>
-          {types === null ? null : types.length === 0 ? (
-            <p className="palette-empty">
-              No node types are linked into this binary. Link a plugin crate
-              to see its types here.
-            </p>
-          ) : (
-            <ul className="palette-list">
-              {types.map((type) => (
-                <li
-                  key={type.type_ref}
-                  className="palette-item"
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData(NODE_TYPE, type.type_ref)
-                    event.dataTransfer.effectAllowed = 'move'
-                  }}
-                >
-                  <div className="palette-label">{type.label}</div>
-                  <div className="palette-plugin">{type.plugin}</div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </aside>
-        <main className="canvas">
-          <ReactFlow
-            nodes={nodes}
-            edges={graph === null ? [] : toEdges(graph)}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            onNodesChange={onNodesChange}
-            onNodeDragStop={onNodeDragStop}
-            onConnect={onConnect}
-            onConnectEnd={onConnectEnd}
-            onDrop={onDrop}
-            onDragOver={onDragOver}
-            fitView
-            // The initial fit never zooms in past 100%: fitting a small
-            // graph up to maxZoom would lurch the view under the pointer.
-            fitViewOptions={{ maxZoom: 1 }}
-            minZoom={0.25}
-            maxZoom={2.5}
-            // Delete/Backspace is the deletion gesture. A wire is a drag
-            // from either end — a click never starts or lands one — and
-            // the drag threshold keeps a port click from reading as a
-            // drag-off.
-            deleteKeyCode={['Delete', 'Backspace']}
-            connectionDragThreshold={4}
-            connectOnClick={false}
-          >
-            <Background variant="dots" gap={24} size={1.5} />
-          </ReactFlow>
-          {empty && (
-            <div className="canvas-hint">
-              Drag a node type from the palette onto the canvas.
-            </div>
-          )}
-        </main>
+    <EditContext.Provider value={edit}>
+      <div className="app">
+        <div className="workspace">
+          <aside className="palette">
+            <h1 className="palette-title">Nodes</h1>
+            {types === undefined ? null : types.length === 0 ? (
+              <p className="palette-empty">
+                No node types are linked into this binary. Link a plugin crate
+                to see its types here.
+              </p>
+            ) : (
+              <ul className="palette-list">
+                {types.map((type) => (
+                  <li
+                    key={type.type_ref}
+                    className="palette-item"
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.setData(NODE_TYPE, type.type_ref)
+                      event.dataTransfer.effectAllowed = 'move'
+                    }}
+                  >
+                    <div className="palette-label">{type.label}</div>
+                    <div className="palette-plugin">{type.plugin}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </aside>
+          <main className="canvas" ref={canvasRef}>
+            <ReactFlow
+              nodes={nodes}
+              edges={graph === null ? [] : toEdges(graph)}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              onNodesChange={onNodesChange}
+              onNodeDragStop={onNodeDragStop}
+              onConnect={onConnect}
+              onConnectEnd={onConnectEnd}
+              onDrop={onDrop}
+              onDragOver={onDragOver}
+              fitView
+              // The initial fit never zooms in past 100%: fitting a small
+              // graph up to maxZoom would lurch the view under the pointer.
+              fitViewOptions={{ maxZoom: 1 }}
+              minZoom={0.25}
+              maxZoom={2.5}
+              // Delete/Backspace is the deletion gesture. A wire is a drag
+              // from either end — a click never starts or lands one — and
+              // the drag threshold keeps a port click from reading as a
+              // drag-off.
+              deleteKeyCode={['Delete', 'Backspace']}
+              connectionDragThreshold={4}
+              connectOnClick={false}
+            >
+              <Background variant="dots" gap={24} size={1.5} />
+            </ReactFlow>
+            {empty && (
+              <div className="canvas-hint">
+                Drag a node type from the palette onto the canvas.
+              </div>
+            )}
+          </main>
+          <Sidebar
+            node={selected}
+            type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
+            wiredInputs={selectedWiredInputs}
+            baseScalars={listing?.baseScalars ?? {}}
+          />
+        </div>
+        <footer className={`status${status.error ? ' error' : ''}`}>
+          {status.text}
+        </footer>
       </div>
-      <footer className="status">{status}</footer>
-    </div>
+    </EditContext.Provider>
   )
 }

@@ -48,6 +48,7 @@ enum Outbound {
 pub struct Editor {
     graph: Mutex<GraphDefinition>,
     listing: Vec<&'static NodeType>,
+    base_scalars: serde_json::Map<String, Value>,
     pushes: broadcast::Sender<String>,
 }
 
@@ -59,6 +60,7 @@ impl Editor {
         Editor {
             graph: Mutex::new(definition),
             listing: protocol::node_type_listing(),
+            base_scalars: protocol::base_scalars(),
             pushes,
         }
     }
@@ -109,6 +111,8 @@ impl Editor {
             "get_definition" => self.get_definition(&mut fields),
             "create_node" => self.create_node(&mut fields),
             "move_node" => self.move_node(&mut fields),
+            "set_label" => self.set_label(&mut fields),
+            "set_parameter" => self.set_parameter(&mut fields),
             "wire" => self.wire(&mut fields),
             "unhook" => self.unhook(&mut fields),
             "delete_node" => self.delete_node(&mut fields),
@@ -133,7 +137,11 @@ impl Editor {
             .iter()
             .map(|t| protocol::node_type_json(t))
             .collect();
-        Ok(json!({ "type": "node_types", "node_types": listing }))
+        Ok(json!({
+            "type": "node_types",
+            "node_types": listing,
+            "base_scalars": self.base_scalars,
+        }))
     }
 
     fn get_definition(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
@@ -185,20 +193,77 @@ impl Editor {
         let position = protocol::take_position(fields, "position")?;
         protocol::done(fields)?;
         let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
-        let node = graph
-            .nodes
-            .iter_mut()
-            .find(|node| node.uuid == uuid)
-            .ok_or_else(|| format!("no node {uuid} in the definition"))?;
         // The move records where the node rests; the rest of its metadata
         // is the node's own bookkeeping and stays untouched.
-        node.metadata
+        Self::node_mut(&mut graph, uuid)?
+            .metadata
             .insert("position".into(), position.metadata_entry().into());
         self.push_definition(&graph);
         Ok(json!({ "type": "node_moved" }))
     }
 
     /// The node an operation names, required to be in the definition.
+    fn node_mut(
+        graph: &mut GraphDefinition,
+        uuid: Uuid,
+    ) -> Result<&mut crate::graph::NodeInstance, String> {
+        graph
+            .nodes
+            .iter_mut()
+            .find(|node| node.uuid == uuid)
+            .ok_or_else(|| format!("no node {uuid} in the definition"))
+    }
+
+    /// Set a node's label override, to any name the message carries. An
+    /// empty label clears the override — an empty field means "default",
+    /// the node returning to its type's label.
+    fn set_label(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
+        let uuid = protocol::take_uuid(fields, "uuid")?;
+        let label = protocol::take_string(fields, "label")?;
+        protocol::done(fields)?;
+        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
+        Self::node_mut(&mut graph, uuid)?.label = if label.is_empty() { None } else { Some(label) };
+        self.push_definition(&graph);
+        Ok(json!({ "type": "label_set" }))
+    }
+
+    /// Set an input's parameter value: the typed text the message
+    /// carries, read server-side as the file format reads a hand-written
+    /// one; an absent value clears, an unset input being unset. A
+    /// connected input refuses the edit — an input carries a connection
+    /// or a literal, never both. Beyond that nothing is judged here:
+    /// whether the name is a port of the type and whether the value
+    /// suits it is compile time's business.
+    fn set_parameter(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
+        let uuid = protocol::take_uuid(fields, "uuid")?;
+        let input = protocol::take_string(fields, "input")?;
+        let value = protocol::take_parameter(fields, "value")?;
+        protocol::done(fields)?;
+        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
+        if graph
+            .edges
+            .iter()
+            .any(|edge| edge.to == uuid && edge.to_port == input)
+        {
+            return Err(format!(
+                "input `{input}` of node {uuid} receives a connection; a connected input carries no parameter value"
+            ));
+        }
+        let node = Self::node_mut(&mut graph, uuid)?;
+        match value {
+            Some(value) => {
+                node.parameters.insert(input, value);
+            }
+            None => {
+                node.parameters.remove(&input);
+            }
+        }
+        self.push_definition(&graph);
+        Ok(json!({ "type": "parameter_set" }))
+    }
+
+    /// Whether the node an operation names is in the definition — the
+    /// existence check for operations that name one without editing it.
     fn require_node(graph: &GraphDefinition, uuid: Uuid) -> Result<(), String> {
         if graph.nodes.iter().any(|node| node.uuid == uuid) {
             Ok(())

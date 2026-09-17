@@ -24,6 +24,13 @@ pub const F64: Uuid = uuid::uuid!("00000000-0000-0000-0000-00000000000a");
 pub const BOOL: Uuid = uuid::uuid!("00000000-0000-0000-0000-00000000000b");
 pub const STRING: Uuid = uuid::uuid!("00000000-0000-0000-0000-00000000000c");
 
+/// Whether a data type id names one of the base scalars core ships. The
+/// one fact the editor's scalar-field rule reads about a type; the base
+/// set grows by declaring here, and the fact follows.
+pub fn is_base_scalar(id: Uuid) -> bool {
+    [I8, I16, I32, I64, U8, U16, U32, U64, F32, F64, BOOL, STRING].contains(&id)
+}
+
 crate::data_type! { id: I8, name: "i8" }
 crate::data_type! { id: I16, name: "i16", conversions: [ I32 => i16_to_i32 ] }
 crate::data_type! { id: I32, name: "i32", conversions: [ F64 => i32_to_f64 ] }
