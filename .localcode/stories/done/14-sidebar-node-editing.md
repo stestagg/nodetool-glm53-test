@@ -178,3 +178,5 @@ events (17), early warnings (18), palette presentation (19), multi-selection
   of the browser hardcoding the scalar names would be a second registry,
   silently rotting the day the base set grows. Custom-type rendering in the
   sidebar is plugin territory via story 21.
+
+- 2026-09-17: Implemented in pull request #49 (http://localhost:8080/gitea/localcode/nodetool/pulls/49).
