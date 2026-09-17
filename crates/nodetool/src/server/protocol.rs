@@ -10,7 +10,7 @@
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::graph::{GraphDefinition, Mapping, SCHEMA_VERSION};
+use crate::graph::{GraphDefinition, Mapping, ParameterValue, SCHEMA_VERSION};
 use crate::registry;
 use crate::{NodeType, Port};
 
@@ -37,6 +37,23 @@ pub fn node_type_listing() -> Vec<&'static NodeType> {
     let mut types: Vec<&'static NodeType> = registry::node_types().collect();
     types.sort_by_key(|node_type| node_type.type_ref);
     types
+}
+
+/// The listing's base-scalar fact: per registered type reference, whether
+/// the type is one of core's base scalars. One flat fact the browser's
+/// field rule reads — computed here, where core's own scalar set is
+/// known, so the browser hardcodes no scalar names of its own. A type
+/// reference the registry does not know is absent, which reads as
+/// not-a-base-scalar.
+pub fn base_scalars() -> Map<String, Value> {
+    let mut facts = Map::new();
+    for data_type in registry::data_types() {
+        facts.insert(
+            data_type.name.to_owned(),
+            Value::Bool(crate::scalars::is_base_scalar(data_type.id)),
+        );
+    }
+    facts
 }
 
 pub fn node_type_json(node_type: &NodeType) -> Value {
@@ -95,6 +112,51 @@ pub fn take_string(fields: &mut Map<String, Value>, name: &str) -> Result<String
 pub fn take_uuid(fields: &mut Map<String, Value>, name: &str) -> Result<Uuid, String> {
     let text = take_string(fields, name)?;
     Uuid::parse_str(&text).map_err(|_| format!("`{name}` must be a uuid"))
+}
+
+/// Take one optional plain-scalar parameter value out of a message's
+/// fields. Absent means the edit clears — an unset input is unset. A
+/// present value is read as the file format reads a hand-written one:
+/// boolean, integer, float, or string; anything else is an error, since
+/// no text field can commit it and only a protocol misuse produces it.
+pub fn take_parameter(
+    fields: &mut Map<String, Value>,
+    name: &str,
+) -> Result<Option<ParameterValue>, String> {
+    match fields.remove(name) {
+        None => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(ParameterValue::Bool(value))),
+        Some(Value::String(value)) => Ok(Some(ParameterValue::Str(value))),
+        Some(Value::Number(number)) => {
+            if number.is_f64() {
+                Ok(Some(ParameterValue::Float(
+                    number.as_f64().unwrap_or(f64::NAN),
+                )))
+            } else if let Some(int) = number.as_i64() {
+                Ok(Some(ParameterValue::Int(int)))
+            } else {
+                Err(format!(
+                    "`{name}` is an integer that does not fit a signed 64-bit integer"
+                ))
+            }
+        }
+        Some(other) => Err(format!(
+            "`{name}` must be a plain scalar — boolean, integer, float, or string — not {}",
+            kind(&other)
+        )),
+    }
+}
+
+/// What kind of JSON value this is, for error messages.
+fn kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
 }
 
 /// A drop or resting position, as the browser measures it.

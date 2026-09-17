@@ -33,9 +33,10 @@ scalar data types.
   always a plugin crate, first-party or not.
 - `crates/nodetool/ui` — the editor UI the server embeds and serves: a
   React application whose canvas is React Flow under a light Blueprint
-  look, with the palette of node types docked on the left. `npm install &&
-  npm run build` in that directory produces `dist/`, which the server's
-  binary includes at build time.
+  look, with the palette of node types docked on the left and the editing
+  sidebar of the selected node on the right. `npm install && npm run
+  build` in that directory produces `dist/`, which the server's binary
+  includes at build time.
 - `crates/nodetool-utility` — the first-party utility node library, a plugin
   crate whose only dependency is `nodetool`: an `If` router and a `Format`
   node, declared through the same `node_type!` registration path and
@@ -117,16 +118,25 @@ cargo run -p visual            # the editor on http://127.0.0.1:8420
 `visual` starts the editor server: open the printed address in a browser
 and find the palette of every node type the linked plugins contribute on
 the left and the canvas beside it. Dragging a type onto the canvas creates
-a node where it dropped; dragging a node moves it; a click selects;
-background drag pans; scroll zooms. Dragging between an output port and an
-input port — from either end — wires them; one input takes at most one
-upstream, so a wire dropped on an already-wired input replaces the old
-wire, and a wire released anywhere it cannot land cancels quietly.
-Dragging a wired input's end off and letting go unhooks it. Delete (or
-Backspace) removes the selected node together with its wires. Nothing is
-checked while editing — types, ports, and cycles are judged when a run is
-started. The server holds the graph: a reload or a second tab shows the
-same graph, and an edit in one appears in the other.
+a node where it dropped; dragging a node moves it; a click selects,
+opening the editing sidebar on the right — the node's label editable to
+any name, an empty field returning the type's default, the type reference
+and uuid read-only beneath, and below them a field per scalar-possible
+input; the same values show as small editable fields on the nodes
+themselves, an edit in either appearing in the other, committing on Enter
+or on leaving the field. A wire over an input replaces its field with the
+declared types in both views; unhooking returns it empty, a replaced
+literal not remembered. A committed value is stored as the plain scalar
+its text reads as — boolean, integer, float, else string — and a connected
+input takes no value. Background drag pans; scroll zooms. Dragging between
+an output port and an input port — from either end — wires them; one input
+takes at most one upstream, so a wire dropped on an already-wired input
+replaces the old wire, and a wire released anywhere it cannot land cancels
+quietly. Dragging a wired input's end off and letting go unhooks it.
+Delete (or Backspace) removes the selected node together with its wires.
+Nothing is checked while editing — types, ports, and cycles are judged
+when a run is started. The server holds the graph: a reload or a second
+tab shows the same graph, and an edit in one appears in the other.
 
 The run-graph samples beyond the default select the demonstration:
 

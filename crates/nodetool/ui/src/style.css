@@ -169,6 +169,16 @@ body {
   padding: 1px 12px;
 }
 
+/* An input stacks its name and, when it carries one, its small value
+   field beneath; the handle stays centred on the row. */
+
+.port.in {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px 12px;
+}
+
 .port.out {
   justify-content: flex-end;
 }
@@ -229,6 +239,106 @@ body {
   padding: 5px 10px;
   color: var(--muted);
   font-style: italic;
+}
+
+/* The editing sidebar: the right-hand dock, open only while a node is
+   selected — an unselected canvas keeps its full width. Same panel look
+   as the palette. */
+
+.sidebar {
+  width: 250px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  padding-bottom: 10px;
+}
+
+.sidebar-heading {
+  margin: 0;
+  padding: 10px 12px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sidebar-section + .sidebar-section {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+.sidebar-row,
+.sidebar-fact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  min-width: 0;
+}
+
+.sidebar-name {
+  width: 44px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sidebar-row .field {
+  flex: 1;
+}
+
+.sidebar-fact code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.sidebar-connected {
+  flex: 1;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+/* The scalar field both views share: a compact input that commits on
+   Enter or blur, `nodrag` keeping a click inside it from dragging the
+   node. */
+
+.field {
+  min-width: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--panel);
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.field:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field::placeholder {
+  color: var(--muted);
+}
+
+/* An input's small field on the node itself, under its name. */
+
+.port-field {
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.port-connected {
+  font-size: 10px;
+  color: var(--accent);
 }
 
 /* The status line. */

@@ -46,10 +46,14 @@ export function connect({ onOpen, onGreeting, onDefinition, onError, onClosed })
         else settle(message.id, ({ resolve }) => resolve(message.graph))
         break
       case 'node_types':
-        settle(message.id, ({ resolve }) => resolve(message.node_types))
+        // The listing and its base-scalar fact ride one reply.
+        settle(message.id, ({ resolve }) =>
+          resolve({ types: message.node_types, baseScalars: message.base_scalars }))
         break
       case 'node_created':
       case 'node_moved':
+      case 'label_set':
+      case 'parameter_set':
       case 'wired':
       case 'unhooked':
       case 'node_deleted':

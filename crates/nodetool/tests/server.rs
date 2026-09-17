@@ -34,8 +34,8 @@ fn held_definition(editor: &Editor) -> Value {
 }
 
 /// Create one node at a fixed spot, answering its uuid: the setup step the
-/// wire, unhook, and delete tests build graphs from, positions being
-/// incidental to them.
+/// wire, label, parameter, unhook, and delete tests build graphs from,
+/// positions being incidental to them.
 fn create(editor: &Editor, id: u64, type_ref: &str) -> String {
     send(
         editor,
@@ -60,6 +60,29 @@ nodes:
       position: { x: 80, y: 120 }
       color: \"#4a90d9\"
 edges: []";
+
+/// Set or clear a node's label override; the empty label means the type's
+/// default.
+fn edit_label(editor: &Editor, id: u64, uuid: &str, label: &str) -> Value {
+    send(
+        editor,
+        &format!(r#"{{"id": {id}, "type": "set_label", "uuid": "{uuid}", "label": "{label}"}}"#),
+    )
+}
+
+/// Set or clear an input's parameter value. The value is raw JSON text;
+/// `None` commits the empty field, meaning unset.
+fn edit_parameter(editor: &Editor, id: u64, uuid: &str, input: &str, value: Option<&str>) -> Value {
+    let value = value
+        .map(|value| format!(r#", "value": {value}"#))
+        .unwrap_or_default();
+    send(
+        editor,
+        &format!(
+            r#"{{"id": {id}, "type": "set_parameter", "uuid": "{uuid}", "input": "{input}"{value}}}"#
+        ),
+    )
+}
 
 #[test]
 fn greeting_names_both_versions() {
@@ -275,6 +298,273 @@ fn move_naming_an_unknown_uuid_is_an_error_and_the_definition_is_untouched() {
     assert_eq!(
         before["graph"], after["graph"],
         "the definition is untouched"
+    );
+}
+
+#[test]
+fn a_label_edit_stores_the_override_and_pushes_it_to_every_connection() {
+    let editor = editor();
+    let adder = create(&editor, 1, "alpha/add");
+    let mut watchers = [editor.subscribe(), editor.subscribe()];
+
+    let renamed = edit_label(&editor, 2, &adder, "The adder");
+    assert_eq!(renamed["type"], "label_set");
+    assert_eq!(renamed["id"], 2);
+
+    let definition = held_definition(&editor);
+    assert_eq!(definition["nodes"][0]["label"], "The adder");
+
+    for watcher in &mut watchers {
+        let pushed = push(watcher);
+        assert_eq!(pushed["type"], "definition");
+        assert_eq!(pushed["graph"]["nodes"][0]["label"], "The adder");
+    }
+}
+
+#[test]
+fn clearing_the_label_override_returns_the_node_to_its_default_label() {
+    let editor = editor_holding(SEEDED);
+    let adder = "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33";
+
+    let cleared = edit_label(&editor, 1, adder, "");
+    assert_eq!(cleared["type"], "label_set");
+    assert_eq!(cleared["id"], 1);
+    let node = &held_definition(&editor)["nodes"][0];
+    assert!(
+        node.get("label").is_none(),
+        "an empty label means the type's default, no empty-string stand-in: {node}"
+    );
+
+    // And a fresh override lands again after a clear.
+    edit_label(&editor, 2, adder, "Renamed");
+    assert_eq!(held_definition(&editor)["nodes"][0]["label"], "Renamed");
+}
+
+#[test]
+fn label_and_parameter_edits_naming_an_unknown_node_are_errors() {
+    let editor = editor_holding(SEEDED);
+    let before = send(&editor, r#"{"id": 1, "type": "get_definition"}"#);
+    let unknown = "0d5c1e2a-3b4c-4d5e-8f90-1a2b3c4d5e6f";
+
+    let renamed = edit_label(&editor, 2, unknown, "Renamed");
+    assert_eq!(renamed["type"], "error");
+    assert!(renamed["error"].as_str().unwrap().contains("no node"));
+
+    let edited = edit_parameter(&editor, 3, unknown, "a", Some("1"));
+    assert_eq!(edited["type"], "error");
+    assert!(edited["error"].as_str().unwrap().contains("no node"));
+
+    let after = send(&editor, r#"{"id": 4, "type": "get_definition"}"#);
+    assert_eq!(
+        before["graph"], after["graph"],
+        "the definition is untouched"
+    );
+    assert_eq!(after["id"], 4, "the connection is still usable");
+}
+
+#[test]
+fn a_parameter_edit_stores_the_scalar_with_the_file_formats_kind() {
+    let editor = editor();
+    let adder = create(&editor, 1, "alpha/add");
+    let identity = create(&editor, 2, "beta/identity");
+
+    // `2.5` on the identity's `value`, declared [i32, f64]: stored a
+    // float — the declared union is not policed at edit time.
+    let edited = edit_parameter(&editor, 3, &identity, "value", Some("2.5"));
+    assert_eq!(edited["type"], "parameter_set");
+    let value = &held_definition(&editor)["nodes"][1]["parameters"]["value"];
+    assert_eq!(value.as_f64(), Some(2.5), "a committed 2.5 is a float");
+    assert_eq!(value.as_i64(), None, "not an integer");
+
+    // `true` on the adder's `a`, though it declares i32: stored a boolean.
+    edit_parameter(&editor, 4, &adder, "a", Some("true"));
+    let value = &held_definition(&editor)["nodes"][0]["parameters"]["a"];
+    assert_eq!(value.as_bool(), Some(true));
+
+    // `7` on the same input: an integer, replacing the boolean.
+    edit_parameter(&editor, 5, &adder, "a", Some("7"));
+    let value = &held_definition(&editor)["nodes"][0]["parameters"]["a"];
+    assert_eq!(value.as_i64(), Some(7));
+    assert_eq!(value.as_bool(), None, "the kind follows the commit");
+
+    // Text with no boolean or number reading: a string, kept verbatim.
+    edit_parameter(&editor, 6, &adder, "b", Some(r#""hi""#));
+    let value = &held_definition(&editor)["nodes"][0]["parameters"]["b"];
+    assert_eq!(value.as_str(), Some("hi"));
+
+    // The push reaches every connection with the whole updated definition.
+    let mut watcher = editor.subscribe();
+    edit_parameter(&editor, 7, &adder, "b", Some("2"));
+    let pushed = push(&mut watcher);
+    assert_eq!(pushed["type"], "definition");
+    assert_eq!(
+        pushed["graph"]["nodes"][0]["parameters"],
+        json!({ "a": 7, "b": 2 })
+    );
+}
+
+#[test]
+fn committing_an_empty_field_removes_the_parameter() {
+    let editor = editor_holding(SEEDED);
+    let adder = "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33";
+
+    let cleared = edit_parameter(&editor, 1, adder, "a", None);
+    assert_eq!(cleared["type"], "parameter_set");
+    let node = &held_definition(&editor)["nodes"][0];
+    assert!(
+        node.get("parameters").is_none(),
+        "an unset input is unset, no empty-string stand-in: {node}"
+    );
+
+    // Clearing an already-unset input changes nothing and answers the same.
+    let again = edit_parameter(&editor, 2, adder, "b", None);
+    assert_eq!(again["type"], "parameter_set");
+    assert!(held_definition(&editor)["nodes"][0]
+        .get("parameters")
+        .is_none());
+}
+
+#[test]
+fn a_parameter_edit_for_a_connected_input_is_refused_and_names_the_input() {
+    let editor = editor();
+    let adder = create(&editor, 1, "alpha/add");
+    let identity = create(&editor, 2, "beta/identity");
+    send(
+        &editor,
+        &format!(
+            r#"{{"id": 3, "type": "wire", "from": "{identity}", "from_port": "value", "to": "{adder}", "to_port": "a"}}"#
+        ),
+    );
+
+    let refused = edit_parameter(&editor, 4, &adder, "a", Some("1"));
+    assert_eq!(refused["type"], "error");
+    let message = refused["error"].as_str().unwrap();
+    assert!(
+        message.contains("`a`"),
+        "the error names the input: {message}"
+    );
+    assert!(message.contains(&adder), "and the node: {message}");
+
+    let definition = held_definition(&editor);
+    assert_eq!(
+        definition["edges"].as_array().unwrap().len(),
+        1,
+        "the connection is untouched"
+    );
+    assert!(definition["nodes"][0].get("parameters").is_none());
+
+    // The connection stays usable: another input of the same node takes
+    // a value.
+    let other = edit_parameter(&editor, 5, &adder, "b", Some("1"));
+    assert_eq!(other["type"], "parameter_set");
+    assert_eq!(
+        held_definition(&editor)["nodes"][0]["parameters"],
+        json!({ "b": 1 })
+    );
+}
+
+#[test]
+fn a_value_that_is_not_a_plain_scalar_is_refused_and_the_definition_is_untouched() {
+    let editor = editor_holding(SEEDED);
+    let adder = "b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33";
+    let before = send(&editor, r#"{"id": 1, "type": "get_definition"}"#);
+
+    for (id, value) in [
+        (2, "null"),
+        (3, "[1, 2]"),
+        (4, r#"{"nested": true}"#),
+        // An integer the file format cannot carry either.
+        (5, "18446744073709551615"),
+    ] {
+        let reply = edit_parameter(&editor, id, adder, "b", Some(value));
+        assert_eq!(reply["type"], "error", "for {value}");
+        assert_eq!(reply["id"], id, "for {value}");
+    }
+
+    let after = send(&editor, r#"{"id": 6, "type": "get_definition"}"#);
+    assert_eq!(
+        before["graph"], after["graph"],
+        "the definition is untouched"
+    );
+    assert_eq!(after["id"], 6, "the connection is still usable");
+}
+
+#[test]
+fn an_input_name_the_type_does_not_declare_is_stored_not_refused() {
+    let editor = editor();
+    let adder = create(&editor, 1, "alpha/add");
+
+    let edited = edit_parameter(&editor, 2, &adder, "x", Some(r#""hi""#));
+    assert_eq!(edited["type"], "parameter_set");
+    assert_eq!(
+        held_definition(&editor)["nodes"][0]["parameters"],
+        json!({ "x": "hi" }),
+        "the file format carries it; compile time judges"
+    );
+}
+
+#[test]
+fn the_listing_carries_the_base_scalar_classification() {
+    let editor = editor();
+    let reply = send(&editor, r#"{"id": 1, "type": "list_node_types"}"#);
+    let base_scalars = &reply["base_scalars"];
+    assert_eq!(base_scalars["i32"], json!(true), "a base scalar");
+    assert_eq!(base_scalars["String"], json!(true));
+    assert_eq!(
+        base_scalars["alpha/ratio"],
+        json!(false),
+        "a plugin's custom type is not a base scalar"
+    );
+    // The fact covers every registered type reference, base scalar or
+    // not.
+    for data_type in registry::data_types() {
+        assert!(
+            base_scalars[data_type.name].is_boolean(),
+            "the fact covers {}: {base_scalars}",
+            data_type.name
+        );
+    }
+}
+
+#[test]
+fn malformed_label_and_parameter_edits_are_errors_and_leave_the_connection_usable() {
+    let editor = editor();
+    let adder = create(&editor, 1, "alpha/add");
+
+    for (message, id) in [
+        (
+            r#"{"id": 2, "type": "set_label", "uuid": "not a uuid", "label": "x"}"#,
+            2,
+        ),
+        (
+            r#"{"id": 3, "type": "set_label", "uuid": "{adder}", "label": 3}"#,
+            3,
+        ),
+        (r#"{"id": 4, "type": "set_label", "uuid": "{adder}"}"#, 4),
+        (
+            r#"{"id": 5, "type": "set_parameter", "uuid": "{adder}"}"#,
+            5,
+        ),
+        (
+            r#"{"id": 6, "type": "set_parameter", "uuid": "{adder}", "input": 3}"#,
+            6,
+        ),
+        (
+            r#"{"id": 7, "type": "set_parameter", "uuid": "{adder}", "input": "a", "value": {"x": 1}, "extra": 1}"#,
+            7,
+        ),
+    ] {
+        let message = message.replace("{adder}", &adder);
+        let reply = send(&editor, &message);
+        assert_eq!(reply["type"], "error", "for {message}");
+        assert_eq!(reply["id"], id, "for {message}");
+    }
+
+    let usable = send(&editor, r#"{"id": 8, "type": "get_definition"}"#);
+    assert_eq!(usable["id"], 8);
+    assert!(
+        usable["graph"]["nodes"][0].get("parameters").is_none(),
+        "nothing landed"
     );
 }
 

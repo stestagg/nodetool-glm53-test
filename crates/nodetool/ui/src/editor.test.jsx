@@ -3,13 +3,14 @@
 // wire drag. The visible proof exercises them by hand once; these tests
 // pin them: the placeholder and grid shapes the editor's real data never
 // produces (no linked binary carries an unknown type reference, nothing
-// yet writes a placeless node), and the wire-drag partition, whose
+// yet writes a placeless node), the scalar-input classification off the
+// listing's base-scalar fact, and the wire-drag partition, whose
 // release-on-a-port ending must never unhook.
 import { describe, expect, it } from 'vitest'
 import { offPortUnhook, toEdges, toNodes } from './editor.jsx'
 
 describe('toNodes', () => {
-  it('renders an unknown type reference as the inert placeholder, labelled with the stored override else the type reference', () => {
+  it('renders an unknown type reference as the placeholder, labelled with the stored override else the type reference, selectable for its label edit', () => {
     const nodes = toNodes(
       {
         edges: [],
@@ -24,7 +25,7 @@ describe('toNodes', () => {
       id: 'u1',
       type: 'placeholder',
       draggable: false,
-      selectable: false,
+      selectable: true,
       data: { label: 'The circle' },
     })
     expect(nodes[1]).toMatchObject({
@@ -42,7 +43,7 @@ describe('toNodes', () => {
         { uuid: '7c9e6679-7425-40de-944b-e07fc1f90ae7', type_ref: 'alpha/add', metadata: {} },
       ],
     }
-    const types = [{ type_ref: 'alpha/add' }]
+    const types = [{ type_ref: 'alpha/add', inputs: [] }]
     const nodes = toNodes(graph, types)
     expect(nodes[0].position).not.toEqual(nodes[1].position)
     expect(toNodes(graph, types)).toEqual(nodes)
@@ -60,12 +61,37 @@ describe('toNodes', () => {
       ],
     }
     const types = [
-      { type_ref: 'alpha/add' },
-      { type_ref: 'beta/identity' },
+      { type_ref: 'alpha/add', inputs: [] },
+      { type_ref: 'beta/identity', inputs: [] },
     ]
     const nodes = toNodes(graph, types)
     expect(nodes[0].data.wiredInputs).toEqual([])
     expect(nodes[1].data.wiredInputs).toEqual(['value', 'other'])
+  })
+
+  it('names the scalar-possible inputs off the base-scalar fact, unions included', () => {
+    const graph = {
+      edges: [],
+      nodes: [
+        { uuid: 'u1', type_ref: 'alpha/mix', metadata: {} },
+        { uuid: 'u2', type_ref: 'beta/custom', metadata: {} },
+      ],
+    }
+    const types = [
+      {
+        type_ref: 'alpha/mix',
+        inputs: [
+          { name: 'text', type_refs: ['String'] },
+          { name: 'ratio', type_refs: ['alpha/ratio'] },
+          { name: 'either', type_refs: ['alpha/ratio', 'f64'] },
+        ],
+      },
+      { type_ref: 'beta/custom', inputs: [{ name: 'only', type_refs: ['alpha/ratio'] }] },
+    ]
+    const baseScalars = { String: true, 'alpha/ratio': false, f64: true }
+    const nodes = toNodes(graph, types, baseScalars)
+    expect(nodes[0].data.scalarInputs).toEqual(['text', 'either'])
+    expect(nodes[1].data.scalarInputs).toEqual([])
   })
 })
 
