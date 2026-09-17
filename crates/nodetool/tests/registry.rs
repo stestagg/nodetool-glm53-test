@@ -22,6 +22,17 @@ fn aggregates_node_types_across_plugins() {
 }
 
 #[test]
+fn enumerates_no_utility_node_types_without_the_crate_linked() {
+    // A binary linking other plugins but not the utility crate: its listing
+    // carries no utility node types — linking a plugin is the only way one
+    // arrives.
+    assert!(
+        refs_of(|node_type| node_type.plugin == "utility").is_empty(),
+        "no utility node types without the utility crate linked"
+    );
+}
+
+#[test]
 fn separates_plugins() {
     let mut alpha = refs_of(|node_type| node_type.plugin == "alpha");
     alpha.sort_unstable();

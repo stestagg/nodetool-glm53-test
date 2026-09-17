@@ -1,0 +1,10 @@
+[package]
+name = "nodetool-utility"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nodetool = { path = "../nodetool" }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "sync", "time", "test-util"] }

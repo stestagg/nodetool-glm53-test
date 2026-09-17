@@ -24,7 +24,13 @@ scalar data types.
   that runs a compiled graph as live, streaming execution and tells an
   optional events observer what happens as the run unfolds
   (`nodetool::engine`; its rustdoc is the run lifecycle's spec), the
-  runtime value (`nodetool::Value`), and the registry.
+  runtime value (`nodetool::Value`), and the registry. Core contains no
+  node types: a node library is always a plugin crate, first-party or not.
+- `crates/nodetool-utility` — the first-party utility node library, a plugin
+  crate whose only dependency is `nodetool`: an `If` router and a `Format`
+  node, declared through the same `node_type!` registration path and
+  authoring API as any third-party plugin. Linking the crate into a binary
+  is the whole integration step.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the tests
   (`alpha` is sub-grouped, `beta` is flat, `gamma` supplies the compiler
   tests' node types, `delta` supplies the engine tests' node types).
@@ -48,17 +54,20 @@ scalar data types.
   authoring API — with two scripted input streams, one of them a single
   value that completes, printing the arrival that fired each run, each
   emitted value as it arrives, and the node's completion.
-- `examples/run-graph` — demo binary linked against both example plugins;
-  the headless path from a terminal. It loads one of the sample graph
-  files in `examples/run-graph/graphs/`, compiles it, and runs it with a
-  consumer attached to a node's output as one more downstream, printing
-  each value as it arrives and then the run's outcome; the `observe`
-  flag adds the engine's event timeline beside them. The `pipeline`
-  sample completes; the `failing` sample carries a node whose behaviour
-  errors mid-run, so the remaining output stops arriving and the error —
-  naming the node — is the last word before a non-zero exit; the
+- `examples/run-graph` — demo binary linked against both example plugins and
+  the utility crate; the headless path from a terminal. It loads one of the
+  sample graph files in `examples/run-graph/graphs/`, compiles it, and runs
+  it with a consumer attached to a node's output as one more downstream,
+  printing each value as it arrives and then the run's outcome; the
+  `observe` flag adds the engine's event timeline beside them. The
+  `pipeline` sample completes; the `failing` sample carries a node whose
+  behaviour errors mid-run, so the remaining output stops arriving and the
+  error — naming the node — is the last word before a non-zero exit; the
   `broken` and `uncompilable` samples show a load error and compile
-  errors ending the path, printed, with a non-zero exit.
+  errors ending the path, printed, with a non-zero exit; the `if-true` and
+  `if-false` samples run the same If-and-Format graph under opposite
+  conditions, showing the router steering between its two branches, one
+  Format with a format template and one without.
 
 ## Build and check
 
@@ -86,7 +95,18 @@ The run-graph samples beyond the default select the demonstration:
 cargo run -p run-graph failing      # fail-fast: the output stops arriving, the error names the node, exit 1
 cargo run -p run-graph broken       # a load error ends the path, printed, exit 1
 cargo run -p run-graph uncompilable # compile errors end the path, printed, exit 1
+cargo run -p run-graph if-true      # the utility If steers to `then`, the Format template substituting
+cargo run -p run-graph if-false     # the same graph steered to `else`, the Format's plain string form
 ```
+
+Two things to expect from the `if` samples. The first routed value prints
+more than once — the condition literal's arrival re-runs the held value and
+the template literal's arrival fires its own run, so the first value prints
+three times before later values print once; that is the stream semantics'
+pairing, not a duplication. And a Format's `template` input must be fed for
+the node to fire, `template: ""` being how a graph asks for the plain form,
+while a Format on an unselected branch never fires and must carry no
+template: a fed template there hangs the run instead of completing it.
 
 Adding the `observe` flag subscribes the printing observer, so the
 engine's event timeline prints beside whatever the sample shows — the run
@@ -101,12 +121,14 @@ cargo run -p run-graph failing observe   # the failing run told line by line, th
 
 A plugin is an ordinary crate whose only dependency is `nodetool`. Declaring
 node types with `nodetool::node_type!` and linking the plugin into a binary is
-the whole registration step. The macro's rustdoc is the guide — `cargo doc -p
-nodetool --open` — to the declaration form and its linker caveat. A node type
-declared with the optional `behaviour` arm runs: the named function builds a
-fresh behaviour per instance, implementing `nodetool::behaviour::Behaviour`
-against the input and output faces whose stream semantics that module's
-rustdoc settles. A type declared without `behaviour` is a descriptor alone.
+the whole registration step; the first-party utility crate
+(`crates/nodetool-utility`) is the smallest reference library written that
+way. The macro's rustdoc is the guide — `cargo doc -p nodetool --open` — to
+the declaration form and its linker caveat. A node type declared with the
+optional `behaviour` arm runs: the named function builds a fresh behaviour per
+instance, implementing `nodetool::behaviour::Behaviour` against the input and
+output faces whose stream semantics that module's rustdoc settles. A type
+declared without `behaviour` is a descriptor alone.
 
 Data types are the vocabulary ports refer to. Core ships the base scalars and
 declares their trivial conversions through the same mechanism a plugin uses;
