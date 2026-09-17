@@ -140,3 +140,5 @@ presentation (19); multi-selection and group delete (20).
   name to name, no carved-out exception. All operation names travel as uuid
   and port names — nothing here knows what a node is, only what the
   definition holds. (REQ-73)
+
+- 2026-09-17: Implemented in pull request #48 (http://localhost:8080/gitea/localcode/nodetool/pulls/48).
