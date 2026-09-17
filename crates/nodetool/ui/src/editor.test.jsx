@@ -1,8 +1,10 @@
 // The definition-to-canvas mappings are pure: data in, node and wire
 // shapes out, no DOM and no React Flow — as is the reading of a finished
-// wire drag. These are the DoD behaviours the visible proof cannot
-// produce — no linked binary carries an unknown type reference, and
-// nothing yet writes a placeless node.
+// wire drag. The visible proof exercises them by hand once; these tests
+// pin them: the placeholder and grid shapes the editor's real data never
+// produces (no linked binary carries an unknown type reference, nothing
+// yet writes a placeless node), and the wire-drag partition, whose
+// release-on-a-port ending must never unhook.
 import { describe, expect, it } from 'vitest'
 import { offPortUnhook, toEdges, toNodes } from './editor.jsx'
 
@@ -85,6 +87,24 @@ describe('toEdges', () => {
     ])
   })
 
+  it('marks a wire a node runs back into itself as the loop edge', () => {
+    const graph = {
+      edges: [{ from: 'u1', from_port: 'sum', to: 'u1', to_port: 'value' }],
+      nodes: [],
+    }
+    expect(toEdges(graph)).toEqual([
+      {
+        id: 'u1/sum->u1/value',
+        source: 'u1',
+        sourceHandle: 'sum',
+        target: 'u1',
+        targetHandle: 'value',
+        selectable: false,
+        type: 'selfloop',
+      },
+    ])
+  })
+
   it('tells two wires apart by the edges they carry', () => {
     const graph = {
       edges: [
@@ -105,12 +125,38 @@ describe('offPortUnhook', () => {
   ]
 
   it('unhooks the wire a connected input\'s end carries when released off-port', () => {
-    const state = { fromHandle: { type: 'target', nodeId: 'u3', id: 'value' }, isValid: null }
+    const state = {
+      fromHandle: { type: 'target', nodeId: 'u3', id: 'value' },
+      isValid: null,
+      toHandle: null,
+    }
     expect(offPortUnhook(edges, state)).toEqual({ to: 'u3', to_port: 'value' })
   })
 
   it('a landing is the wire gesture, not an unhook', () => {
-    const state = { fromHandle: { type: 'target', nodeId: 'u3', id: 'value' }, isValid: true }
+    const state = {
+      fromHandle: { type: 'target', nodeId: 'u3', id: 'value' },
+      isValid: true,
+      toHandle: { type: 'source', nodeId: 'u1', id: 'sum' },
+    }
+    expect(offPortUnhook(edges, state)).toBeNull()
+  })
+
+  it('a release on a port the wire cannot land on is the wire gesture, not an unhook', () => {
+    const state = {
+      fromHandle: { type: 'target', nodeId: 'u3', id: 'value' },
+      isValid: false,
+      toHandle: { type: 'target', nodeId: 'u2', id: 'value' },
+    }
+    expect(offPortUnhook(edges, state)).toBeNull()
+  })
+
+  it('a release back on the wire\'s own port keeps the wire', () => {
+    const state = {
+      fromHandle: { type: 'target', nodeId: 'u3', id: 'value' },
+      isValid: null,
+      toHandle: { type: 'target', nodeId: 'u3', id: 'value' },
+    }
     expect(offPortUnhook(edges, state)).toBeNull()
   })
 

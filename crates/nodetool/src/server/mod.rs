@@ -24,6 +24,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::graph::{Edge, GraphDefinition};
 use crate::NodeType;
+use uuid::Uuid;
 
 mod assets;
 mod http;
@@ -197,6 +198,15 @@ impl Editor {
         Ok(json!({ "type": "node_moved" }))
     }
 
+    /// The node an operation names, required to be in the definition.
+    fn require_node(graph: &GraphDefinition, uuid: Uuid) -> Result<(), String> {
+        if graph.nodes.iter().any(|node| node.uuid == uuid) {
+            Ok(())
+        } else {
+            Err(format!("no node {uuid} in the definition"))
+        }
+    }
+
     /// Wire an output to an input, naming the edge it means. Edit time
     /// judges nothing about the wire — not the ports, not the types, not
     /// cycles; compile time does, when a run starts.
@@ -208,9 +218,7 @@ impl Editor {
         protocol::done(fields)?;
         let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
         for uuid in [from, to] {
-            if !graph.nodes.iter().any(|node| node.uuid == uuid) {
-                return Err(format!("no node {uuid} in the definition"));
-            }
+            Self::require_node(&graph, uuid)?;
         }
         // An input carries one value source: the landing wire replaces
         // whatever upstream edge and parameter literal the input held.
@@ -231,16 +239,14 @@ impl Editor {
     }
 
     /// Unhook an input: its edge, if any, goes. An input carries at most
-    /// one upstream, so the input end names the edge; no edge is no
-    /// operation, and the reply is the same.
+    /// one upstream, so the input end names the edge; an input with no
+    /// edge changes nothing and answers the same.
     fn unhook(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
         let to = protocol::take_uuid(fields, "to")?;
         let to_port = protocol::take_string(fields, "to_port")?;
         protocol::done(fields)?;
         let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
-        if !graph.nodes.iter().any(|node| node.uuid == to) {
-            return Err(format!("no node {to} in the definition"));
-        }
+        Self::require_node(&graph, to)?;
         graph
             .edges
             .retain(|edge| edge.to != to || edge.to_port != to_port);
@@ -254,9 +260,7 @@ impl Editor {
         let uuid = protocol::take_uuid(fields, "uuid")?;
         protocol::done(fields)?;
         let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
-        if !graph.nodes.iter().any(|node| node.uuid == uuid) {
-            return Err(format!("no node {uuid} in the definition"));
-        }
+        Self::require_node(&graph, uuid)?;
         graph.nodes.retain(|node| node.uuid != uuid);
         graph
             .edges

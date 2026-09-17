@@ -15,9 +15,11 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { NODE_TYPE, connect } from './protocol.js'
+import { SelfLoopEdge } from './edges.jsx'
 import { PlaceholderNode, TypeNode } from './nodes.jsx'
 
 const nodeTypes = { type: TypeNode, placeholder: PlaceholderNode }
+const edgeTypes = { selfloop: SelfLoopEdge }
 
 // The fixed grid a node without a recorded position lands on, ordered by
 // uuid: a deterministic, view-local fallback every view and reload agrees
@@ -85,17 +87,19 @@ export function toEdges(graph) {
     target: edge.to,
     targetHandle: edge.to_port,
     selectable: false,
+    type: edge.from === edge.to ? 'selfloop' : undefined,
   }))
 }
 
-// What a wire drag's ending means when no connection landed: a drag that
-// took a connected input's end off unhooks it — releasing on a port is the
-// wire gesture instead, so a landing never counts — and every other
-// off-port ending cancels quietly. Answers the unhook operation's fields,
-// or null.
+// What a wire drag's ending means when no connection landed: a release on
+// a port — any port, even one the wire cannot land on, the wire's own
+// included — is the wire gesture and cancels quietly; a connected input's
+// end released anywhere that is not a port unhooks it. React Flow reports
+// whatever port sits under the release, valid or not, as `toHandle`.
+// Answers the unhook operation's fields, or null.
 export function offPortUnhook(edges, state) {
   const from = state.fromHandle
-  if (from === null || from.type !== 'target' || state.isValid) return null
+  if (from === null || from.type !== 'target' || state.toHandle != null) return null
   const wired = edges.some(
     (edge) => edge.to === from.nodeId && edge.to_port === from.id,
   )
@@ -243,6 +247,7 @@ export function Editor() {
             nodes={nodes}
             edges={graph === null ? [] : toEdges(graph)}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onNodeDragStop={onNodeDragStop}
             onConnect={onConnect}
@@ -255,9 +260,10 @@ export function Editor() {
             fitViewOptions={{ maxZoom: 1 }}
             minZoom={0.25}
             maxZoom={2.5}
-            // Delete/Backspace is the deletion gesture; the drag threshold
-            // keeps a click on a port from being read as a drag-off; the
-            // wire gesture is a drag, both ends of it.
+            // Delete/Backspace is the deletion gesture. A wire is a drag
+            // from either end — a click never starts or lands one — and
+            // the drag threshold keeps a port click from reading as a
+            // drag-off.
             deleteKeyCode={['Delete', 'Backspace']}
             connectionDragThreshold={4}
             connectOnClick={false}
