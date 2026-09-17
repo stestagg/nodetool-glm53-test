@@ -8,7 +8,7 @@ nodes:
     radius: 3
   metadata:
     position:
-      x: 80
+      x: 320
       y: 120
 - uuid: 8f4c2d91-5e30-4b7a-a6c8-1d9e3f5b2a44
   type_ref: fizzbuzz/counter

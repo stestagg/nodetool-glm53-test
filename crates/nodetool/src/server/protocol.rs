@@ -92,14 +92,17 @@ pub fn file_state(file: Option<&str>, dirty: bool) -> Value {
 }
 
 /// The whole definition with the file state beside it — the message every
-/// connection renders the editor from. Fails only when the definition
-/// carries something JSON cannot, which the caller reports instead of
-/// papering over.
+/// connection renders the editor from. The graph is serialized first and
+/// the message composed from that value, so the failure the `Result`
+/// declares — the definition carrying something JSON cannot, which the
+/// caller reports instead of papering over — happens here rather than as
+/// a panic inside the composition.
 pub fn definition_message(
     graph: &GraphDefinition,
     file: Option<&str>,
     dirty: bool,
 ) -> Result<String, serde_json::Error> {
+    let graph = serde_json::to_value(graph)?;
     serde_json::to_string(&json!({
         "type": "definition",
         "graph": graph,
@@ -132,8 +135,8 @@ pub fn take_string(fields: &mut Map<String, Value>, name: &str) -> Result<String
     }
 }
 
-/// Take one optional string field out of a message's fields; absent means
-/// the field was not sent, which for a path means "the current file".
+/// Take one optional string field out of a message's fields; absent
+/// means the field was not sent.
 pub fn take_optional_string(
     fields: &mut Map<String, Value>,
     name: &str,

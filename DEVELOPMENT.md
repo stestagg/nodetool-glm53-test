@@ -140,17 +140,17 @@ when a run is started. The server holds the graph: a reload or a second
 tab shows the same graph, and an edit in one appears in the other.
 
 The editor's graph lives in a graph file. The chrome names the file being
-edited — untitled until a first save — with an unsaved-changes marker
-whenever the definition has changed since the last open or save; a reload
-or a second tab shows the same name and marker. New returns to an empty,
+edited — untitled until a first save — with an unsaved-changes marker an
+edit sets and open, save, and New clear; a reload or a second tab shows the
+same name and marker. New returns to an empty,
 untitled graph; Open loads a graph file from a path the editor asks for;
 Save writes the graph to the file being edited, asking for a path only on
 the first save of an untitled graph; Save as always asks. Opening a file —
 another file or the current one — or starting fresh, over unsaved changes
 asks before discarding them. Files are read and written server-side
 through the one graph file format (`nodetool::graph`), so a file the
-editor saves is a file `run-graph` runs, and a file the headless path
-loads is a file the editor opens. A load or save failure is reported in
+editor saves is a file `run-graph` runs. A load or save failure is
+reported in
 the status line naming the path and the fault, leaving the held graph and
 file untouched. Launched on a path (`cargo run -p visual -- <file>`) the
 editor opens already showing that graph; the sample ships in

@@ -24,7 +24,7 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::{json, Value};
 use tokio::net::TcpStream;
@@ -87,6 +87,14 @@ impl Editor {
             base_scalars: protocol::base_scalars(),
             pushes,
         }
+    }
+
+    /// The session under its one lock: every read and edit holds the
+    /// guard for the moment of its operation, the lock never poisoned.
+    fn session(&self) -> MutexGuard<'_, Session> {
+        self.session
+            .lock()
+            .expect("the session lock is never poisoned")
     }
 
     /// Serve connections on `listener` forever: UI assets over HTTP, the
@@ -173,10 +181,7 @@ impl Editor {
 
     fn get_definition(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
         protocol::done(fields)?;
-        let session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let session = self.session();
         let graph = serde_json::to_value(&session.graph)
             .map_err(|error| format!("the held definition cannot be carried as JSON: {error}"))?;
         Ok(json!({
@@ -209,10 +214,7 @@ impl Editor {
         };
         node.metadata
             .insert("position".into(), position.metadata_entry().into());
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let mut session = self.session();
         session.graph.nodes.push(node);
         session.dirty = true;
         self.push_definition(&session);
@@ -223,10 +225,7 @@ impl Editor {
         let uuid = protocol::take_uuid(fields, "uuid")?;
         let position = protocol::take_position(fields, "position")?;
         protocol::done(fields)?;
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let mut session = self.session();
         // The move records where the node rests; the rest of its metadata
         // is the node's own bookkeeping and stays untouched.
         Self::node_mut(&mut session.graph, uuid)?
@@ -256,10 +255,7 @@ impl Editor {
         let uuid = protocol::take_uuid(fields, "uuid")?;
         let label = protocol::take_string(fields, "label")?;
         protocol::done(fields)?;
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let mut session = self.session();
         Self::node_mut(&mut session.graph, uuid)?.label =
             if label.is_empty() { None } else { Some(label) };
         session.dirty = true;
@@ -279,10 +275,7 @@ impl Editor {
         let input = protocol::take_string(fields, "input")?;
         let value = protocol::take_parameter(fields, "value")?;
         protocol::done(fields)?;
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let mut session = self.session();
         if session
             .graph
             .edges
@@ -326,10 +319,7 @@ impl Editor {
         let to = protocol::take_uuid(fields, "to")?;
         let to_port = protocol::take_string(fields, "to_port")?;
         protocol::done(fields)?;
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let mut session = self.session();
         let graph = &mut session.graph;
         for uuid in [from, to] {
             Self::require_node(graph, uuid)?;
@@ -360,17 +350,17 @@ impl Editor {
         let to = protocol::take_uuid(fields, "to")?;
         let to_port = protocol::take_string(fields, "to_port")?;
         protocol::done(fields)?;
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let mut session = self.session();
         Self::require_node(&session.graph, to)?;
+        let before = session.graph.edges.len();
         session
             .graph
             .edges
             .retain(|edge| edge.to != to || edge.to_port != to_port);
-        session.dirty = true;
-        self.push_definition(&session);
+        if session.graph.edges.len() != before {
+            session.dirty = true;
+            self.push_definition(&session);
+        }
         Ok(json!({ "type": "unhooked" }))
     }
 
@@ -379,10 +369,7 @@ impl Editor {
     fn delete_node(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
         let uuid = protocol::take_uuid(fields, "uuid")?;
         protocol::done(fields)?;
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let mut session = self.session();
         Self::require_node(&session.graph, uuid)?;
         session.graph.nodes.retain(|node| node.uuid != uuid);
         session
@@ -398,20 +385,15 @@ impl Editor {
     /// the held definition is replaced — loading is structural only, so a
     /// file referencing types this binary never linked opens with
     /// placeholders, nothing judged but the document's shape. The file
-    /// becomes the current one and the definition is clean. Reading and
-    /// parsing happen before the session is touched: a failure is
-    /// reported naming the path and what and where, and the held graph and
+    /// becomes the current one and the definition is clean. The reading
+    /// happens before the session is touched: a failure is reported
+    /// naming the path and what and where, and the held graph and
     /// current file stay as they were.
     fn open_file(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
         let path = protocol::take_string(fields, "path")?;
         protocol::done(fields)?;
-        let text = fs::read_to_string(Path::new(&path))
-            .map_err(|error| format!("cannot read `{path}`: {error}"))?;
-        let graph = graph::load(&text).map_err(|error| format!("cannot open `{path}`: {error}"))?;
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let graph = read_definition(&path)?;
+        let mut session = self.session();
         session.graph = graph;
         session.file = Some(path);
         session.dirty = false;
@@ -429,10 +411,7 @@ impl Editor {
     fn save_file(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
         let asked = protocol::take_optional_string(fields, "path")?;
         protocol::done(fields)?;
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let mut session = self.session();
         let target = asked.or_else(|| session.file.clone()).ok_or_else(|| {
             "nothing to save to: an untitled graph's first save must name a path".to_owned()
         })?;
@@ -449,10 +428,7 @@ impl Editor {
     /// replace path an open takes, completing the file model.
     fn new_graph(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
         protocol::done(fields)?;
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
+        let mut session = self.session();
         session.graph = GraphDefinition::empty();
         session.file = None;
         session.dirty = false;
@@ -612,6 +588,21 @@ impl Editor {
         pump.abort();
         Ok(())
     }
+}
+
+/// Read a graph file the way every editor door does — the launch seed
+/// and `open` alike: the story 03 loader's structural parse, then the
+/// check that the browser's JSON push can carry what it parsed. A
+/// hand-written file can hold metadata JSON cannot (a non-finite float
+/// key, say), and a definition no tab can render fails here, naming the
+/// path and the fault, before any session is touched.
+pub fn read_definition(path: &str) -> Result<GraphDefinition, String> {
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("cannot read `{path}`: {error}"))?;
+    let definition =
+        graph::load(&text).map_err(|error| format!("cannot open `{path}`: {error}"))?;
+    serde_json::to_value(&definition).map_err(|error| format!("cannot open `{path}`: {error}"))?;
+    Ok(definition)
 }
 
 /// Write a document so the target ends up holding it whole or keeps its

@@ -979,8 +979,12 @@ fn open_replaces_the_definition_and_pushes_it_to_every_connection() {
     assert_eq!(opened["type"], "file_opened");
     assert_eq!(opened["id"], 1);
 
+    // The opened definition is the loader's, whole: the same one the
+    // launch door seeds from the same text — nodes, parameters,
+    // metadata, edges — so the round trip rides on open placing it
+    // verbatim.
     let definition = held_definition(&editor);
-    assert_eq!(definition["name"], "second");
+    assert_eq!(definition, held_definition(&editor_holding(SECOND)));
     assert_eq!(
         held_file(&editor),
         json!({ "path": path, "dirty": false }),
@@ -989,7 +993,10 @@ fn open_replaces_the_definition_and_pushes_it_to_every_connection() {
     for watcher in &mut watchers {
         let pushed = push(watcher);
         assert_eq!(pushed["type"], "definition");
-        assert_eq!(pushed["graph"]["name"], "second");
+        assert_eq!(
+            pushed["graph"], definition,
+            "the push carries the whole opened definition"
+        );
         assert_eq!(pushed["file"], json!({ "path": path, "dirty": false }));
     }
 
@@ -1053,6 +1060,56 @@ fn a_failed_open_names_the_path_and_leaves_the_session_untouched() {
 
     let _ = fs::remove_file(&file);
     let _ = fs::remove_file(&broken);
+}
+
+/// A file the loader accepts but the browser's JSON push cannot carry:
+/// its metadata holds a non-finite float key.
+const UNCARRIABLE: &str = "schema_version: 1
+nodes:
+  - uuid: 0a6b3e72-9c15-4d8f-b3e7-4c8a1f6d9b23
+    type_ref: t
+    metadata:
+      .inf: note
+edges: []";
+
+#[test]
+fn an_open_of_a_file_the_browser_cannot_carry_fails_and_leaves_the_session_untouched() {
+    let file = written_graph("current", SEEDED);
+    let path = file.to_string_lossy().into_owned();
+    let editor = Editor::new(graph::load(SEEDED).unwrap(), Some(path.clone()));
+    let before = held_definition(&editor);
+    let uncarriable = written_graph("uncarriable", UNCARRIABLE);
+
+    let refused = send(
+        &editor,
+        &format!(
+            r#"{{"id": 1, "type": "open_file", "path": {}}}"#,
+            path_field(&uncarriable)
+        ),
+    );
+    assert_eq!(refused["type"], "error");
+    let message = refused["error"].as_str().unwrap();
+    assert!(
+        message.contains(&uncarriable.to_string_lossy().into_owned()),
+        "names the file: {message}"
+    );
+    assert!(message.contains("key"), "names the fault: {message}");
+
+    assert_eq!(
+        held_definition(&editor),
+        before,
+        "the held definition is untouched"
+    );
+    assert_eq!(
+        held_file(&editor),
+        json!({ "path": path, "dirty": false }),
+        "the current file and the clean state are untouched"
+    );
+    let usable = send(&editor, r#"{"id": 2, "type": "get_definition"}"#);
+    assert_eq!(usable["id"], 2, "the connection is still usable");
+
+    let _ = fs::remove_file(&file);
+    let _ = fs::remove_file(&uncarriable);
 }
 
 #[test]
@@ -1202,7 +1259,7 @@ fn the_dirty_rule_edits_set_it_and_open_save_and_fresh_clear_it() {
 
     // An edit sets it, and the state travels beside the definition it
     // belongs to.
-    create(&editor, 1, "alpha/add");
+    let adder = create(&editor, 1, "alpha/add");
     assert_eq!(held_file(&editor)["dirty"], json!(true));
     let pushed = push(&mut watcher);
     assert_eq!(pushed["type"], "definition");
@@ -1218,6 +1275,19 @@ fn the_dirty_rule_edits_set_it_and_open_save_and_fresh_clear_it() {
         ),
     );
     assert_eq!(held_file(&editor)["dirty"], json!(false));
+
+    // An edit that changes nothing sets it not: unhooking an input with
+    // no wire leaves the marker as it was.
+    let unhooked = send(
+        &editor,
+        &format!(r#"{{"id": 3, "type": "unhook", "to": "{adder}", "to_port": "b"}}"#),
+    );
+    assert_eq!(unhooked["type"], "unhooked");
+    assert_eq!(
+        held_file(&editor)["dirty"],
+        json!(false),
+        "a no-op edit sets nothing"
+    );
 
     // An open — the current file, even — replaces the graph and clears it.
     create(&editor, 3, "alpha/add");

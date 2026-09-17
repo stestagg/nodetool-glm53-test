@@ -119,6 +119,19 @@ export function offPortUnhook(edges, state) {
   return wired ? { to: from.nodeId, to_port: from.id } : null
 }
 
+// Whether the held graph carries unsaved changes — the one condition the
+// discard guard asks under, silence there being the one way to lose work.
+export function hasUnsavedChanges(file) {
+  return file?.dirty === true
+}
+
+// Whether a save asks for its target: saving elsewhere names a path, and
+// so does the first save of an untitled graph; any other save writes the
+// file being edited without asking.
+export function saveAsksForPath(file, elsewhere) {
+  return elsewhere || file?.path == null
+}
+
 export function Editor() {
   const [listing, setListing] = useState(null)
   const [graph, setGraph] = useState(null)
@@ -127,7 +140,11 @@ export function Editor() {
   const [status, setStatus] = useState({ text: 'connecting…', error: false })
   const protocol = useRef(null)
   const canvasRef = useRef(null)
-  const { screenToFlowPosition, getViewport, setViewport } = useReactFlow()
+  // Armed by a replacement gesture — open, new — and consumed by the
+  // next definition arrival, which brings the view to the graph; a
+  // failed gesture disarms it.
+  const pendingRefit = useRef(false)
+  const { screenToFlowPosition, getViewport, setViewport, fitView } = useReactFlow()
 
   // An error is the one message the user must not miss; the status line
   // paints it red.
@@ -150,7 +167,14 @@ export function Editor() {
         }
       })
     })
-  }, [graph, listing])
+    // A replacement brings the view to the graph that arrived, the way
+    // the launch fit does; the queued fit waits for the new nodes to be
+    // measured. An ordinary edit push leaves the view to the user.
+    if (pendingRefit.current) {
+      pendingRefit.current = false
+      fitView({ maxZoom: 1 })
+    }
+  }, [graph, listing, fitView])
 
   useEffect(
     () =>
@@ -251,19 +275,29 @@ export function Editor() {
   // file or the same one, or starting fresh — asks before discarding
   // unsaved changes, and nowhere else.
   const confirmDiscard = useCallback(() => {
-    if (file?.dirty !== true) return true
+    if (!hasUnsavedChanges(file)) return true
     return window.confirm('The graph has unsaved changes. Discard them?')
   }, [file])
 
   const newGraph = useCallback(() => {
     if (protocol.current === null || !confirmDiscard()) return
-    protocol.current('new_graph').catch(showError)
+    pendingRefit.current = true
+    protocol.current('new_graph').catch((error) => {
+      pendingRefit.current = false
+      showError(error)
+    })
   }, [confirmDiscard, showError])
 
   const openFile = useCallback(() => {
-    if (protocol.current === null || !confirmDiscard()) return
-    const path = window.prompt('Open graph file')
-    if (path === null) return
+    if (protocol.current === null) return
+    // The path first, prefilled with the current one so a sibling file is
+    // an edit in place: a cancelled or empty answer ends the open before
+    // the discard confirm collects an answer about a loss that never
+    // followed.
+    const path = window.prompt('Open graph file', file?.path ?? '')
+    if (path === null || path === '') return
+    if (!confirmDiscard()) return
+    pendingRefit.current = true
     protocol
       .current('open_file', { path })
       .then(() =>
@@ -272,8 +306,11 @@ export function Editor() {
           current.map((node) => ({ ...node, selected: false })),
         ),
       )
-      .catch(showError)
-  }, [confirmDiscard, showError])
+      .catch((error) => {
+        pendingRefit.current = false
+        showError(error)
+      })
+  }, [confirmDiscard, file, showError])
 
   // One save mechanism under both chrome entries: a save always knows its
   // target — the current file — and asks only for the first save of an
@@ -282,9 +319,10 @@ export function Editor() {
   const save = useCallback(
     (elsewhere) => {
       if (protocol.current === null) return
-      if (elsewhere || file?.path == null) {
+      if (saveAsksForPath(file, elsewhere)) {
         const path = window.prompt('Save graph to', file?.path ?? '')
-        if (path === null) return
+        // An empty answer is a stray Enter, not a target.
+        if (path === null || path === '') return
         protocol.current('save_file', { path }).catch(showError)
       } else {
         protocol.current('save_file').catch(showError)
@@ -327,7 +365,7 @@ export function Editor() {
       <div className="app">
         <header className="chrome">
           <span className="file-name">{file?.path ?? 'untitled'}</span>
-          {file?.dirty === true && (
+          {hasUnsavedChanges(file) && (
             <span className="file-dirty">unsaved changes</span>
           )}
           <span className="chrome-space" />

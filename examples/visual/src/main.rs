@@ -5,45 +5,38 @@
 //! the websocket, so a reload or a second tab shows the same graph.
 //!
 //! Launched on a graph file path the editor opens already showing that
-//! graph, the file loaded through the one file format's loader — the same
-//! file the headless run takes. A path that cannot be read or loaded ends
-//! the launch printed and non-zero. Without a path the editor starts on an
-//! empty, untitled canvas.
+//! graph, the file read through the editor's one file reading — the story
+//! 03 loader, the same file the headless run takes. A path that cannot be
+//! read or loaded prints the fault and exits non-zero. Without a path the
+//! editor starts on an empty, untitled canvas.
 //!
 //! The server binds loopback on its default address; this is a local tool.
 
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use nodetool::graph;
-use nodetool::server::Editor;
+use nodetool::server::{read_definition, Editor};
 use nodetool_utility as _;
 use plugin_shapes as _;
 use plugin_text as _;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> std::process::ExitCode {
+async fn main() -> ExitCode {
     let file = std::env::args().nth(1);
-    let definition = match &file {
-        Some(path) => match std::fs::read_to_string(path) {
-            Ok(text) => match graph::load(&text) {
-                Ok(definition) => definition,
-                Err(error) => {
-                    eprintln!("cannot open `{path}`: {error}");
-                    return std::process::ExitCode::FAILURE;
-                }
-            },
-            Err(error) => {
-                eprintln!("cannot read `{path}`: {error}");
-                return std::process::ExitCode::FAILURE;
-            }
-        },
+    let definition = match file.as_deref().map(read_definition) {
+        Some(Ok(definition)) => definition,
+        Some(Err(error)) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
         None => graph::GraphDefinition::empty(),
     };
     let listener = match tokio::net::TcpListener::bind(nodetool::server::DEFAULT_ADDRESS).await {
         Ok(listener) => listener,
         Err(error) => {
             eprintln!("{error}");
-            return std::process::ExitCode::FAILURE;
+            return ExitCode::FAILURE;
         }
     };
     let address = listener.local_addr().expect("the listener is bound");
@@ -52,10 +45,10 @@ async fn main() -> std::process::ExitCode {
         .serve(listener)
         .await
     {
-        Ok(()) => std::process::ExitCode::SUCCESS,
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
-            std::process::ExitCode::FAILURE
+            ExitCode::FAILURE
         }
     }
 }

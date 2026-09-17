@@ -61,6 +61,12 @@ body {
 
 .file-name {
   font-weight: 600;
+  /* The name yields before the controls do: a long path truncates
+     instead of pushing Save off-screen. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .file-dirty {
