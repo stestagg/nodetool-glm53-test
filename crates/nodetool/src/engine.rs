@@ -16,26 +16,32 @@
 //! ways. Every node complete — the wired consumers included, for they are
 //! one more downstream of the same fan-out — so awaiting the run is
 //! sufficient to have received every value and the end of every consumed
-//! stream. Or the first error a behaviour or consumer surfaces ends the
-//! run, fail-fast: the remaining work stops, and the error names the node
-//! instance — its label and uuid — and what went wrong. Mid-run
-//! cancellation is engine-internal: in-flight values may still sit in a
-//! hand-off when the run ends; the guarantee is that the run ends and the
-//! error is the last word, not a frozen instant.
+//! stream. Or the first error — a behaviour's, a consumer's, a run task's
+//! panic caught and told where its node is known, or the engine refusing a
+//! node whose type declares no behaviour — ends the run, fail-fast: the
+//! remaining work stops, and the error names the node instance — its label
+//! and uuid — and what went wrong. Mid-run cancellation is engine-internal:
+//! in-flight values may still sit in a hand-off when the run ends; the
+//! guarantee is that the run ends and the error is the last word, not a
+//! frozen instant. The tasks ride the caller's tokio runtime: start a run
+//! inside one.
 //!
 //! A run holds its compiled graph read-only and leaves nothing behind on
 //! it: a second run of the same compiled graph, and a run of a recompiled
 //! definition, each start clean.
 
+use std::any::Any;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
+use std::future::{poll_fn, Future};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::pin::{pin, Pin};
+use std::task::Poll;
 
 use tokio::task::{JoinError, JoinSet};
 use uuid::Uuid;
 
 use crate::behaviour::{self, drive, handoff, Behaviour, Input, Output, Receiver, Sender};
-use crate::compile::{CompiledGraph, CompiledNode};
+use crate::compile::CompiledGraph;
 use crate::{ConvertFn, Value};
 
 /// A run of a compiled graph: the engine's one entry point.
@@ -84,9 +90,9 @@ impl<'g> Run<'g> {
     /// still consuming. Attaching is for building: past [`Run::start`] the
     /// wiring is fixed.
     ///
-    /// A node or port the graph does not declare is an engine bug, the way
-    /// a port lookup on a live node is a behaviour bug: it panics naming
-    /// the miss.
+    /// A node or port the graph does not declare is a bug in the program
+    /// building the run, the way a port lookup on a live node is a
+    /// behaviour bug: it panics naming the miss.
     pub fn consume<F, Fut>(&mut self, node: Uuid, port: &'static str, with: F)
     where
         F: FnOnce(Receiver<Value>) -> Fut + Send + 'static,
@@ -125,8 +131,7 @@ impl<'g> Run<'g> {
             if node.node_type.behaviour.is_none() {
                 return Err(format!(
                     "node {} ({uuid}) instantiates `{}`, which declares no behaviour to run",
-                    name(node),
-                    node.node_type.type_ref
+                    node.label, node.node_type.type_ref
                 )
                 .into());
             }
@@ -193,12 +198,12 @@ impl<'g> Run<'g> {
                 outputs.push(output);
             }
             let behaviour = (node_type.behaviour.expect("checked before wiring"))();
-            let label = name(node);
+            let label = node.label.clone();
             set.spawn(run_node(*uuid, label, behaviour, inputs, outputs));
         }
 
         for (consumer, receiver) in consumer_streams {
-            let label = name(&graph.nodes[&consumer.node]);
+            let label = graph.nodes[&consumer.node].label.clone();
             set.spawn(consume_stream(
                 consumer.node,
                 label,
@@ -230,8 +235,9 @@ impl<'g> Run<'g> {
 }
 
 /// One node's execution: its behaviour driven over its live ports, per the
-/// stream semantics. Its error names the node instance — its label and
-/// uuid — and what went wrong.
+/// stream semantics. Every error it can end on — a behaviour's or a panic
+/// caught here, where the node is known — is told the same way: naming the
+/// node instance, its label and uuid, and what went wrong.
 async fn run_node(
     uuid: Uuid,
     label: String,
@@ -239,9 +245,12 @@ async fn run_node(
     mut inputs: Vec<Input>,
     mut outputs: Vec<Output>,
 ) -> Result<(), behaviour::Error> {
-    drive(behaviour.as_mut(), &mut inputs, &mut outputs)
-        .await
-        .map_err(|error| format!("node {label} ({uuid}): {error}").into())
+    let outcome = catch_panic(drive(behaviour.as_mut(), &mut inputs, &mut outputs)).await;
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(payload) => Err(panicked(payload)),
+    };
+    outcome.map_err(|error| format!("node {label} ({uuid}): {error}").into())
 }
 
 /// One parameter literal's stream: yields its value once, then ends. A
@@ -251,8 +260,8 @@ async fn parameter_stream(value: Value, sender: Sender<Value>) -> Result<(), beh
     Ok(())
 }
 
-/// One consumer's stream, run to its end. Its error names the attachment it
-/// failed on.
+/// One consumer's stream, run to its end. Every error it can end on — its
+/// own or a panic caught here — is told naming the attachment it failed on.
 async fn consume_stream(
     uuid: Uuid,
     label: String,
@@ -260,9 +269,45 @@ async fn consume_stream(
     with: Consumer,
     receiver: Receiver<Value>,
 ) -> Result<(), behaviour::Error> {
-    with(receiver)
-        .await
-        .map_err(|error| format!("a consumer of node {label} ({uuid}) `{port}`: {error}").into())
+    let outcome = catch_panic(with(receiver)).await;
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(payload) => Err(panicked(payload)),
+    };
+    outcome.map_err(|error| format!("a consumer of node {label} ({uuid}) `{port}`: {error}").into())
+}
+
+/// The error a caught panic becomes, in the task's own words.
+fn panicked(payload: Box<dyn Any + Send>) -> behaviour::Error {
+    format!("a run task panicked: {}", panic_message(payload)).into()
+}
+
+/// The message a panic payload carries, as far as it tells.
+fn panic_message(payload: Box<dyn Any + Send>) -> String {
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            payload
+                .downcast_ref::<&'static str>()
+                .map(|text| (*text).to_owned())
+        })
+        .unwrap_or_else(|| "unknown panic payload".to_owned())
+}
+
+/// Runs a future, turning a panic into its payload. A run task's panic is
+/// reported through the run's one error path — where the task's identity is
+/// known — instead of dying as an anonymous join failure.
+async fn catch_panic<F: Future>(future: F) -> Result<F::Output, Box<dyn Any + Send>> {
+    let mut future = pin!(future);
+    poll_fn(
+        |cx| match catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
+            Ok(Poll::Ready(output)) => Poll::Ready(Ok(output)),
+            Ok(Poll::Pending) => Poll::Pending,
+            Err(payload) => Poll::Ready(Err(payload)),
+        },
+    )
+    .await
 }
 
 /// A run task that neither completed nor reported its error: it died
@@ -270,29 +315,8 @@ async fn consume_stream(
 /// fail-fast way.
 fn lost_run_task(join_error: JoinError) -> behaviour::Error {
     let reason = match join_error.try_into_panic() {
-        Ok(payload) => {
-            let message = payload
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| {
-                    payload
-                        .downcast_ref::<&'static str>()
-                        .map(|text| (*text).to_owned())
-                })
-                .unwrap_or_else(|| "unknown panic payload".to_owned());
-            format!("a run task panicked: {message}")
-        }
-        Err(join_error) => {
-            format!("a run task was cancelled mid-run: {join_error}")
-        }
+        Ok(payload) => format!("a run task panicked: {}", panic_message(payload)),
+        Err(join_error) => format!("a run task was cancelled mid-run: {join_error}"),
     };
     reason.into()
-}
-
-/// The name a run reports a node by: the instance's label as the definition
-/// gave it, or the type's default label when it gave none.
-fn name(node: &CompiledNode) -> String {
-    node.label
-        .clone()
-        .unwrap_or_else(|| node.node_type.label.to_owned())
 }

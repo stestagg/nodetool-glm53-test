@@ -37,11 +37,14 @@
 //!   arrived value has been processed; its logic may complete earlier by
 //!   returning [`Flow::Complete`]. On completion the node's outputs end, so
 //!   completion propagates downstream. An input nothing feeds — unconnected
-//!   or, later, fixed by a parameter — completes at once and never delivers
-//!   a value, so a node holding one never fires; if its inputs are all like
-//!   that it completes immediately, and if any other input is connected the
-//!   node neither fires nor completes: the run hangs, the fed input's
-//!   hand-off filling until its upstream stalls.
+//!   — is the degenerate stream: it completes at once and never delivers a
+//!   value, so a node holding one never fires. An input fixed by a
+//!   parameter is instead fed a stream that yields once and completes: its
+//!   arrival fires the node like any arrival, and the held value pairs
+//!   against every later arrival. If every input is degenerate the node
+//!   completes immediately, and if any other input is connected the node
+//!   neither fires nor completes: the run hangs, the fed input's hand-off
+//!   filling until its upstream stalls.
 //! * **Backpressure.** A value crosses from an emitting node to each
 //!   connected downstream input through a bounded hand-off
 //!   ([`HANDOFF_CAPACITY`], one fixed policy, no author-facing knobs):
@@ -203,7 +206,8 @@ impl Output {
     /// Emit a value: delivered to every connected downstream input, waiting
     /// on each while its hand-off is full. A downstream that has ended —
     /// its input gone — receives nothing more: the delivery is skipped,
-    /// which is that stream ending, not an error.
+    /// which is that stream ending, not an error. A conversion that refuses
+    /// a value (`None`) ends the run, reported with the node and port.
     pub async fn emit(&mut self, value: Value) {
         for (sender, convert) in &mut self.senders {
             let value = match convert {

@@ -1,8 +1,9 @@
 //! The engine: whole-graph wiring and the run lifecycle. Fan-out across
-//! nodes, a literal held across a graph's arrivals, completion only when
-//! every node is done, fail-fast, values consumed as they arrive, the empty
-//! graph, and runs starting clean — every run observed through the run's
-//! own consumer attachments, which are just one more downstream.
+//! nodes, a literal held across a graph's arrivals, a connection's
+//! conversion applied as values cross, completion only when every node is
+//! done, fail-fast, values consumed as they arrive, the empty graph, and
+//! runs starting clean — every run observed through the run's own consumer
+//! attachments, which are just one more downstream.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -19,10 +20,12 @@ use uuid::Uuid;
 
 const COUNTER: &str = "00000000-0000-0000-0000-0000000000d1";
 const PAIRER: &str = "00000000-0000-0000-0000-0000000000d2";
-const ECHO_1: &str = "00000000-0000-0000-0000-0000000000d3";
-const ECHO_2: &str = "00000000-0000-0000-0000-0000000000d4";
+const DOUBLER_1: &str = "00000000-0000-0000-0000-0000000000d3";
+const DOUBLER_2: &str = "00000000-0000-0000-0000-0000000000d4";
 const FAILER: &str = "00000000-0000-0000-0000-0000000000d5";
 const PASSTHROUGH: &str = "00000000-0000-0000-0000-0000000000d6";
+const F64_ECHO: &str = "00000000-0000-0000-0000-0000000000d7";
+const MIXED_SOURCE: &str = "00000000-0000-0000-0000-0000000000d8";
 
 fn node(uuid: &str, type_ref: &str) -> NodeInstance {
     NodeInstance {
@@ -71,9 +74,9 @@ fn compiled(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> &'static CompiledGrap
     ))
 }
 
-/// The counter's whole stream.
-fn counter_values() -> Vec<i32> {
-    (1..=50).collect()
+/// The counter's whole stream, as the doubler emits it: each value doubled.
+fn doubled_values() -> Vec<i32> {
+    (1..=50).map(|value| value * 2).collect()
 }
 
 /// Attaches a consumer that forwards every value it receives, in order, to
@@ -97,7 +100,7 @@ fn forwarded(run: &mut Run<'_>, node: &str, port: &'static str) -> mpsc::Unbound
 }
 
 /// Reads everything left on a forwarded stream.
-async fn drained(mut received: mpsc::UnboundedReceiver<i32>) -> Vec<i32> {
+async fn drained<T>(mut received: mpsc::UnboundedReceiver<T>) -> Vec<T> {
     let mut values = Vec::new();
     while let Some(value) = received.recv().await {
         values.push(value);
@@ -160,24 +163,24 @@ async fn one_emission_reaches_every_connected_downstream_node() {
     let compiled = compiled(
         vec![
             node(COUNTER, "delta/counter"),
-            node(ECHO_1, "delta/echo"),
-            node(ECHO_2, "delta/echo"),
+            node(DOUBLER_1, "gamma/doubler"),
+            node(DOUBLER_2, "gamma/doubler"),
         ],
         vec![
-            edge(COUNTER, "out", ECHO_1, "value"),
-            edge(COUNTER, "out", ECHO_2, "value"),
+            edge(COUNTER, "out", DOUBLER_1, "value"),
+            edge(COUNTER, "out", DOUBLER_2, "value"),
         ],
     );
     let mut run = Run::new(compiled);
-    let first = forwarded(&mut run, ECHO_1, "value");
-    let second = forwarded(&mut run, ECHO_2, "value");
+    let first = forwarded(&mut run, DOUBLER_1, "value");
+    let second = forwarded(&mut run, DOUBLER_2, "value");
 
     run.start().await.expect("the run completes");
 
     for received in [first, second] {
         assert_eq!(
             drained(received).await,
-            counter_values(),
+            doubled_values(),
             "each downstream node received the whole stream"
         );
     }
@@ -214,17 +217,24 @@ async fn a_constant_literal_pairs_against_every_arrival_in_a_whole_graph() {
 #[tokio::test]
 async fn the_run_ends_only_when_every_node_is_complete() {
     let compiled = compiled(
-        vec![node(COUNTER, "delta/counter"), node(ECHO_1, "delta/echo")],
-        vec![edge(COUNTER, "out", ECHO_1, "value")],
+        vec![
+            node(COUNTER, "delta/counter"),
+            node(DOUBLER_1, "gamma/doubler"),
+        ],
+        vec![edge(COUNTER, "out", DOUBLER_1, "value")],
     );
     let mut run = Run::new(compiled);
-    // The consumer parks after one value: the echo's backlog is far from
+    // The consumer parks after one value: the doubler's backlog is far from
     // drained and the source stalls behind it, so the nodes are still
     // working.
-    let (gate, mut received) = gated(&mut run, ECHO_1, "value", 1);
+    let (gate, mut received) = gated(&mut run, DOUBLER_1, "value", 1);
     let started = tokio::spawn(run.start());
 
-    assert_eq!(received.recv().await, Some(1), "the first value arrived");
+    assert_eq!(
+        received.recv().await,
+        Some(2),
+        "a value is consumed as it arrives"
+    );
     assert!(
         !started.is_finished(),
         "the nodes are not all complete, so the run has not ended"
@@ -235,24 +245,32 @@ async fn the_run_ends_only_when_every_node_is_complete() {
         .await
         .expect("the run task ran")
         .expect("the run completes");
-    assert_eq!(drained(received).await, (2..=50).collect::<Vec<_>>());
+    let doubled = doubled_values();
+    assert_eq!(
+        drained(received).await,
+        &doubled[1..],
+        "the rest of the stream arrives once the gate opens"
+    );
 }
 
 #[tokio::test]
 async fn the_run_does_not_end_while_a_wired_consumer_holds_an_undelivered_value() {
     let compiled = compiled(
-        vec![node(COUNTER, "delta/counter"), node(ECHO_1, "delta/echo")],
-        vec![edge(COUNTER, "out", ECHO_1, "value")],
+        vec![
+            node(COUNTER, "delta/counter"),
+            node(DOUBLER_1, "gamma/doubler"),
+        ],
+        vec![edge(COUNTER, "out", DOUBLER_1, "value")],
     );
     let mut run = Run::new(compiled);
-    // Every node is done — the source exhausted, the echo through its last
-    // emission — but the hand-off the consumer is wired through still holds
-    // undelivered values, and the consumer is still working.
-    let (gate, mut received) = gated(&mut run, ECHO_1, "value", 45);
+    // Every node is done — the source exhausted, the doubler through its
+    // last emission — but the hand-off the consumer is wired through still
+    // holds undelivered values, and the consumer is still working.
+    let (gate, mut received) = gated(&mut run, DOUBLER_1, "value", 45);
     let started = tokio::spawn(run.start());
 
     for expected in 1..=45 {
-        assert_eq!(received.recv().await, Some(expected));
+        assert_eq!(received.recv().await, Some(expected * 2));
     }
     assert!(
         !started.is_finished(),
@@ -264,32 +282,8 @@ async fn the_run_does_not_end_while_a_wired_consumer_holds_an_undelivered_value(
         .await
         .expect("the run task ran")
         .expect("the run completes");
-    assert_eq!(drained(received).await, (46..=50).collect::<Vec<_>>());
-}
-
-#[tokio::test]
-async fn values_are_consumed_as_they_arrive_while_the_run_is_still_going() {
-    let compiled = compiled(
-        vec![node(COUNTER, "delta/counter"), node(ECHO_1, "delta/echo")],
-        vec![edge(COUNTER, "out", ECHO_1, "value")],
-    );
-    let mut run = Run::new(compiled);
-    let (gate, mut received) = gated(&mut run, ECHO_1, "value", 1);
-    let started = tokio::spawn(run.start());
-
-    let first = received.recv().await.expect("a value arrives");
-    assert_eq!(first, 1);
-    assert!(
-        !started.is_finished(),
-        "the value arrived while the run was still going"
-    );
-
-    gate.notify_one();
-    started
-        .await
-        .expect("the run task ran")
-        .expect("the run completes");
-    assert_eq!(drained(received).await, (2..=50).collect::<Vec<_>>());
+    let doubled = doubled_values();
+    assert_eq!(drained(received).await, &doubled[45..]);
 }
 
 #[tokio::test]
@@ -298,18 +292,18 @@ async fn the_first_behaviour_error_ends_the_run_naming_the_node() {
         vec![
             node(COUNTER, "delta/counter"),
             labelled(node(FAILER, "delta/failer"), "the guard"),
-            node(ECHO_1, "delta/echo"),
+            node(DOUBLER_1, "gamma/doubler"),
         ],
         vec![
             edge(COUNTER, "out", FAILER, "value"),
-            edge(COUNTER, "out", ECHO_1, "value"),
+            edge(COUNTER, "out", DOUBLER_1, "value"),
         ],
     );
     let mut run = Run::new(compiled);
     // Work unrelated to the failure, parked forever on a gate the test
     // never opens: fail-fast ends the run anyway, where waiting for it
     // would hang.
-    let (_gate, _parked) = gated(&mut run, ECHO_1, "value", 0);
+    let (_gate, _parked) = gated(&mut run, DOUBLER_1, "value", 0);
     let started = tokio::spawn(run.start());
 
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), started)
@@ -336,12 +330,15 @@ async fn the_first_behaviour_error_ends_the_run_naming_the_node() {
 #[tokio::test]
 async fn a_consumer_error_ends_the_run_like_a_downstream_failure() {
     let compiled = compiled(
-        vec![node(COUNTER, "delta/counter"), node(ECHO_1, "delta/echo")],
-        vec![edge(COUNTER, "out", ECHO_1, "value")],
+        vec![
+            node(COUNTER, "delta/counter"),
+            node(DOUBLER_1, "gamma/doubler"),
+        ],
+        vec![edge(COUNTER, "out", DOUBLER_1, "value")],
     );
     let mut run = Run::new(compiled);
     let (forward, mut received) = mpsc::unbounded_channel();
-    let node: Uuid = ECHO_1.parse().unwrap();
+    let node: Uuid = DOUBLER_1.parse().unwrap();
     run.consume(node, "value", move |mut values| async move {
         let first = values.recv().await.expect("the stream carries values");
         forward
@@ -358,7 +355,7 @@ async fn a_consumer_error_ends_the_run_like_a_downstream_failure() {
 
     assert_eq!(
         received.recv().await,
-        Some(1),
+        Some(2),
         "values flowed to the consumer"
     );
 
@@ -372,14 +369,32 @@ async fn a_consumer_error_ends_the_run_like_a_downstream_failure() {
         "the failure names the attachment: {message}"
     );
     assert!(
-        message.contains("Echo"),
+        message.contains("Doubler"),
         "the node named by its default label: {message}"
     );
-    assert!(message.contains(ECHO_1), "the node's uuid named: {message}");
+    assert!(
+        message.contains(DOUBLER_1),
+        "the node's uuid named: {message}"
+    );
     assert!(
         message.contains("the consumer gave up"),
         "what went wrong told: {message}"
     );
+}
+
+#[test]
+#[should_panic(expected = "this graph has no node")]
+fn consuming_an_unknown_node_panics_naming_the_miss() {
+    let compiled = compiled(vec![node(COUNTER, "delta/counter")], vec![]);
+    let missing: Uuid = "00000000-0000-0000-0000-00000000ffee".parse().unwrap();
+    Run::new(compiled).consume(missing, "out", |_| async { Ok(()) });
+}
+
+#[test]
+#[should_panic(expected = "declares no output port")]
+fn consuming_an_unknown_port_panics_naming_the_miss() {
+    let compiled = compiled(vec![node(COUNTER, "delta/counter")], vec![]);
+    Run::new(compiled).consume(COUNTER.parse().unwrap(), "nothing", |_| async { Ok(()) });
 }
 
 #[tokio::test]
@@ -425,26 +440,103 @@ async fn an_empty_graph_finishes_immediately() {
 #[tokio::test]
 async fn a_second_run_of_the_same_compiled_graph_and_of_a_recompiled_definition_starts_clean() {
     let definition = definition(
-        vec![node(COUNTER, "delta/counter"), node(ECHO_1, "delta/echo")],
-        vec![edge(COUNTER, "out", ECHO_1, "value")],
+        vec![
+            node(COUNTER, "delta/counter"),
+            node(DOUBLER_1, "gamma/doubler"),
+        ],
+        vec![edge(COUNTER, "out", DOUBLER_1, "value")],
     );
     let registry = Registry::collect();
     let compiled = compile::compile(&definition, &registry).expect("the definition compiles");
 
     assert_eq!(
-        full_stream(&compiled, ECHO_1, "value").await,
-        counter_values()
+        full_stream(&compiled, DOUBLER_1, "value").await,
+        doubled_values()
     );
     assert_eq!(
-        full_stream(&compiled, ECHO_1, "value").await,
-        counter_values(),
+        full_stream(&compiled, DOUBLER_1, "value").await,
+        doubled_values(),
         "a second run of the same compiled graph starts clean"
     );
 
     let recompiled = compile::compile(&definition, &registry).expect("the definition compiles");
     assert_eq!(
-        full_stream(&recompiled, ECHO_1, "value").await,
-        counter_values(),
+        full_stream(&recompiled, DOUBLER_1, "value").await,
+        doubled_values(),
         "a run of a recompiled definition starts clean"
+    );
+}
+
+#[tokio::test]
+async fn a_connection_riding_a_conversion_delivers_converted_values() {
+    let compiled = compiled(
+        vec![
+            node(COUNTER, "delta/counter"),
+            node(F64_ECHO, "delta/echo_f64"),
+        ],
+        vec![edge(COUNTER, "out", F64_ECHO, "value")],
+    );
+    assert!(
+        compiled.connections[0].conversion.is_some(),
+        "the compile rides the declared i32→f64 conversion"
+    );
+    let mut run = Run::new(compiled);
+    let (forward, received) = mpsc::unbounded_channel();
+    let node: Uuid = F64_ECHO.parse().unwrap();
+    run.consume(node, "value", move |mut values| async move {
+        while let Some(value) = values.recv().await {
+            let value = value
+                .get::<f64>()
+                .copied()
+                .expect("the port is declared f64");
+            forward
+                .send(value)
+                .expect("the test reads what it forwarded");
+        }
+        Ok(())
+    });
+
+    run.start().await.expect("the run completes");
+
+    assert_eq!(
+        drained(received).await,
+        (1..=50).map(f64::from).collect::<Vec<_>>(),
+        "the echo received the counter's whole stream, converted as it crossed"
+    );
+}
+
+#[tokio::test]
+async fn a_conversion_that_refuses_a_value_ends_the_run_naming_the_node() {
+    let compiled = compiled(
+        vec![
+            node(MIXED_SOURCE, "delta/mixed_source"),
+            node(F64_ECHO, "delta/echo_f64"),
+        ],
+        vec![edge(MIXED_SOURCE, "mixed", F64_ECHO, "value")],
+    );
+    assert!(
+        compiled.connections[0].conversion.is_some(),
+        "the compile rides the i32→f64 conversion although the source also declares String"
+    );
+    let error = Run::new(compiled)
+        .start()
+        .await
+        .expect_err("the refusal is data-dependent, so a compiling graph fails mid-run");
+    let message = error.to_string();
+    assert!(
+        message.contains("Mixed source"),
+        "the error names the node's label: {message}"
+    );
+    assert!(
+        message.contains(MIXED_SOURCE),
+        "the error names the node's uuid: {message}"
+    );
+    assert!(
+        message.contains("a run task panicked"),
+        "the panic is told, never swallowed: {message}"
+    );
+    assert!(
+        message.contains("the conversion declared on output `mixed` does not take this value"),
+        "what went wrong told: {message}"
     );
 }

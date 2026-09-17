@@ -43,6 +43,36 @@ fn words() -> Box<dyn Behaviour> {
     Box::new(Words)
 }
 
+struct Drip;
+
+#[async_trait]
+impl Behaviour for Drip {
+    async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        // Like words, but a third line arrives a pause after the second:
+        // a run failing on the second line's first word demonstrably
+        // withholds it.
+        io.output("out")
+            .emit(Value::new(scalars::STRING, "alpha, beta, gamma".to_owned()))
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        io.output("out")
+            .emit(Value::new(scalars::STRING, "one, one, one".to_owned()))
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        io.output("out")
+            .emit(Value::new(
+                scalars::STRING,
+                "delta, epsilon, zeta".to_owned(),
+            ))
+            .await;
+        Ok(Flow::Complete)
+    }
+}
+
+fn drip() -> Box<dyn Behaviour> {
+    Box::new(Drip)
+}
+
 struct Uppercase;
 
 #[async_trait]
@@ -87,16 +117,26 @@ fn split() -> Box<dyn Behaviour> {
     Box::new(Split)
 }
 
+/// A guard in the stream: each text arrival passes through unless it is
+/// the forbidden value, whose arrival the node rejects with an error.
 struct Check;
 
 #[async_trait]
 impl Behaviour for Check {
-    async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+    async fn process(&mut self, trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        // Each text arrival passes or is rejected; the forbidden literal's
+        // own arrival merely fills its held value.
+        let Trigger::Arrival("text") = trigger else {
+            return Ok(Flow::Continue);
+        };
         let text = current_string(io, "text");
         let forbidden = current_string(io, "forbidden");
         if text == forbidden {
             return Err(format!("the value {text:?} is rejected here").into());
         }
+        io.output("text")
+            .emit(Value::new(scalars::STRING, text))
+            .await;
         Ok(Flow::Continue)
     }
 }
@@ -126,6 +166,16 @@ node_type! {
 }
 
 node_type! {
+    type_ref: "text/drip",
+    label: "Drip",
+    icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="3" r="1.5" fill="#333"/><circle cx="8" cy="8" r="1.5" fill="#333"/><circle cx="8" cy="13" r="1.5" fill="#333"/></svg>"##,
+    plugin: "text",
+    behaviour: drip,
+    inputs: [],
+    outputs: [ out: "String" ],
+}
+
+node_type! {
     type_ref: "text/split",
     label: "Split",
     icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M8 2v12M2 8h12" stroke="#333" stroke-width="2"/></svg>"##,
@@ -142,5 +192,5 @@ node_type! {
     plugin: "text",
     behaviour: check,
     inputs: [ text: "String", forbidden: "String" ],
-    outputs: [],
+    outputs: [ text: "String" ],
 }

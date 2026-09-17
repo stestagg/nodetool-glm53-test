@@ -50,13 +50,13 @@ scalar data types.
 - `examples/run-graph` — demo binary linked against both example plugins;
   the headless path from a terminal. It loads one of the sample graph
   files in `examples/run-graph/graphs/`, compiles it, and runs it with a
-  consumer attached to the splitter's output as one more downstream,
-  printing each value as it arrives and then the run's outcome. The
-  `pipeline` sample completes; the `failing` sample carries a node whose
-  behaviour errors mid-run, so the remaining output stops arriving and the
-  error — naming the node — is the last word before a non-zero exit; the
-  `broken` and `uncompilable` samples show a load error and compile errors
-  ending the path, printed, with a non-zero exit.
+  consumer attached to a node's output as one more downstream, printing
+  each value as it arrives and then the run's outcome. The `pipeline`
+  sample completes; the `failing` sample carries a node whose behaviour
+  errors mid-run, so the remaining output stops arriving and the error —
+  naming the node — is the last word before a non-zero exit; the `broken`
+  and `uncompilable` samples show a load error and compile errors ending
+  the path, printed, with a non-zero exit.
 
 ## Build and check
 
@@ -78,13 +78,10 @@ cargo run -p run-node          # drive one behaviour-ful node with scripted stre
 cargo run -p run-graph         # run the pipeline sample headless, values as they arrive
 ```
 
-The run-graph samples select the demonstration: the default is the
-`pipeline` sample, which runs a source into a splitter (its separator held
-by a parameter literal) and two further nodes, printing each value as it
-arrives and then the run's completion:
+The run-graph samples beyond the default select the demonstration:
 
 ```sh
-cargo run -p run-graph failing      # fail-fast: output stops, the error names the node, exit 1
+cargo run -p run-graph failing      # fail-fast: the output stops arriving, the error names the node, exit 1
 cargo run -p run-graph broken       # a load error ends the path, printed, exit 1
 cargo run -p run-graph uncompilable # compile errors end the path, printed, exit 1
 ```

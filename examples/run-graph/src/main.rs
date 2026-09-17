@@ -21,10 +21,10 @@ use nodetool::{uuid, Uuid};
 struct Sample {
     name: &'static str,
     text: &'static str,
-    /// The node whose output the demo consumes — the same output the
-    /// graph's own downstream nodes take. A sample that cannot reach a run
+    /// The node output the demo consumes — one more downstream of its
+    /// fan-out, named by node and port. A sample that cannot reach a run
     /// carries none.
-    consumed: Option<Uuid>,
+    consumed: Option<(Uuid, &'static str)>,
 }
 
 /// The built-in sample graphs, by the name that selects them.
@@ -32,12 +32,12 @@ const SAMPLES: &[Sample] = &[
     Sample {
         name: "pipeline",
         text: include_str!("../graphs/pipeline.yml"),
-        consumed: Some(uuid!("00000000-0000-0000-0000-100000000002")),
+        consumed: Some((uuid!("00000000-0000-0000-0000-100000000002"), "parts")),
     },
     Sample {
         name: "failing",
         text: include_str!("../graphs/failure.yml"),
-        consumed: Some(uuid!("00000000-0000-0000-0000-200000000002")),
+        consumed: Some((uuid!("00000000-0000-0000-0000-200000000003"), "text")),
     },
     Sample {
         name: "broken",
@@ -84,14 +84,16 @@ async fn main() -> std::process::ExitCode {
     };
 
     let mut run = Run::new(&compiled);
-    let consumed = sample
+    let (consumed, port) = sample
         .consumed
-        .expect("every sample that reaches a run names the node the demo consumes");
-    run.consume(consumed, "parts", |mut parts| async move {
+        .expect("every sample that reaches a run names the node output the demo consumes");
+    run.consume(consumed, port, |mut parts| async move {
         while let Some(value) = parts.recv().await {
             println!(
                 "emitted {}",
-                value.get::<String>().expect("`parts` is declared String")
+                value
+                    .get::<String>()
+                    .expect("the consumed port is declared String")
             );
         }
         Ok(())
