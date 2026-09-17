@@ -180,6 +180,17 @@ body {
   background: #8f99a8;
   border: 1px solid #68707a;
   border-radius: 50%;
+  cursor: grab;
+}
+
+/* The dot stays small; the invisible ring around it meets the 24px
+   minimum target, so starting, landing, or unhooking a wire takes no
+   precision. */
+.port .react-flow__handle::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
 }
 
 .port.in .react-flow__handle {
@@ -188,6 +199,23 @@ body {
 
 .port.out .react-flow__handle {
   right: -4px;
+}
+
+/* A wire reaches this input: the port dot carries the accent. */
+
+.port.connected .react-flow__handle {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Wires are the canvas's core artifact: a 2px stroke in the dark grey,
+   since the default faint one drowns on the light canvas and vanishes
+   zoomed out. The live line a drag draws reads the same. */
+
+.canvas .react-flow__edge-path,
+.canvas .react-flow__connection-path {
+  stroke: var(--muted);
+  stroke-width: 2;
 }
 
 /* An unknown-typed node: visibly inert, saying what it cannot show. */

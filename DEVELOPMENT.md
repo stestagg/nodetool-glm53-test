@@ -118,9 +118,15 @@ cargo run -p visual            # the editor on http://127.0.0.1:8420
 and find the palette of every node type the linked plugins contribute on
 the left and the canvas beside it. Dragging a type onto the canvas creates
 a node where it dropped; dragging a node moves it; a click selects;
-background drag pans; scroll zooms. The server holds the graph:
-a reload or a second tab shows the same graph, and an edit in one appears
-in the other.
+background drag pans; scroll zooms. Dragging between an output port and an
+input port — from either end — wires them; one input takes at most one
+upstream, so a wire dropped on an already-wired input replaces the old
+wire, and a wire released anywhere it cannot land cancels quietly.
+Dragging a wired input's end off and letting go unhooks it. Delete (or
+Backspace) removes the selected node together with its wires. Nothing is
+checked while editing — types, ports, and cycles are judged when a run is
+started. The server holds the graph: a reload or a second tab shows the
+same graph, and an edit in one appears in the other.
 
 The run-graph samples beyond the default select the demonstration:
 

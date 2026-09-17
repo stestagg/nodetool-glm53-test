@@ -4,7 +4,8 @@
 // browser holds no authoritative graph state — it requests the definition
 // on load, renders what the server holds, and every edit lands server-side
 // and is pushed back. Drags follow the pointer locally; one operation
-// commits where a dragged node rests.
+// commits where a dragged node rests, where a wire lands, or which node a
+// key press deletes.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -14,9 +15,11 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { NODE_TYPE, connect } from './protocol.js'
+import { SelfLoopEdge } from './edges.jsx'
 import { PlaceholderNode, TypeNode } from './nodes.jsx'
 
 const nodeTypes = { type: TypeNode, placeholder: PlaceholderNode }
+const edgeTypes = { selfloop: SelfLoopEdge }
 
 // The fixed grid a node without a recorded position lands on, ordered by
 // uuid: a deterministic, view-local fallback every view and reload agrees
@@ -44,6 +47,12 @@ export function toNodes(graph, types) {
       },
     ])
   const fallback = new Map(placeless)
+  const wiredInputs = new Map()
+  for (const edge of graph.edges) {
+    const ports = wiredInputs.get(edge.to) ?? []
+    ports.push(edge.to_port)
+    wiredInputs.set(edge.to, ports)
+  }
   return graph.nodes.map((node) => {
     const position = recordedPosition(node) ?? fallback.get(node.uuid)
     const type = byRef.get(node.type_ref)
@@ -58,8 +67,43 @@ export function toNodes(graph, types) {
         deletable: false,
       }
     }
-    return { id: node.uuid, position, type: 'type', data: { node, type } }
+    return {
+      id: node.uuid,
+      position,
+      type: 'type',
+      data: { node, type, wiredInputs: wiredInputs.get(node.uuid) ?? [] },
+    }
   })
+}
+
+// The definition's edges as canvas wires. Not selectable: drag-off is the
+// one way a wire comes off, so there is no second, selected-then-deleted
+// path.
+export function toEdges(graph) {
+  return graph.edges.map((edge) => ({
+    id: `${edge.from}/${edge.from_port}->${edge.to}/${edge.to_port}`,
+    source: edge.from,
+    sourceHandle: edge.from_port,
+    target: edge.to,
+    targetHandle: edge.to_port,
+    selectable: false,
+    type: edge.from === edge.to ? 'selfloop' : undefined,
+  }))
+}
+
+// What a wire drag's ending means when no connection landed: a release on
+// a port — any port, even one the wire cannot land on, the wire's own
+// included — is the wire gesture and cancels quietly; a connected input's
+// end released anywhere that is not a port unhooks it. React Flow reports
+// whatever port sits under the release, valid or not, as `toHandle`.
+// Answers the unhook operation's fields, or null.
+export function offPortUnhook(edges, state) {
+  const from = state.fromHandle
+  if (from === null || from.type !== 'target' || state.toHandle != null) return null
+  const wired = edges.some(
+    (edge) => edge.to === from.nodeId && edge.to_port === from.id,
+  )
+  return wired ? { to: from.nodeId, to_port: from.id } : null
 }
 
 export function Editor() {
@@ -104,7 +148,20 @@ export function Editor() {
   )
 
   const onNodesChange = useCallback((changes) => {
-    setNodes((current) => applyNodeChanges(changes, current))
+    // A remove change is the server's to apply: the delete operation goes
+    // out, the definition push takes the node and its wires off the
+    // canvas, and the view never holds a deletion the server refused.
+    for (const change of changes) {
+      if (change.type === 'remove' && protocol.current !== null) {
+        protocol.current('delete_node', { uuid: change.id }).catch(setStatus)
+      }
+    }
+    setNodes((current) =>
+      applyNodeChanges(
+        changes.filter((change) => change.type !== 'remove'),
+        current,
+      ),
+    )
   }, [])
 
   const onNodeDragStop = useCallback((_event, node) => {
@@ -114,6 +171,26 @@ export function Editor() {
       position: { x: node.position.x, y: node.position.y },
     }).catch(setStatus)
   }, [])
+
+  const onConnect = useCallback((connection) => {
+    if (protocol.current === null) return
+    protocol.current('wire', {
+      from: connection.source,
+      from_port: connection.sourceHandle,
+      to: connection.target,
+      to_port: connection.targetHandle,
+    }).catch(setStatus)
+  }, [])
+
+  const onConnectEnd = useCallback(
+    (_event, state) => {
+      const unhook = offPortUnhook(graph?.edges ?? [], state)
+      if (unhook !== null && protocol.current !== null) {
+        protocol.current('unhook', unhook).catch(setStatus)
+      }
+    },
+    [graph],
+  )
 
   const onDrop = useCallback(
     (event) => {
@@ -168,10 +245,13 @@ export function Editor() {
         <main className="canvas">
           <ReactFlow
             nodes={nodes}
-            edges={[]}
+            edges={graph === null ? [] : toEdges(graph)}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onNodeDragStop={onNodeDragStop}
+            onConnect={onConnect}
+            onConnectEnd={onConnectEnd}
             onDrop={onDrop}
             onDragOver={onDragOver}
             fitView
@@ -180,6 +260,13 @@ export function Editor() {
             fitViewOptions={{ maxZoom: 1 }}
             minZoom={0.25}
             maxZoom={2.5}
+            // Delete/Backspace is the deletion gesture. A wire is a drag
+            // from either end — a click never starts or lands one — and
+            // the drag threshold keeps a port click from reading as a
+            // drag-off.
+            deleteKeyCode={['Delete', 'Backspace']}
+            connectionDragThreshold={4}
+            connectOnClick={false}
           >
             <Background variant="dots" gap={24} size={1.5} />
           </ReactFlow>

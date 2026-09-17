@@ -22,8 +22,9 @@ use serde_json::{json, Value};
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::graph::GraphDefinition;
+use crate::graph::{Edge, GraphDefinition};
 use crate::NodeType;
+use uuid::Uuid;
 
 mod assets;
 mod http;
@@ -108,6 +109,9 @@ impl Editor {
             "get_definition" => self.get_definition(&mut fields),
             "create_node" => self.create_node(&mut fields),
             "move_node" => self.move_node(&mut fields),
+            "wire" => self.wire(&mut fields),
+            "unhook" => self.unhook(&mut fields),
+            "delete_node" => self.delete_node(&mut fields),
             other => Err(format!("unknown message type `{other}`")),
         };
         match reply {
@@ -177,11 +181,9 @@ impl Editor {
     }
 
     fn move_node(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
-        let uuid = protocol::take_string(fields, "uuid")?;
+        let uuid = protocol::take_uuid(fields, "uuid")?;
         let position = protocol::take_position(fields, "position")?;
         protocol::done(fields)?;
-        let uuid =
-            uuid::Uuid::parse_str(&uuid).map_err(|_| format!("`{uuid}` is not a node uuid"))?;
         let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
         let node = graph
             .nodes
@@ -194,6 +196,77 @@ impl Editor {
             .insert("position".into(), position.metadata_entry().into());
         self.push_definition(&graph);
         Ok(json!({ "type": "node_moved" }))
+    }
+
+    /// The node an operation names, required to be in the definition.
+    fn require_node(graph: &GraphDefinition, uuid: Uuid) -> Result<(), String> {
+        if graph.nodes.iter().any(|node| node.uuid == uuid) {
+            Ok(())
+        } else {
+            Err(format!("no node {uuid} in the definition"))
+        }
+    }
+
+    /// Wire an output to an input, naming the edge it means. Edit time
+    /// judges nothing about the wire — not the ports, not the types, not
+    /// cycles; compile time does, when a run starts.
+    fn wire(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
+        let from = protocol::take_uuid(fields, "from")?;
+        let from_port = protocol::take_string(fields, "from_port")?;
+        let to = protocol::take_uuid(fields, "to")?;
+        let to_port = protocol::take_string(fields, "to_port")?;
+        protocol::done(fields)?;
+        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
+        for uuid in [from, to] {
+            Self::require_node(&graph, uuid)?;
+        }
+        // An input carries one value source: the landing wire replaces
+        // whatever upstream edge and parameter literal the input held.
+        graph
+            .edges
+            .retain(|edge| edge.to != to || edge.to_port != to_port);
+        if let Some(node) = graph.nodes.iter_mut().find(|node| node.uuid == to) {
+            node.parameters.remove(&to_port);
+        }
+        graph.edges.push(Edge {
+            from,
+            from_port,
+            to,
+            to_port,
+        });
+        self.push_definition(&graph);
+        Ok(json!({ "type": "wired" }))
+    }
+
+    /// Unhook an input: its edge, if any, goes. An input carries at most
+    /// one upstream, so the input end names the edge; an input with no
+    /// edge changes nothing and answers the same.
+    fn unhook(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
+        let to = protocol::take_uuid(fields, "to")?;
+        let to_port = protocol::take_string(fields, "to_port")?;
+        protocol::done(fields)?;
+        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
+        Self::require_node(&graph, to)?;
+        graph
+            .edges
+            .retain(|edge| edge.to != to || edge.to_port != to_port);
+        self.push_definition(&graph);
+        Ok(json!({ "type": "unhooked" }))
+    }
+
+    /// Delete a node together with every wire attached to it — no dangling
+    /// edges, which the file format forbids.
+    fn delete_node(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
+        let uuid = protocol::take_uuid(fields, "uuid")?;
+        protocol::done(fields)?;
+        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
+        Self::require_node(&graph, uuid)?;
+        graph.nodes.retain(|node| node.uuid != uuid);
+        graph
+            .edges
+            .retain(|edge| edge.from != uuid && edge.to != uuid);
+        self.push_definition(&graph);
+        Ok(json!({ "type": "node_deleted" }))
     }
 
     /// Push the whole updated definition to every connection — never the

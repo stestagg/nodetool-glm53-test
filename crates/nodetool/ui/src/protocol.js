@@ -50,6 +50,9 @@ export function connect({ onOpen, onGreeting, onDefinition, onError, onClosed })
         break
       case 'node_created':
       case 'node_moved':
+      case 'wired':
+      case 'unhooked':
+      case 'node_deleted':
         settle(message.id, ({ resolve }) => resolve(message))
         break
       case 'error':
