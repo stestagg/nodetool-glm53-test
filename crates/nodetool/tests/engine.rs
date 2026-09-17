@@ -578,9 +578,9 @@ async fn until_finished(mut timeline: mpsc::UnboundedReceiver<Event>) -> Vec<Eve
     events
 }
 
-/// The graph story-05's gate lets a user build: the pairer's second input
-/// connected in shape but fed by nothing, so the gate never opens and the
-/// run makes no progress without error.
+/// The graph story-05's gate lets a user build: the pairer's second
+/// input is neither connected nor parameterised, so its gate never
+/// opens and the run makes no progress without error.
 fn hung_graph() -> &'static CompiledGraph {
     compiled(
         vec![node(COUNTER, "delta/counter"), node(PAIRER, "delta/pairer")],

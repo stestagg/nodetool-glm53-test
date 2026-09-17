@@ -138,7 +138,7 @@ takes at most one upstream, so a wire dropped on an already-wired input
 replaces the old wire, and a wire released anywhere it cannot land cancels
 quietly. Dragging a wired input's end off and letting go unhooks it.
 Delete (or Backspace) removes the selected node together with its wires.
-nothing is checked while editing — types, ports, and cycles are judged
+Nothing is checked while editing — types, ports, and cycles are judged
 when a run is started. The server holds the graph: a reload or a second
 tab shows the same graph, and an edit in one appears in the other.
 

@@ -160,6 +160,12 @@ export function Editor() {
   const [run, setRun] = useState(null)
   const [nodes, setNodes] = useState([])
   const [status, setStatus] = useState({ text: 'connecting…', error: false })
+  // The run control's click guard: armed by a start or stop, settled by
+  // the run state landing. The control's flip travels through the
+  // server's push, so a second click inside that gap — the second click
+  // of a habitual double-click on Start, say — lands before the label
+  // has flipped and must be ignored rather than read as the opposite act.
+  const [acting, setActing] = useState(false)
   const protocol = useRef(null)
   const canvasRef = useRef(null)
   // Armed by a replacement gesture — open, new — and consumed by the
@@ -179,6 +185,20 @@ export function Editor() {
   // paints it red.
   const showError = useCallback((text) => {
     setStatus({ text, error: true })
+  }, [])
+
+  // A definition arrival — the connect-time resync or a push — replaces
+  // what is drawn, and the run state it carries narrates itself the way a
+  // run push does. An idle state with no outcome — what a compile failure
+  // leaves — reads as '', leaving the status line, the refused start's
+  // error report, as it is.
+  const resync = useCallback((graph, file, run) => {
+    setGraph(graph)
+    setFile(file)
+    setRun(run)
+    setActing(false)
+    const text = runStatusText(run)
+    if (text) setStatus({ text, error: run.outcome === 'failed' })
   }, [])
 
   useEffect(() => {
@@ -211,28 +231,24 @@ export function Editor() {
         onOpen: (request) => {
           protocol.current = request
           request('list_node_types').then(setListing, showError)
-          request('get_definition').then(({ graph, file, run }) => {
-            setGraph(graph)
-            setFile(file)
-            setRun(run)
-          }, showError)
+          request('get_definition').then(
+            ({ graph, file, run }) => resync(graph, file, run),
+            showError,
+          )
         },
         onGreeting: () => setStatus({ text: '' }),
-        onDefinition: (graph, file, run) => {
-          setGraph(graph)
-          setFile(file)
-          setRun(run)
-        },
+        onDefinition: resync,
         onFile: ({ path, dirty }) => setFile({ path, dirty }),
         onRun: (state) => {
           setRun(state)
+          setActing(false)
           setStatus({ text: runStatusText(state), error: state.outcome === 'failed' })
         },
         onError: showError,
         onClosed: () =>
           setStatus({ text: 'connection lost — reload the page', error: true }),
       }),
-    [showError],
+    [resync, showError],
   )
 
   // The editing seam every field commit rides: one operation out, the
@@ -366,16 +382,22 @@ export function Editor() {
     [file, showError],
   )
 
-  // The run control's two acts: a start hands the held definition to the
-  // compiler and runs it; a stop ends the run that is on. Either answers
-  // through the run-state push, which flips the control and the lock.
-  const startRun = useCallback(() => {
-    protocol.current?.('start_run')?.catch(showError)
-  }, [showError])
-
-  const stopRun = useCallback(() => {
-    protocol.current?.('stop_run')?.catch(showError)
-  }, [showError])
+  // The run control's one act: a start hands the held definition to the
+  // compiler and runs it, a stop ends the run that is on, and the
+  // run-state push flips the control and the lock either way. Between
+  // the click and that landing further clicks are ignored — the guard
+  // above — so the second click of a double-click cannot land on the
+  // not-yet-flipped label and end the run the first click began.
+  const actOnRun = useCallback(() => {
+    if (acting || protocol.current === null) return
+    setActing(true)
+    protocol
+      .current(run?.running === true ? 'stop_run' : 'start_run')
+      .catch((error) => {
+        setActing(false)
+        showError(error)
+      })
+  }, [acting, run, showError])
 
   // The sidebar's node: the one the canvas holds selected, read off the
   // same node state the canvas draws, so a definition push swaps its
@@ -410,14 +432,14 @@ export function Editor() {
   return (
     <EditContext.Provider value={edit}>
       <LockContext.Provider value={locked}>
-        <div className="app">
+        <div className={locked ? 'app locked' : 'app'}>
           <header className="chrome">
             <span className="file-name">{file?.path ?? 'untitled'}</span>
             {hasUnsavedChanges(file) && (
               <span className="file-dirty">unsaved changes</span>
             )}
             <span className="chrome-space" />
-            <button disabled={!control.enabled} onClick={control.running ? stopRun : startRun}>
+            <button disabled={!control.enabled} onClick={actOnRun}>
               {control.label}
             </button>
             <button disabled={locked} onClick={newGraph}>New</button>
@@ -495,7 +517,10 @@ export function Editor() {
               baseScalars={listing?.baseScalars ?? {}}
             />
           </div>
-          <footer className={`status${status.error ? ' error' : ''}`}>
+          <footer
+            className={`status${status.error ? ' error' : ''}`}
+            aria-live="polite"
+          >
             {status.text}
           </footer>
         </div>

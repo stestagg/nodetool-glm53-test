@@ -88,7 +88,8 @@ pub fn compile(
         if node_type.is_none() {
             errors.push(format!(
                 "node {} instantiates `{}`, which no linked plugin declares",
-                instance.uuid, instance.type_ref
+                node_name(instance, node_type),
+                instance.type_ref
             ));
         }
         match instances.entry(instance.uuid) {
@@ -104,7 +105,10 @@ pub fn compile(
     if let Some(cycle) = find_cycle(&definition.nodes, &definition.edges, &instances) {
         let named = cycle
             .iter()
-            .map(|uuid| format!("{uuid} (`{}`)", instances[uuid].0.type_ref))
+            .map(|uuid| {
+                let (instance, node_type) = instances[uuid];
+                node_name(instance, node_type)
+            })
             .collect::<Vec<_>>()
             .join(" → ");
         errors.push(format!("cycle: {named}"));
@@ -116,8 +120,8 @@ pub fn compile(
     // the upstream instance, its port, and the resolved connection type.
     let mut feeds = HashMap::<(Uuid, &'static str), (Uuid, &'static str, &'static DataType)>::new();
     for edge in &definition.edges {
-        let from = instances.get(&edge.from);
-        let to = instances.get(&edge.to);
+        let from = instances.get(&edge.from).copied();
+        let to = instances.get(&edge.to).copied();
         for (uuid, role) in [(edge.from, "from"), (edge.to, "to")] {
             if !instances.contains_key(&uuid) {
                 errors.push(format!(
@@ -126,34 +130,37 @@ pub fn compile(
                 ));
             }
         }
-        let from_type = from.and_then(|(_, node_type)| *node_type);
-        let to_type = to.and_then(|(_, node_type)| *node_type);
 
         let mut output = None;
-        if let Some(node_type) = from_type {
+        if let Some((instance, Some(node_type))) = from {
             output = port(node_type.outputs, &edge.from_port);
             if output.is_none() {
                 errors.push(format!(
-                    "node {} (`{}`) has no output port `{}`",
-                    edge.from, node_type.type_ref, edge.from_port
+                    "node {} has no output port `{}`",
+                    node_name(instance, Some(node_type)),
+                    edge.from_port
                 ));
             }
         }
         let mut input = None;
-        if let Some(node_type) = to_type {
+        if let Some((instance, Some(node_type))) = to {
             input = port(node_type.inputs, &edge.to_port);
             if input.is_none() {
                 errors.push(format!(
-                    "node {} (`{}`) has no input port `{}`",
-                    edge.to, node_type.type_ref, edge.to_port
+                    "node {} has no input port `{}`",
+                    node_name(instance, Some(node_type)),
+                    edge.to_port
                 ));
             }
         }
         if let Some(input) = input {
             if let Some(first) = fed_by.insert((edge.to, input.name), edge.from) {
+                let (instance, node_type) = instances[&edge.to];
                 errors.push(format!(
-                    "input `{}` of node {} receives more than one connection (from {} and {})",
-                    input.name, edge.to, first, edge.from
+                    "input `{}` of node {} receives more than one connection (from {first} and {})",
+                    input.name,
+                    node_name(instance, node_type),
+                    edge.from
                 ));
             }
         }
@@ -174,10 +181,15 @@ pub fn compile(
                         conversion,
                     });
                 }
-                None => errors.push(format!(
-                    "connection {} `{}` ({}) → {} `{}` ({}): no exact match and no declared conversion bridges them",
-                    edge.from, edge.from_port, output.type_refs.join(", "), edge.to, edge.to_port, input.type_refs.join(", ")
-                )),
+                None => {
+                    let (from_instance, from_node_type) = instances[&edge.from];
+                    let (to_instance, to_node_type) = instances[&edge.to];
+                    errors.push(format!(
+                        "connection {} `{}` ({}) → {} `{}` ({}): no exact match and no declared conversion bridges them",
+                        node_name(from_instance, from_node_type), edge.from_port, output.type_refs.join(", "),
+                        node_name(to_instance, to_node_type), edge.to_port, input.type_refs.join(", ")
+                    ));
+                }
             }
         }
     }
@@ -192,15 +204,17 @@ pub fn compile(
         for (name, literal) in &instance.parameters {
             let Some(input) = port(node_type.inputs, name) else {
                 errors.push(format!(
-                    "node {} (`{}`): parameter `{}` does not name an input port",
-                    uuid, node_type.type_ref, name
+                    "node {}: parameter `{}` does not name an input port",
+                    node_name(instance, Some(node_type)),
+                    name
                 ));
                 continue;
             };
             if fed_by.contains_key(&(*uuid, input.name)) {
                 errors.push(format!(
                     "input `{}` of node {} holds a parameter value and receives a connection; an input carries one or the other",
-                    input.name, uuid
+                    input.name,
+                    node_name(instance, Some(node_type))
                 ));
                 continue;
             }
@@ -212,8 +226,10 @@ pub fn compile(
                         parameters.insert(input.name, CompiledParameter { resolved_type, value });
                     }
                     None => errors.push(format!(
-                        "node {} (`{}`): input `{}`: literal {literal} does not match declared types {} — no exact match and no declared conversion bridges them",
-                        uuid, node_type.type_ref, input.name, input.type_refs.join(", ")
+                        "node {}: input `{}`: literal {literal} does not match declared types {} — no exact match and no declared conversion bridges them",
+                        node_name(instance, Some(node_type)),
+                        input.name,
+                        input.type_refs.join(", ")
                     )),
                 }
             }
@@ -226,7 +242,7 @@ pub fn compile(
     // resolution — a connected type, a parameter literal, or a connection
     // from an upstream family output whose own resolution must come first.
     let mut jobs = Vec::<FamilyJob>::new();
-    for (uuid, (_, node_type)) in &instances {
+    for (uuid, (instance, node_type)) in &instances {
         let Some(node_type) = node_type else { continue };
         let mut grouped = BTreeMap::<&'static str, Vec<&'static Port>>::new();
         for port in node_type.inputs.iter().chain(node_type.outputs.iter()) {
@@ -238,9 +254,8 @@ pub fn compile(
             let members = ports[0].type_refs;
             if ports.iter().any(|port| port.type_refs != members) {
                 errors.push(format!(
-                    "node {} (`{}`): the ports of its `{}` family declare different member sets ({}); a family resolves across one shared set",
-                    uuid,
-                    node_type.type_ref,
+                    "node {}: the ports of its `{}` family declare different member sets ({}); a family resolves across one shared set",
+                    node_name(instance, Some(node_type)),
                     name,
                     ports.iter().map(|port| port.type_refs.join(", ")).collect::<Vec<_>>().join(" / ")
                 ));
@@ -272,7 +287,6 @@ pub fn compile(
             }
             jobs.push(FamilyJob {
                 node: *uuid,
-                type_ref: node_type.type_ref,
                 name,
                 members,
                 ports,
@@ -320,22 +334,26 @@ pub fn compile(
                 }
                 FamilyResolution::NoSource => {
                     failed.insert(key);
+                    let (instance, node_type) = instances[&job.node];
                     errors.push(format!(
-                        "node {} (`{}`): the ports of its `{}` family ({}) carry no connection and no parameter value — the family cannot resolve to a type",
-                        job.node,
-                        job.type_ref,
+                        "node {}: the ports of its `{}` family ({}) carry no connection and no parameter value — the family cannot resolve to a type",
+                        node_name(instance, node_type),
                         job.name,
                         job.ports.iter().map(|port| format!("`{}`", port.name)).collect::<Vec<_>>().join(", ")
                     ));
                 }
                 FamilyResolution::Conflict => {
                     failed.insert(key);
+                    let (instance, node_type) = instances[&job.node];
                     errors.push(format!(
-                        "node {} (`{}`): the ports of its `{}` family cannot resolve to one type — {}",
-                        job.node,
-                        job.type_ref,
+                        "node {}: the ports of its `{}` family cannot resolve to one type — {}",
+                        node_name(instance, node_type),
                         job.name,
-                        job.sources.iter().map(source_describes).collect::<Vec<_>>().join(", ")
+                        job.sources
+                            .iter()
+                            .map(source_describes)
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ));
                 }
             }
@@ -362,19 +380,24 @@ pub fn compile(
             };
             match resolve_literal(literal, &[member.name], registry) {
                 Some((resolved_type, value)) => {
-                    parameters_of
-                        .entry(*uuid)
-                        .or_default()
-                        .insert(input.name, CompiledParameter { resolved_type, value });
+                    parameters_of.entry(*uuid).or_default().insert(
+                        input.name,
+                        CompiledParameter {
+                            resolved_type,
+                            value,
+                        },
+                    );
                 }
-                None => errors.push(format!(
-                    "node {} (`{}`): input `{}`: literal {literal} does not fit the `{}` family's resolved type {}",
-                    uuid,
-                    instances.get(uuid).and_then(|(_, node_type)| node_type.map(|node_type| node_type.type_ref)).unwrap_or(""),
-                    input.name,
-                    input.family.expect("a family port"),
-                    member.name
-                )),
+                None => {
+                    let (instance, node_type) = instances[uuid];
+                    errors.push(format!(
+                        "node {}: input `{}`: literal {literal} does not fit the `{}` family's resolved type {}",
+                        node_name(instance, node_type),
+                        input.name,
+                        input.family.expect("a family port"),
+                        member.name
+                    ));
+                }
             }
         }
     }
@@ -415,10 +438,17 @@ pub fn compile(
                 connection.resolved_type = resolved_type;
                 connection.conversion = conversion;
             }
-            None => errors.push(format!(
-                "connection {} `{}` → {} `{}`: the resolved family type cannot reach the other side",
-                connection.from, connection.from_port, connection.to, connection.to_port
-            )),
+            None => {
+                let (from_instance, from_node_type) = instances[&connection.from];
+                let (to_instance, to_node_type) = instances[&connection.to];
+                errors.push(format!(
+                    "connection {} `{}` → {} `{}`: the resolved family type cannot reach the other side",
+                    node_name(from_instance, from_node_type),
+                    connection.from_port,
+                    node_name(to_instance, to_node_type),
+                    connection.to_port
+                ));
+            }
         }
     }
 
@@ -437,8 +467,8 @@ pub fn compile(
         if let Some(check) = node_type.check_parameters {
             for message in check(&compiled) {
                 errors.push(format!(
-                    "node {} (`{}`): {message}",
-                    uuid, node_type.type_ref
+                    "node {}: {message}",
+                    node_name(instance, Some(node_type))
                 ));
             }
         }
@@ -513,10 +543,25 @@ fn port<'p>(ports: &'p [Port], name: &str) -> Option<&'p Port> {
     ports.iter().find(|port| port.name == name)
 }
 
+/// What a compile error names a node instance by: the label the run would
+/// call it — the instance's override, else the type's default — with the
+/// uuid beside it, the dialect the engine's own reports speak. A node
+/// whose type no linked plugin declares falls back to the type reference,
+/// the name the editor shows its placeholder by.
+fn node_name(instance: &NodeInstance, node_type: Option<&NodeType>) -> String {
+    format!(
+        "{} ({})",
+        instance
+            .label
+            .as_deref()
+            .unwrap_or_else(|| node_type.map_or(instance.type_ref.as_str(), |t| t.label)),
+        instance.uuid
+    )
+}
+
 /// One port family waiting to resolve on one node instance.
 struct FamilyJob<'g> {
     node: Uuid,
-    type_ref: &'static str,
     name: &'static str,
     /// The members the family's ports declare, in declaration order — the
     /// order the deterministic tiebreak walks.

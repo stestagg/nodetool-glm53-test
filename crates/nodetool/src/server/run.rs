@@ -27,6 +27,18 @@ pub enum Outcome {
     Stopped,
 }
 
+impl Outcome {
+    /// The outcome's name, as the run state carries it beside the idle
+    /// state.
+    pub(super) fn name(&self) -> &'static str {
+        match self {
+            Outcome::Completed => "completed",
+            Outcome::Stopped => "stopped",
+            Outcome::Failed(_) => "failed",
+        }
+    }
+}
+
 /// Whether a run is on, and when idle, how the last one ended. Running
 /// carries the stop channel: the `true` a stop sends on it is the engine's
 /// signal to end the run.

@@ -100,16 +100,14 @@ pub fn file_state(file: Option<&str>, dirty: bool) -> Value {
 pub fn run_state(run: &RunState) -> Value {
     let (running, outcome, error) = match run {
         RunState::Running { .. } => (true, None, None),
-        RunState::Idle { outcome: None } => (false, None, None),
-        RunState::Idle {
-            outcome: Some(Outcome::Completed),
-        } => (false, Some("completed"), None),
-        RunState::Idle {
-            outcome: Some(Outcome::Stopped),
-        } => (false, Some("stopped"), None),
-        RunState::Idle {
-            outcome: Some(Outcome::Failed(error)),
-        } => (false, Some("failed"), Some(error)),
+        RunState::Idle { outcome } => (
+            false,
+            outcome.as_ref().map(Outcome::name),
+            match outcome {
+                Some(Outcome::Failed(error)) => Some(error),
+                _ => None,
+            },
+        ),
     };
     json!({ "running": running, "outcome": outcome, "error": error })
 }

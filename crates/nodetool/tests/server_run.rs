@@ -37,7 +37,7 @@ edges:
     to_port: value";
 
 /// A run that never ends by itself: the pairer's second input is
-/// connected in shape but fed by nothing, so the gate never opens — the
+/// neither connected nor parameterised, so its gate never opens — the
 /// hang a stop exists to end.
 const HUNG: &str = "schema_version: 1
 name: hung
