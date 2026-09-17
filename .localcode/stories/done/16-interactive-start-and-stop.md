@@ -218,3 +218,5 @@ console (24).
   an unsaved graph still loses what is unsaved, and this story adds no quit
   guard; whether the fizzbuzz binary's UI mode (24) wants one is its
   population's call, noted so it reads as a decision. (REQ-74)
+
+- 2026-09-17: Implemented in pull request #51 (http://localhost:8080/gitea/localcode/nodetool/pulls/51).
