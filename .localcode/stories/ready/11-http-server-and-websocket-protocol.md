@@ -38,3 +38,5 @@ Event streaming needs one more sentence: the push channel this story builds is t
 - 2026-09-16 — Unknown fields in protocol messages are errors, mirroring the file format's honesty: a typo'd message should be visible, not swallowed. The accepted cost is that a client speaking a message the server does not know is rejected outright — tolerable because one binary serves its own UI, and the additive rule (new types, never changed framing) is the growth path if that ever stops being true. REQ-72 warns against added failure modes; this one is the deliberate exception, argued here rather than cited as support.
 
 - 2026-09-17: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
+
+- 2026-09-17: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
