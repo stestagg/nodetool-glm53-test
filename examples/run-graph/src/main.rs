@@ -10,12 +10,13 @@
 //! way; the flag changes only who is watching.
 //!
 //! One of the built-in sample graphs names the run: `pipeline` (the
-//! default), `failing`, `broken`, or `uncompilable`; the flag follows the
-//! sample (`run-graph failing observe`, or `run-graph observe` for the
-//! default sample).
+//! default), `failing`, `broken`, `uncompilable`, `if-true`, or `if-false`;
+//! the flag follows the sample (`run-graph failing observe`, or `run-graph
+//! observe` for the default sample).
 
 use std::sync::Arc;
 
+use nodetool_utility as _;
 use plugin_shapes as _;
 use plugin_text as _;
 
@@ -58,6 +59,16 @@ const SAMPLES: &[Sample] = &[
         name: "uncompilable",
         text: include_str!("../graphs/uncompilable.yml"),
         consumed: None,
+    },
+    Sample {
+        name: "if-true",
+        text: include_str!("../graphs/if-true.yml"),
+        consumed: Some((uuid!("00000000-0000-0000-0000-400000000003"), "text")),
+    },
+    Sample {
+        name: "if-false",
+        text: include_str!("../graphs/if-false.yml"),
+        consumed: Some((uuid!("00000000-0000-0000-0000-500000000004"), "text")),
     },
 ];
 

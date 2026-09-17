@@ -1,0 +1,32 @@
+schema_version: 1
+name: if steers to then
+nodes:
+  - uuid: 00000000-0000-0000-0000-400000000001
+    type_ref: text/words
+    label: lines
+  - uuid: 00000000-0000-0000-0000-400000000002
+    type_ref: utility/if
+    label: router
+    parameters:
+      condition: true
+  - uuid: 00000000-0000-0000-0000-400000000003
+    type_ref: utility/format
+    label: then format
+    parameters:
+      template: "words: {}"
+  - uuid: 00000000-0000-0000-0000-400000000004
+    type_ref: utility/format
+    label: else format
+edges:
+  - from: 00000000-0000-0000-0000-400000000001
+    from_port: out
+    to: 00000000-0000-0000-0000-400000000002
+    to_port: value
+  - from: 00000000-0000-0000-0000-400000000002
+    from_port: then
+    to: 00000000-0000-0000-0000-400000000003
+    to_port: value
+  - from: 00000000-0000-0000-0000-400000000002
+    from_port: else
+    to: 00000000-0000-0000-0000-400000000004
+    to_port: value

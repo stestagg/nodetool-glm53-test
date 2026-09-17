@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 nodetool = { path = "../../crates/nodetool" }
+nodetool-utility = { path = "../../crates/nodetool-utility" }
 plugin-shapes = { path = "../plugins/shapes" }
 plugin-text = { path = "../plugins/text" }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "sync"] }

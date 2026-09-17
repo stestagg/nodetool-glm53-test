@@ -216,6 +216,30 @@ fn compile_errors_end_the_path_printed_and_non_zero() {
 }
 
 #[test]
+fn the_if_true_sample_prints_the_then_branchs_formatted_strings_and_completes() {
+    let (out, err, code) = run(&["if-true"]);
+    assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
+    assert_eq!(err, "", "nothing on the error stream: {err}");
+    assert_eq!(
+        out,
+        "consumed: words: alpha, beta, gamma\nconsumed: words: alpha, beta, gamma\nconsumed: words: alpha, beta, gamma\nconsumed: words: one, one, one\nthe run completed\n",
+        "every routed string reached the then branch's Format, the template substituting at its first placeholder"
+    );
+}
+
+#[test]
+fn the_if_false_sample_prints_the_else_branchs_plain_strings_and_completes() {
+    let (out, err, code) = run(&["if-false"]);
+    assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
+    assert_eq!(err, "", "nothing on the error stream: {err}");
+    assert_eq!(
+        out,
+        "consumed: alpha, beta, gamma\nconsumed: alpha, beta, gamma\nconsumed: alpha, beta, gamma\nconsumed: one, one, one\nthe run completed\n",
+        "the same graph steered to the else branch, the empty template leaving the plain string form"
+    );
+}
+
+#[test]
 fn an_unknown_sample_is_refused() {
     let (_, err, code) = run(&["no-such-sample"]);
     assert_eq!(code, Some(2), "the unknown sample refused: {err}");
