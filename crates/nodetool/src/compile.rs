@@ -191,6 +191,10 @@ pub fn compile(
             *uuid,
             CompiledNode {
                 node_type,
+                label: instance
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| node_type.label.to_owned()),
                 parameters,
             },
         );
@@ -224,6 +228,9 @@ pub struct CompiledGraph {
 pub struct CompiledNode {
     /// The node type this instance instantiates.
     pub node_type: &'static NodeType,
+    /// What a run names the node by: the label the definition gave the
+    /// instance, or the type's default label when it gave none.
+    pub label: String,
     /// Values fixed for input ports as literals, by port name, each type
     /// resolved — and already converted where a declared conversion bridged.
     pub parameters: BTreeMap<&'static str, CompiledParameter>,

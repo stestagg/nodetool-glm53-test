@@ -20,11 +20,13 @@ scalar data types.
   rustdoc is the format's spec), the compiler that turns a graph definition
   into a compiled, executable graph (`nodetool::compile`), the node
   authoring API and the stream semantics behaviour programs against
-  (`nodetool::behaviour`; its rustdoc is the semantics' spec), the runtime
-  value (`nodetool::Value`), and the registry.
-- `crates/nodetool/tests/plugins` — plugin crates that exist for the registry
-  and compiler tests (`alpha` is sub-grouped, `beta` is flat, `gamma`
-  supplies the compiler tests' node types).
+  (`nodetool::behaviour`; its rustdoc is the semantics' spec), the engine
+  that runs a compiled graph as live, streaming execution
+  (`nodetool::engine`; its rustdoc is the run lifecycle's spec), the
+  runtime value (`nodetool::Value`), and the registry.
+- `crates/nodetool/tests/plugins` — plugin crates that exist for the tests
+  (`alpha` is sub-grouped, `beta` is flat, `gamma` supplies the compiler
+  tests' node types, `delta` supplies the engine tests' node types).
 - `examples/plugins` — small example plugin crates (`shapes` is sub-grouped,
   `text` is flat).
 - `examples/list-nodes` — demo binary linked against both example plugins;
@@ -45,6 +47,16 @@ scalar data types.
   authoring API — with two scripted input streams, one of them a single
   value that completes, printing the arrival that fired each run, each
   emitted value as it arrives, and the node's completion.
+- `examples/run-graph` — demo binary linked against both example plugins;
+  the headless path from a terminal. It loads one of the sample graph
+  files in `examples/run-graph/graphs/`, compiles it, and runs it with a
+  consumer attached to a node's output as one more downstream, printing
+  each value as it arrives and then the run's outcome. The `pipeline`
+  sample completes; the `failing` sample carries a node whose behaviour
+  errors mid-run, so the remaining output stops arriving and the error —
+  naming the node — is the last word before a non-zero exit; the `broken`
+  and `uncompilable` samples show a load error and compile errors ending
+  the path, printed, with a non-zero exit.
 
 ## Build and check
 
@@ -63,6 +75,15 @@ cargo run -p list-nodes-empty  # the same listing, no plugin linked
 cargo run -p load-graph        # load a graph file, print it, show the round trip
 cargo run -p compile-graph     # compile each sample graph file, print the result
 cargo run -p run-node          # drive one behaviour-ful node with scripted streams
+cargo run -p run-graph         # run the pipeline sample headless, values as they arrive
+```
+
+The run-graph samples beyond the default select the demonstration:
+
+```sh
+cargo run -p run-graph failing      # fail-fast: the output stops arriving, the error names the node, exit 1
+cargo run -p run-graph broken       # a load error ends the path, printed, exit 1
+cargo run -p run-graph uncompilable # compile errors end the path, printed, exit 1
 ```
 
 ## Writing a plugin

@@ -66,7 +66,7 @@ async fn main() {
             Input::new("separator", separator_rx),
         ];
         let mut outputs = [Output::new("parts")];
-        outputs[0].connect(parts_tx);
+        outputs[0].connect(parts_tx, None);
         drive(&mut behaviour, &mut inputs, &mut outputs).await
     });
 

@@ -37,11 +37,14 @@
 //!   arrived value has been processed; its logic may complete earlier by
 //!   returning [`Flow::Complete`]. On completion the node's outputs end, so
 //!   completion propagates downstream. An input nothing feeds — unconnected
-//!   or, later, fixed by a parameter — completes at once and never delivers
-//!   a value, so a node holding one never fires; if its inputs are all like
-//!   that it completes immediately, and if any other input is connected the
-//!   node neither fires nor completes: the run hangs, the fed input's
-//!   hand-off filling until its upstream stalls.
+//!   — is the degenerate stream: it completes at once and never delivers a
+//!   value, so a node holding one never fires. An input fixed by a
+//!   parameter is instead fed a stream that yields once and completes: its
+//!   arrival fires the node like any arrival, and the held value pairs
+//!   against every later arrival. If every input is degenerate the node
+//!   completes immediately, and if any other input is connected the node
+//!   neither fires nor completes: the run hangs, the fed input's hand-off
+//!   filling until its upstream stalls.
 //! * **Backpressure.** A value crosses from an emitting node to each
 //!   connected downstream input through a bounded hand-off
 //!   ([`HANDOFF_CAPACITY`], one fixed policy, no author-facing knobs):
@@ -66,7 +69,7 @@ use std::task::Poll;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use crate::Value;
+use crate::{ConvertFn, Value};
 
 /// The fixed capacity of the bounded hand-off between an emitting node and
 /// each downstream input: one policy for every connection, so memory stays
@@ -176,10 +179,12 @@ impl Input {
 }
 
 /// One live output of a running node: an emission is delivered to every
-/// connected downstream input.
+/// connected downstream input. A downstream whose connection rides a
+/// declared conversion receives the converted value — the conversion is
+/// wiring, applied as the value crosses, never the behaviour's concern.
 pub struct Output {
     name: &'static str,
-    senders: Vec<mpsc::Sender<Value>>,
+    senders: Vec<(mpsc::Sender<Value>, Option<ConvertFn>)>,
 }
 
 impl Output {
@@ -192,18 +197,29 @@ impl Output {
     }
 
     /// Wire one downstream input to this output: from here on, every
-    /// emission reaches it.
-    pub fn connect(&mut self, sender: mpsc::Sender<Value>) {
-        self.senders.push(sender);
+    /// emission reaches it, converted first when the connection rides a
+    /// declared conversion.
+    pub fn connect(&mut self, sender: mpsc::Sender<Value>, convert: Option<ConvertFn>) {
+        self.senders.push((sender, convert));
     }
 
     /// Emit a value: delivered to every connected downstream input, waiting
     /// on each while its hand-off is full. A downstream that has ended —
     /// its input gone — receives nothing more: the delivery is skipped,
-    /// which is that stream ending, not an error.
+    /// which is that stream ending, not an error. A conversion that refuses
+    /// a value (`None`) ends the run, reported with the node and port.
     pub async fn emit(&mut self, value: Value) {
-        for sender in &mut self.senders {
-            let _ = sender.send(value.clone()).await;
+        for (sender, convert) in &mut self.senders {
+            let value = match convert {
+                Some(convert) => convert(&value).unwrap_or_else(|| {
+                    panic!(
+                        "the conversion declared on output `{}` does not take this value",
+                        self.name
+                    )
+                }),
+                None => value.clone(),
+            };
+            let _ = sender.send(value).await;
         }
     }
 

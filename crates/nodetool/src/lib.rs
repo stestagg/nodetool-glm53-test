@@ -2,8 +2,9 @@
 //! types, the registry that gathers node type and data type declarations
 //! from every crate linked into the binary, the versioned YAML graph
 //! file format ([`graph`]), the compiler that turns a definition into a
-//! runnable graph ([`compile`]), and the node authoring API with the stream
-//! semantics behaviour programs against ([`behaviour`]).
+//! runnable graph ([`compile`]), the node authoring API with the stream
+//! semantics behaviour programs against ([`behaviour`]), and the engine
+//! that runs a compiled graph as live, streaming execution ([`engine`]).
 //!
 //! Core knows what a node type *is* — a stable type reference, a label, an
 //! icon, a grouping, typed ports, and the behaviour each instance runs —
@@ -32,6 +33,7 @@ pub use uuid::{uuid, Uuid};
 pub mod behaviour;
 pub mod compile;
 mod data_type;
+pub mod engine;
 pub mod graph;
 mod node_type;
 pub mod registry;
