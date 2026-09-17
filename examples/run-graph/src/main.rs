@@ -5,11 +5,9 @@
 //! to load or compile ends the path the same way, printed, with a non-zero
 //! exit.
 //!
-//! The `observe` flag asks for the engine's event timeline beside the
-//! values: the core printing observer, subscribed to the run, prints one
-//! line per event — run started, each node's start, each value emitted,
-//! each node's completion or failure, the run finished. The run itself is
-//! the same run either way; the flag changes only who is watching.
+//! The `observe` flag subscribes the core printing observer: one line
+//! per event, beside the values. The run itself is the same run either
+//! way; the flag changes only who is watching.
 //!
 //! One of the built-in sample graphs names the run: `pipeline` (the
 //! default), `failing`, `broken`, or `uncompilable`; the flag follows the
@@ -66,9 +64,7 @@ const SAMPLES: &[Sample] = &[
 /// The demo's listener when the timeline is asked for: the core printing
 /// observer composed — the way an embedder composes several listeners
 /// behind one observer — with a signal the demo waits on once the
-/// timeline's last event, run finished, has been printed. The engine hands
-/// events over and moves on, so the flush is the listener side's own
-/// composition, never the run's business.
+/// timeline's last event, run finished, has been printed.
 struct Timeline {
     printed: PrintingObserver,
     printed_all: Arc<Notify>,
@@ -87,18 +83,23 @@ impl Observer for Timeline {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::process::ExitCode {
-    let mut words = std::env::args().skip(1);
-    let (asked, observed) = match (words.next(), words.next()) {
-        (None, _) => ("pipeline".to_owned(), false),
-        (Some(flag), None) if flag == "observe" => ("pipeline".to_owned(), true),
-        (Some(name), flag) => match flag {
-            None => (name, false),
-            Some(extra) if extra == "observe" => (name, true),
-            Some(extra) => {
-                eprintln!("no flag named {extra:?}; the only flag is `observe`");
-                return std::process::ExitCode::from(2);
+    let mut words = std::env::args().skip(1).peekable();
+    let (asked, observed) = match words.next() {
+        None => ("pipeline".to_owned(), false),
+        // `observe` alone: the default sample, watched.
+        Some(word) if word == "observe" && words.peek().is_none() => ("pipeline".to_owned(), true),
+        Some(name) => {
+            let mut observed = false;
+            for word in words {
+                if word == "observe" && !observed {
+                    observed = true;
+                } else {
+                    eprintln!("no flag named {word:?}; the only flag is `observe`");
+                    return std::process::ExitCode::from(2);
+                }
             }
-        },
+            (name, observed)
+        }
     };
     let Some(sample) = SAMPLES.iter().find(|sample| sample.name == asked) else {
         let names = SAMPLES
@@ -134,7 +135,7 @@ async fn main() -> std::process::ExitCode {
     run.consume(consumed, port, |mut parts| async move {
         while let Some(value) = parts.recv().await {
             println!(
-                "emitted {}",
+                "consumed: {}",
                 value
                     .get::<String>()
                     .expect("the consumed port is declared String")
@@ -165,7 +166,7 @@ async fn main() -> std::process::ExitCode {
             std::process::ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("the run failed: {error}");
+            eprintln!("the run ended in failure: {error}");
             std::process::ExitCode::FAILURE
         }
     }

@@ -52,16 +52,13 @@ scalar data types.
   the headless path from a terminal. It loads one of the sample graph
   files in `examples/run-graph/graphs/`, compiles it, and runs it with a
   consumer attached to a node's output as one more downstream, printing
-  each value as it arrives and then the run's outcome. The `observe` flag
-  subscribes the core printing observer, so the engine's event timeline —
-  run started, each node's start, each value emitted, each node's
-  completion or failure, the run finished — prints beside the values; the
-  run itself is the same run either way. The `pipeline` sample completes;
-  the `failing` sample carries a node whose behaviour errors mid-run, so
-  the remaining output stops arriving and the error — naming the node —
-  is the last word before a non-zero exit; the `broken` and
-  `uncompilable` samples show a load error and compile errors ending the
-  path, printed, with a non-zero exit.
+  each value as it arrives and then the run's outcome; the `observe`
+  flag adds the engine's event timeline beside them. The `pipeline`
+  sample completes; the `failing` sample carries a node whose behaviour
+  errors mid-run, so the remaining output stops arriving and the error —
+  naming the node — is the last word before a non-zero exit; the
+  `broken` and `uncompilable` samples show a load error and compile
+  errors ending the path, printed, with a non-zero exit.
 
 ## Build and check
 
@@ -97,7 +94,7 @@ itself is the same either way:
 
 ```sh
 cargo run -p run-graph observe           # the pipeline's event timeline beside the values
-cargo run -p run-graph failing observe   # the fail-fast story told line by line, then the same error, exit 1
+cargo run -p run-graph failing observe   # the failing run told line by line, then the same error, exit 1
 ```
 
 ## Writing a plugin

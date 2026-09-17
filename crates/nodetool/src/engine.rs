@@ -106,11 +106,9 @@ impl<'g> Run<'g> {
         }
     }
 
-    /// Subscribe the run's events observer: the engine tells it each event
-    /// as the run unfolds — diagnostics beside the data path, never a
-    /// second path for the run's product. A run with no observer, the
-    /// default, tells nothing and runs exactly as it would without one.
-    /// An embedder wanting several listeners composes them behind one
+    /// Subscribe the run's events observer. A run with no observer — the
+    /// default — tells nothing and runs exactly as it would without one;
+    /// an embedder wanting several listeners composes them behind one
     /// observer. Subscribing is for building: past [`Run::start`] the
     /// wiring is fixed.
     pub fn observe(&mut self, observer: Arc<dyn Observer>) {
@@ -157,7 +155,9 @@ impl<'g> Run<'g> {
     /// `Err` is the first error surfaced, with the remaining work stopped.
     /// A subscribed observer is told each event as the run unfolds; the
     /// telling never waits on it, and the run ends the same way whether it
-    /// listens or not.
+    /// listens or not. A subscribed stream always opens and closes: even a
+    /// run refused before it starts is told run started, then run finished
+    /// failed with the refusal.
     pub async fn start(self) -> Result<(), behaviour::Error> {
         let Run {
             graph,
@@ -166,26 +166,9 @@ impl<'g> Run<'g> {
         } = self;
         let mut set = JoinSet::new();
 
-        // Nothing runs a behaviour-less node: its type declared no behaviour
-        // to build. Said before anything is wired, so the run never starts
-        // half-wired — and before the observer is told anything, for a run
-        // refused here never started.
-        for (uuid, node) in &graph.nodes {
-            if node.node_type.behaviour.is_none() {
-                return Err(format!(
-                    "node {} ({uuid}) instantiates `{}`, which declares no behaviour to run",
-                    node.label, node.node_type.type_ref
-                )
-                .into());
-            }
-        }
-
-        // The observer rides beside the data path: events are handed to an
-        // unbounded queue — never blocking the emission path — and one
-        // task delivers them, at the observer's own pace. The run never
-        // waits on that task, so a slow or stalled observer grows the
-        // queue, a dead one ends the deliveries, and neither touches the
-        // run's values, timing, or completion.
+        // The events ride an unbounded queue to one delivering task: a send
+        // never blocks the emission path, and the delivery runs at the
+        // observer's own pace — the run never waits on it.
         let events = observer.map(|observer| {
             let (events, queue) = unbounded_channel();
             tokio::spawn(deliver(observer, queue));
@@ -193,6 +176,22 @@ impl<'g> Run<'g> {
         });
         if let Some(events) = &events {
             let _ = events.send(Event::RunStarted);
+        }
+
+        // Nothing runs a behaviour-less node: its type declared no behaviour
+        // to build. Refused here, before anything is wired, so the run never
+        // starts half-wired — and the refusal ends the run as any error
+        // does, closing the stream the run started opened.
+        for (uuid, node) in &graph.nodes {
+            if node.node_type.behaviour.is_none() {
+                let error: behaviour::Error = format!(
+                    "node {} ({uuid}) instantiates `{}`, which declares no behaviour to run",
+                    node.label, node.node_type.type_ref
+                )
+                .into();
+                run_finished(&events, RunOutcome::Failed(error.to_string()));
+                return Err(error);
+            }
         }
 
         // Each connection rides one bounded hand-off: the sender the
@@ -306,31 +305,18 @@ impl<'g> Run<'g> {
                 Ok(Err(error)) => {
                     set.abort_all();
                     let report = error.to_string();
-                    if let Some(events) = &events {
-                        let _ = events.send(Event::RunFinished {
-                            outcome: RunOutcome::Failed(report),
-                        });
-                    }
+                    run_finished(&events, RunOutcome::Failed(report));
                     return Err(error);
                 }
                 Err(join_error) => {
                     set.abort_all();
                     let lost = lost_run_task(join_error);
-                    let report = lost.to_string();
-                    if let Some(events) = &events {
-                        let _ = events.send(Event::RunFinished {
-                            outcome: RunOutcome::Failed(report),
-                        });
-                    }
+                    run_finished(&events, RunOutcome::Failed(lost.to_string()));
                     return Err(lost);
                 }
             }
         }
-        if let Some(events) = &events {
-            let _ = events.send(Event::RunFinished {
-                outcome: RunOutcome::Complete,
-            });
-        }
+        run_finished(&events, RunOutcome::Complete);
         Ok(())
     }
 }
@@ -338,9 +324,7 @@ impl<'g> Run<'g> {
 /// One node's execution: its behaviour driven over its live ports, per the
 /// stream semantics. Every error it can end on — a behaviour's or a panic
 /// caught here, where the node is known — is told the same way: naming the
-/// node instance, its label and uuid, and what went wrong. The observer is
-/// told the node's transitions — started, then completed or failed with
-/// what went wrong — beside the run path, handed over and never waited on.
+/// node instance, its label and uuid, and what went wrong.
 async fn run_node(
     uuid: Uuid,
     label: String,
@@ -392,13 +376,19 @@ async fn parameter_stream(value: Value, sender: Sender<Value>) -> Result<(), beh
 }
 
 /// Deliver the run's events to its observer, one at a time in the order
-/// the run handed them over. This task runs at the observer's own pace:
-/// the run never waits on it, so a slow or stalled observer grows the
-/// queue and a dead one — a callback that panicked — ends the deliveries,
-/// while the run flows on untouched.
+/// the run handed them over, at the observer's own pace. The task ends
+/// when the run's event queue ends.
 async fn deliver(observer: Arc<dyn Observer>, mut events: UnboundedReceiver<Event>) {
     while let Some(event) = events.recv().await {
         observer.observe(event).await;
+    }
+}
+
+/// The run's last event: its outcome, sent once the run's end is known,
+/// after every node's last event.
+fn run_finished(events: &Option<UnboundedSender<Event>>, outcome: RunOutcome) {
+    if let Some(events) = events {
+        let _ = events.send(Event::RunFinished { outcome });
     }
 }
 
@@ -464,11 +454,8 @@ fn lost_run_task(join_error: JoinError) -> behaviour::Error {
 }
 
 /// The run's voice: what an attached observer is told as the run unfolds.
-/// One event model, carried by one observer trait — the engine notifies
-/// it and neither knows nor cares who listens. Every event names what it
-/// is about: the run, or the node instance and port. A node's status is
-/// derivable from these events alone; there is no second event or status
-/// mechanism beside them.
+/// Every event names its subject — the run, or the node instance and
+/// port — and a node's status is derivable from these events alone.
 #[derive(Debug)]
 pub enum Event {
     /// The run is beginning: nothing has started yet.
@@ -489,14 +476,10 @@ pub enum Event {
     /// on, in the node's own words.
     NodeFailed { node: Node, error: String },
     /// The run is over: every node complete, or ended by that one error.
-    /// A failed run-finished closes every started node that reported
-    /// neither completed nor failed — the abandoned work fail-fast
-    /// leaves — as stopped.
     RunFinished { outcome: RunOutcome },
 }
 
-/// The run's outcome, as run finished tells it. Another way a run ends —
-/// a later story's — extends this, never a second event model.
+/// The run's outcome, as run finished tells it.
 #[derive(Debug)]
 pub enum RunOutcome {
     /// Every node completed; every consumed stream ended.
@@ -598,22 +581,19 @@ impl Observer for PrintingObserver {
 /// declared name — rendering a plugin's custom type is that plugin's
 /// business, not core's.
 fn rendered(value: &Value) -> String {
-    let rendered = value
-        .get::<String>()
-        .map(|text| format!("{text:?}"))
-        .or_else(|| value.get::<bool>().map(|v| v.to_string()))
-        .or_else(|| value.get::<i8>().map(|v| v.to_string()))
-        .or_else(|| value.get::<i16>().map(|v| v.to_string()))
-        .or_else(|| value.get::<i32>().map(|v| v.to_string()))
-        .or_else(|| value.get::<i64>().map(|v| v.to_string()))
-        .or_else(|| value.get::<u8>().map(|v| v.to_string()))
-        .or_else(|| value.get::<u16>().map(|v| v.to_string()))
-        .or_else(|| value.get::<u32>().map(|v| v.to_string()))
-        .or_else(|| value.get::<u64>().map(|v| v.to_string()))
-        .or_else(|| value.get::<f32>().map(|v| v.to_string()))
-        .or_else(|| value.get::<f64>().map(|v| v.to_string()));
-    rendered.unwrap_or_else(|| match crate::registry::data_type_by_id(value.type_id()) {
+    if let Some(text) = value.get::<String>() {
+        return format!("{text:?}");
+    }
+    macro_rules! scalars {
+        ($($ty:ty),* $(,)?) => {$(
+            if let Some(rendered) = value.get::<$ty>().map(|v| v.to_string()) {
+                return rendered;
+            }
+        )*};
+    }
+    scalars!(bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64);
+    match crate::registry::data_type_by_id(value.type_id()) {
         Some(data_type) => format!("a {} value", data_type.name),
         None => format!("a value of id {}", value.type_id()),
-    })
+    }
 }

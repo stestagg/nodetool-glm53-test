@@ -4,7 +4,7 @@
 //! can print — and the error naming the node is the last word before a
 //! non-zero exit; a load error and compile errors each end the path
 //! printed and non-zero. The `observe` flag asks for the engine's event
-//! timeline beside the values: the same run, its story told line by line.
+//! timeline beside the values: the same run, told line by line.
 
 use std::io::Read;
 use std::process::{Command, Stdio};
@@ -59,7 +59,7 @@ fn the_pipeline_sample_prints_its_values_as_they_arrive_and_completes() {
     assert_eq!(err, "", "nothing on the error stream: {err}");
     assert_eq!(
         out,
-        "emitted alpha\nemitted beta\nemitted gamma\nemitted one\nemitted one\nemitted one\nthe run completed\n",
+        "consumed: alpha\nconsumed: beta\nconsumed: gamma\nconsumed: one\nconsumed: one\nconsumed: one\nthe run completed\n",
         "each value printed as it arrived, the completion last"
     );
 }
@@ -100,10 +100,10 @@ fn the_observed_pipeline_tells_the_timeline_and_the_same_values() {
         );
     }
     for consumed in [
-        "emitted alpha",
-        "emitted beta",
-        "emitted gamma",
-        "emitted one",
+        "consumed: alpha",
+        "consumed: beta",
+        "consumed: gamma",
+        "consumed: one",
     ] {
         assert!(
             lines.contains(&consumed),
@@ -117,18 +117,21 @@ fn the_failing_sample_exits_non_zero_with_the_error_naming_the_node() {
     let (out, err, code) = run(&["failing"]);
     assert_ne!(code, Some(0), "the failed run exits non-zero: {out}\n{err}");
     assert!(
-        out.contains("emitted alpha\n"),
+        out.contains("consumed: alpha\n"),
         "values flowed before the failure: {out}"
     );
     assert!(
-        !out.contains("emitted one\n"),
+        !out.contains("consumed: one\n"),
         "the guard rejected the second line's first value, so none of its values passed: {out}"
     );
     assert!(
-        !out.contains("emitted delta\n"),
+        !out.contains("consumed: delta\n"),
         "the third line was still pending when the run ended and never arrived: {out}"
     );
-    assert!(err.contains("the run failed"), "the failure is told: {err}");
+    assert!(
+        err.contains("the run ended in failure"),
+        "the failure is told: {err}"
+    );
     assert!(err.contains("the guard"), "the node's label named: {err}");
     assert!(
         err.contains("00000000-0000-0000-0000-200000000003"),
@@ -149,8 +152,8 @@ fn the_observed_failing_sample_tells_the_failure_in_the_timeline_and_fails_alike
         "the observer changes nothing about the run's end: {timeline}\n{err}"
     );
     assert!(
-        err.contains("the run failed: node the guard"),
-        "story as ever: the run's own report on the error stream: {err}"
+        err.contains("the run ended in failure: node the guard"),
+        "as ever: the run's own report on the error stream: {err}"
     );
     let lines = timeline.lines().collect::<Vec<_>>();
     for told in [

@@ -1,14 +1,14 @@
 //! The engine's events observer: one event model told as the run unfolds,
 //! beside the data path. What each event carries, the order they tell a
 //! small run in, the failing run's error and its closure of the abandoned
-//! work as stopped, and runs that never notice their observer — stalled,
-//! stopped mid-run, panicking, or absent: the run's values and completion
-//! are untouched, identical to a run with no observer.
+//! work as stopped, the refused run's stream opening and closing with the
+//! refusal as its failed end, and runs that never notice their observer —
+//! stalled, stopped mid-run, panicking, or absent: the run's values and
+//! completion are untouched, identical to a run with no observer.
 
 use std::collections::BTreeMap;
 use std::future::pending;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 
@@ -24,6 +24,7 @@ use uuid::Uuid;
 const COUNTER: &str = "00000000-0000-0000-0000-0000000000d1";
 const DOUBLER_1: &str = "00000000-0000-0000-0000-0000000000d3";
 const FAILER: &str = "00000000-0000-0000-0000-0000000000d5";
+const NO_BEHAVIOUR: &str = "00000000-0000-0000-0000-0000000000d9";
 
 fn node(uuid: &str, type_ref: &str) -> NodeInstance {
     NodeInstance {
@@ -111,6 +112,21 @@ async fn drained<T>(mut received: mpsc::UnboundedReceiver<T>) -> Vec<T> {
     values
 }
 
+/// Reads a timeline up to and including run finished — the run's last
+/// event, sent last, delivered in order — so the timeline is complete
+/// once read.
+async fn until_finished(mut timeline: mpsc::UnboundedReceiver<Event>) -> Vec<Event> {
+    let mut events = Vec::new();
+    while let Some(event) = timeline.recv().await {
+        let finished = matches!(event, Event::RunFinished { .. });
+        events.push(event);
+        if finished {
+            break;
+        }
+    }
+    events
+}
+
 /// Runs the compiled graph to completion with one consumer on the node's
 /// output, and returns the values that consumer received.
 async fn full_stream(compiled: &CompiledGraph, node: &str, port: &'static str) -> Vec<i32> {
@@ -133,28 +149,18 @@ impl Observer for Forwarding {
 
 /// Runs the compiled graph to completion with a forwarding observer and a
 /// consumer on the node's output, and returns every event in delivery
-/// order and every value the consumer received. The events are read up to
-/// run finished — the run's last event, sent last, delivered in order — so
-/// the timeline is complete once it has been read.
+/// order and every value the consumer received.
 async fn observed(
     compiled: &'static CompiledGraph,
     node: &str,
     port: &'static str,
 ) -> (Vec<Event>, Vec<i32>) {
-    let (forward, mut timeline) = mpsc::unbounded_channel();
+    let (forward, timeline) = mpsc::unbounded_channel();
     let mut run = Run::new(compiled);
     let received = forwarded(&mut run, node.parse().unwrap(), port);
     run.observe(Arc::new(Forwarding(forward)));
     run.start().await.expect("the run completes");
-    let mut events = Vec::new();
-    while let Some(event) = timeline.recv().await {
-        let finished = matches!(event, Event::RunFinished { .. });
-        events.push(event);
-        if finished {
-            break;
-        }
-    }
-    (events, drained(received).await)
+    (until_finished(timeline).await, drained(received).await)
 }
 
 /// One node's own events, told in order, as the labels a test reads.
@@ -327,7 +333,7 @@ async fn a_failing_run_tells_the_error_and_closes_the_abandoned_work_as_stopped(
             edge(COUNTER, "out", DOUBLER_1, "value"),
         ],
     );
-    let (forward, mut timeline) = mpsc::unbounded_channel();
+    let (forward, timeline) = mpsc::unbounded_channel();
     let mut run = Run::new(compiled);
     // Work unrelated to the failure, parked forever: fail-fast ends the
     // run with it started but undelivered, where waiting for it would
@@ -335,15 +341,7 @@ async fn a_failing_run_tells_the_error_and_closes_the_abandoned_work_as_stopped(
     parked(&mut run, DOUBLER_1.parse().unwrap(), "value");
     run.observe(Arc::new(Forwarding(forward)));
     let error = run.start().await.expect_err("the guard ends the run");
-
-    let mut events = Vec::new();
-    while let Some(event) = timeline.recv().await {
-        let finished = matches!(event, Event::RunFinished { .. });
-        events.push(event);
-        if finished {
-            break;
-        }
-    }
+    let events = until_finished(timeline).await;
     let statuses = derived_statuses(&events);
     let failer: Uuid = FAILER.parse().unwrap();
 
@@ -392,90 +390,121 @@ async fn a_failing_run_tells_the_error_and_closes_the_abandoned_work_as_stopped(
     );
 }
 
-/// An observer that never comes back from its first event: its delivery
-/// stalls forever, and the run must not care.
-struct Stalled;
-
-#[async_trait]
-impl Observer for Stalled {
-    async fn observe(&self, _event: Event) {
-        pending::<()>().await;
-    }
-}
-
 #[tokio::test]
-async fn an_observer_that_blocks_forever_leaves_the_run_untouched() {
-    let (nodes, edges) = counter_to_doubler();
-    let compiled = compiled(nodes, edges);
+async fn a_run_refused_before_it_starts_still_opens_and_closes_the_stream() {
+    let (forward, timeline) = mpsc::unbounded_channel();
+    let compiled = compiled(vec![node(NO_BEHAVIOUR, "gamma/passthrough")], vec![]);
     let mut run = Run::new(compiled);
-    let received = forwarded(&mut run, DOUBLER_1.parse().unwrap(), "value");
-    run.observe(Arc::new(Stalled));
-
-    run.start()
+    run.observe(Arc::new(Forwarding(forward)));
+    let error = run
+        .start()
         .await
-        .expect("the run completes although its observer is stalled forever");
-    assert_eq!(
-        drained(received).await,
-        doubled_values(),
-        "the run's values, timing, and completion are as they would be with no observer"
+        .expect_err("nothing runs a behaviour-less node");
+
+    let events = until_finished(timeline).await;
+    assert!(
+        matches!(events.first(), Some(Event::RunStarted)),
+        "the stream opens with the run's start: {events:?}"
     );
-}
-
-/// An observer that stops mid-run: after a few told events it no longer
-/// reacts to any of them.
-struct Stops(AtomicUsize);
-
-#[async_trait]
-impl Observer for Stops {
-    async fn observe(&self, _event: Event) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-#[tokio::test]
-async fn an_observer_that_stops_mid_run_leaves_the_run_untouched() {
-    let (nodes, edges) = counter_to_doubler();
-    let compiled = compiled(nodes, edges);
-    let mut run = Run::new(compiled);
-    let received = forwarded(&mut run, DOUBLER_1.parse().unwrap(), "value");
-    run.observe(Arc::new(Stops(AtomicUsize::new(3))));
-
-    run.start()
-        .await
-        .expect("the run completes although its observer stopped listening");
+    let Some(Event::RunFinished {
+        outcome: RunOutcome::Failed(report),
+    }) = events.last()
+    else {
+        panic!("the refused run's stream closes with its failed end: {events:?}");
+    };
     assert_eq!(
-        drained(received).await,
-        doubled_values(),
-        "the run's values, timing, and completion are as they would be with no observer"
+        report,
+        &error.to_string(),
+        "the failed end carries the refusal the run itself returns"
     );
+    assert_eq!(events.len(), 2, "started, then failed: {events:?}");
 }
 
-/// An observer whose callback panics: its delivery dies on it, and the
-/// run must not notice.
-struct Panics;
+/// The ways an observer falls away without the run ever noticing: its
+/// delivery stalls forever on the first event; it stops reacting after
+/// its first few — the events it forwarded before stopping are the stop,
+/// made observable to the test; or its callback panics, killing the
+/// delivery.
+enum Fallen {
+    Stalled,
+    Stops {
+        forward: mpsc::UnboundedSender<Event>,
+        left: Mutex<usize>,
+    },
+    Panics,
+}
 
 #[async_trait]
-impl Observer for Panics {
-    async fn observe(&self, _event: Event) {
-        panic!("the observer is broken");
+impl Observer for Fallen {
+    async fn observe(&self, event: Event) {
+        match self {
+            Fallen::Stalled => pending::<()>().await,
+            Fallen::Stops { forward, left } => {
+                let mut left = left.lock().unwrap();
+                if *left > 0 {
+                    *left -= 1;
+                    let _ = forward.send(event);
+                }
+            }
+            Fallen::Panics => panic!("the observer is broken"),
+        }
     }
 }
 
-#[tokio::test]
-async fn an_observer_whose_callback_panics_leaves_the_run_untouched() {
-    let (nodes, edges) = counter_to_doubler();
-    let compiled = compiled(nodes, edges);
+/// Runs the compiled graph with this observer and the usual forwarded
+/// consumer, and returns the values the consumer received.
+async fn run_with_observer(
+    compiled: &'static CompiledGraph,
+    observer: Arc<dyn Observer>,
+) -> Vec<i32> {
     let mut run = Run::new(compiled);
     let received = forwarded(&mut run, DOUBLER_1.parse().unwrap(), "value");
-    run.observe(Arc::new(Panics));
+    run.observe(observer);
+    run.start().await.expect("the run completes");
+    drained(received).await
+}
 
-    run.start()
-        .await
-        .expect("the run completes although its observer's callback panicked");
+#[tokio::test]
+async fn an_observer_that_falls_away_mid_run_leaves_the_run_untouched() {
+    let (nodes, edges) = counter_to_doubler();
+    let compiled = compiled(nodes, edges);
+
+    // Stalled: the delivery never comes back from its first event, and
+    // the run flows on untouched.
     assert_eq!(
-        drained(received).await,
+        run_with_observer(compiled, Arc::new(Fallen::Stalled)).await,
         doubled_values(),
-        "the run's values, timing, and completion are as they would be with no observer"
+        "stalled, the run's values, timing, and completion are as with no observer"
+    );
+
+    // Stopped mid-run: it forwards its first three events, then stops
+    // reacting to every event still arriving. The forwarded stream ending
+    // is the stop, observable to the test, never to the engine.
+    let (forward, stopped_at) = mpsc::unbounded_channel();
+    assert_eq!(
+        run_with_observer(
+            compiled,
+            Arc::new(Fallen::Stops {
+                forward,
+                left: Mutex::new(3),
+            }),
+        )
+        .await,
+        doubled_values(),
+        "stopped, the run's values, timing, and completion are as with no observer"
+    );
+    assert_eq!(
+        drained(stopped_at).await.len(),
+        3,
+        "the observer stopped reacting after its first few events"
+    );
+
+    // Panicking: the callback's panic kills the delivery, and the run
+    // neither notices nor cares.
+    assert_eq!(
+        run_with_observer(compiled, Arc::new(Fallen::Panics)).await,
+        doubled_values(),
+        "panicking, the run's values, timing, and completion are as with no observer"
     );
 }
 

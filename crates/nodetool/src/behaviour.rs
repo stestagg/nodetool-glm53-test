@@ -206,9 +206,14 @@ impl Output {
     }
 
     /// Install the emission watcher beside this output's deliveries —
-    /// wiring an engine installs, never a behaviour's concern: from here
-    /// on, each emission is handed to `watch` and moves on.
+    /// wiring an engine installs, never a behaviour's concern. There is
+    /// one watcher per output: installing a second is a bug — it would
+    /// silently replace the installed wiring — so it panics.
     pub fn watch_emissions(&mut self, watch: EmissionWatch) {
+        assert!(
+            self.watch.is_none(),
+            "this output already has an emission watcher; replacing installed wiring is a bug"
+        );
         self.watch = Some(watch);
     }
 
