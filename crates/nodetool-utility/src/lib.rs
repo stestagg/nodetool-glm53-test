@@ -62,7 +62,7 @@ impl Behaviour for If {
     }
 }
 
-fn if_behaviour() -> Box<dyn Behaviour> {
+fn if_behaviour(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(If)
 }
 
@@ -105,7 +105,7 @@ impl Behaviour for Format {
     }
 }
 
-fn format_behaviour() -> Box<dyn Behaviour> {
+fn format_behaviour(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Format)
 }
 

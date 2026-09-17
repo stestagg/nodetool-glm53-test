@@ -51,9 +51,17 @@ async fn main() {
         node_type.type_ref
     );
     let mut behaviour = Attributed {
-        inner: (node_type
-            .behaviour
-            .expect("text/split is declared through the authoring API"))(),
+        inner: {
+            let compiled = nodetool::compile::CompiledNode {
+                node_type,
+                label: node_type.label.to_owned(),
+                parameters: Default::default(),
+                families: Default::default(),
+            };
+            (node_type
+                .behaviour
+                .expect("text/split is declared through the authoring API"))(&compiled)
+        },
     };
 
     let (text_tx, text_rx) = handoff();

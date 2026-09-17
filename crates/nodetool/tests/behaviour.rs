@@ -742,9 +742,15 @@ async fn a_backlogged_stream_resumes_once_the_gate_opens_and_every_arrival_fires
 #[tokio::test]
 async fn the_registry_hands_the_declared_behaviour_to_the_driver() {
     let node_type = registry::node_type("gamma/doubler").expect("declared by test plugin gamma");
+    let compiled = nodetool::compile::CompiledNode {
+        node_type,
+        label: node_type.label.to_owned(),
+        parameters: Default::default(),
+        families: Default::default(),
+    };
     let mut behaviour = (node_type
         .behaviour
-        .expect("declared through the authoring API"))();
+        .expect("declared through the authoring API"))(&compiled);
 
     let (tx, value) = fed("value");
     let (output, mut out_rx) = collected("value");

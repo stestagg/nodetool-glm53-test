@@ -270,7 +270,7 @@ impl<'g> Run<'g> {
                 }
                 outputs.push(output);
             }
-            let behaviour = (node_type.behaviour.expect("checked before wiring"))();
+            let behaviour = (node_type.behaviour.expect("checked before wiring"))(node);
             let label = node.label.clone();
             set.spawn(run_node(
                 *uuid,

@@ -4,6 +4,7 @@
 use std::fmt;
 
 use crate::behaviour::BehaviourFn;
+use crate::compile::CompiledNode;
 
 /// A node type as a plugin declares it: pure data, identified by its
 /// [`NodeType::type_ref`] — the key by which the registry, graph files, and
@@ -28,6 +29,12 @@ pub struct NodeType {
     /// the declaration. A type declared without one is a descriptor alone:
     /// the compiler accepts it, but nothing runs it.
     pub behaviour: Option<BehaviourFn>,
+    /// Validates the instance's compiled parameters at compile time, when
+    /// the node type can say something about them the type rules cannot —
+    /// a zero step, an inverted range. The compiler consults it after the
+    /// parameters and any port families resolved; every returned line is a
+    /// compile error. A type declared without one has nothing to add.
+    pub check_parameters: Option<ParameterCheck>,
 }
 
 /// One input or output port of a [`NodeType`].
@@ -36,7 +43,18 @@ pub struct Port {
     pub name: &'static str,
     /// The type references this port carries — one or more, as declared.
     pub type_refs: &'static [&'static str],
+    /// The port family this port belongs to, if any: on one node type, the
+    /// ports of one family resolve to a single concrete type at compile
+    /// time, drawn from the members the ports declare. A generic numeric
+    /// node — one descriptor, any scalar — is the shape this serves.
+    pub family: Option<&'static str>,
 }
+
+/// Validates one compiled node instance's parameters, from the plugin that
+/// declared the node type. The compiler consults it after the parameters
+/// and any port families resolved; each returned line is a compile error
+/// the compiler reports naming the node.
+pub type ParameterCheck = fn(&CompiledNode) -> Vec<String>;
 
 inventory::collect! { NodeType }
 
@@ -67,7 +85,9 @@ impl fmt::Display for NodeType {
 /// the_plugin as _;` (see the crate docs).
 ///
 /// ```rust
-/// fn circle_behaviour() -> Box<dyn nodetool::behaviour::Behaviour> {
+/// fn circle_behaviour(_compiled: &nodetool::compile::CompiledNode)
+///     -> Box<dyn nodetool::behaviour::Behaviour>
+/// {
 ///     unimplemented!("the behaviour is the authoring API's business")
 /// }
 ///
@@ -84,10 +104,18 @@ impl fmt::Display for NodeType {
 /// ```
 ///
 /// A port carries one or more declared type references; write them as a single
-/// literal or a bracketed list. The optional `behaviour` arm names a
-/// `fn() -> Box<dyn nodetool::behaviour::Behaviour>` that builds the behaviour
-/// each instance runs — the stream semantics it programs against live in
-/// [`nodetool::behaviour`](crate::behaviour).
+/// literal or a bracketed list. A port may instead declare a *port family*:
+/// `name: ["num", [members...]]` (or `name: ["num", MEMBERS]` for a members
+/// const) — the members as its type references, and the family name marking
+/// the ports that must resolve to one concrete type at compile time (see
+/// [`Port::family`]). The optional `behaviour` arm
+/// names a `fn(&CompiledNode) -> Box<dyn nodetool::behaviour::Behaviour>`
+/// that builds the behaviour each instance runs — the compiled node carries
+/// the instance's resolved port families, so a family-declared node stamps
+/// its behaviour for the resolved type — and the stream semantics it
+/// programs against live in [`nodetool::behaviour`](crate::behaviour). The
+/// optional `check_parameters` arm names a [`ParameterCheck`] the compiler
+/// consults once the instance's parameters and families resolved.
 #[macro_export]
 macro_rules! node_type {
     (
@@ -97,6 +125,7 @@ macro_rules! node_type {
         plugin: $plugin:literal
         $(, sub_group: $sub_group:literal)?
         $(, behaviour: $behaviour:path)?
+        $(, check_parameters: $check:path)?
         ,
         inputs: [ $($input_name:ident : $input_types:tt),* $(,)? ]
         ,
@@ -111,8 +140,9 @@ macro_rules! node_type {
                 plugin: $plugin,
                 sub_group: $crate::node_type!(@sub_group $($sub_group)?),
                 behaviour: $crate::node_type!(@behaviour $($behaviour)?),
-                inputs: $crate::node_type!(@ports $($input_name : $input_types),*),
-                outputs: $crate::node_type!(@ports $($output_name : $output_types),*),
+                check_parameters: $crate::node_type!(@check $($check)?),
+                inputs: &[$($crate::node_type!(@port $input_name : $input_types)),*],
+                outputs: &[$($crate::node_type!(@port $output_name : $output_types)),*],
             }
         }
     };
@@ -120,19 +150,34 @@ macro_rules! node_type {
     (@sub_group) => { None };
     (@behaviour $behaviour:path) => { Some($behaviour) };
     (@behaviour) => { None };
-    (@ports $($name:ident : $types:tt),*) => {
-        &[$(
-            $crate::Port {
-                name: stringify!($name),
-                type_refs: $crate::__port_type_refs!($types),
-            }
-        ),*]
+    (@check $check:path) => { Some($check) };
+    (@check) => { None };
+    (@port $name:ident : [$family:literal, [$($type:literal),+ $(,)?]]) => {
+        $crate::Port {
+            name: stringify!($name),
+            type_refs: &[$($type),*],
+            family: Some($family),
+        }
     };
-}
-
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __port_type_refs {
-    ([$($type_ref:literal),+ $(,)?]) => { &[$($type_ref),*] };
-    ($type_ref:literal) => { &[$type_ref] };
+    (@port $name:ident : [$family:literal, $members:path]) => {
+        $crate::Port {
+            name: stringify!($name),
+            type_refs: $members,
+            family: Some($family),
+        }
+    };
+    (@port $name:ident : [$($type:literal),+ $(,)?]) => {
+        $crate::Port {
+            name: stringify!($name),
+            type_refs: &[$($type),*],
+            family: None,
+        }
+    };
+    (@port $name:ident : $type:literal) => {
+        $crate::Port {
+            name: stringify!($name),
+            type_refs: &[$type],
+            family: None,
+        }
+    };
 }

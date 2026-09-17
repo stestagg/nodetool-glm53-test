@@ -29,7 +29,7 @@ impl Behaviour for Doubler {
     }
 }
 
-fn doubler() -> Box<dyn Behaviour> {
+fn doubler(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Doubler)
 }
 

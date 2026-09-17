@@ -106,10 +106,17 @@ fn definition(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> GraphDefinition {
 /// The behaviour of the named utility node, built through the one registration
 /// path — the same way an engine builds it.
 fn behaviour_of(type_ref: &str) -> Box<dyn Behaviour> {
-    registry::node_type(type_ref)
-        .expect("the utility crate declares this node type")
+    let node_type =
+        registry::node_type(type_ref).expect("the utility crate declares this node type");
+    let compiled = nodetool::compile::CompiledNode {
+        node_type,
+        label: node_type.label.to_owned(),
+        parameters: Default::default(),
+        families: Default::default(),
+    };
+    (node_type
         .behaviour
-        .expect("the node type is declared through the authoring API")()
+        .expect("the node type is declared through the authoring API"))(&compiled)
 }
 
 /// An input wired to a sender the test feeds.
