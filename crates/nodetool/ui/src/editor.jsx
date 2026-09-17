@@ -123,9 +123,16 @@ export function Editor() {
   const [listing, setListing] = useState(null)
   const [graph, setGraph] = useState(null)
   const [nodes, setNodes] = useState([])
-  const [status, setStatus] = useState('connecting…')
+  const [status, setStatus] = useState({ text: 'connecting…', error: false })
   const protocol = useRef(null)
-  const { screenToFlowPosition } = useReactFlow()
+  const canvasRef = useRef(null)
+  const { screenToFlowPosition, getViewport, setViewport } = useReactFlow()
+
+  // An error is the one message the user must not miss; the status line
+  // paints it red.
+  const showError = useCallback((text) => {
+    setStatus({ text, error: true })
+  }, [])
 
   useEffect(() => {
     if (graph === null) return
@@ -149,15 +156,16 @@ export function Editor() {
       connect({
         onOpen: (request) => {
           protocol.current = request
-          request('list_node_types').then(setListing, setStatus)
-          request('get_definition').then(setGraph, setStatus)
+          request('list_node_types').then(setListing, showError)
+          request('get_definition').then(setGraph, showError)
         },
-        onGreeting: () => setStatus(''),
+        onGreeting: () => setStatus({ text: '' }),
         onDefinition: setGraph,
-        onError: setStatus,
-        onClosed: () => setStatus('connection lost — reload the page'),
+        onError: showError,
+        onClosed: () =>
+          setStatus({ text: 'connection lost — reload the page', error: true }),
       }),
-    [],
+    [showError],
   )
 
   // The editing seam every field commit rides: one operation out, the
@@ -165,8 +173,8 @@ export function Editor() {
   // since-connected input, say — lands in the status line, the definition
   // untouched.
   const edit = useCallback((type, fields) => {
-    protocol.current?.(type, fields)?.catch(setStatus)
-  }, [])
+    protocol.current?.(type, fields)?.catch(showError)
+  }, [showError])
 
   const onNodesChange = useCallback((changes) => {
     // A remove change is the server's to apply: the delete operation goes
@@ -174,7 +182,7 @@ export function Editor() {
     // canvas, and the view never holds a deletion the server refused.
     for (const change of changes) {
       if (change.type === 'remove' && protocol.current !== null) {
-        protocol.current('delete_node', { uuid: change.id }).catch(setStatus)
+        protocol.current('delete_node', { uuid: change.id }).catch(showError)
       }
     }
     setNodes((current) =>
@@ -183,15 +191,15 @@ export function Editor() {
         current,
       ),
     )
-  }, [])
+  }, [showError])
 
   const onNodeDragStop = useCallback((_event, node) => {
     if (node.type === 'placeholder' || protocol.current === null) return
     protocol.current('move_node', {
       uuid: node.id,
       position: { x: node.position.x, y: node.position.y },
-    }).catch(setStatus)
-  }, [])
+    }).catch(showError)
+  }, [showError])
 
   const onConnect = useCallback((connection) => {
     if (protocol.current === null) return
@@ -200,17 +208,17 @@ export function Editor() {
       from_port: connection.sourceHandle,
       to: connection.target,
       to_port: connection.targetHandle,
-    }).catch(setStatus)
-  }, [])
+    }).catch(showError)
+  }, [showError])
 
   const onConnectEnd = useCallback(
     (_event, state) => {
       const unhook = offPortUnhook(graph?.edges ?? [], state)
       if (unhook !== null && protocol.current !== null) {
-        protocol.current('unhook', unhook).catch(setStatus)
+        protocol.current('unhook', unhook).catch(showError)
       }
     },
-    [graph],
+    [graph, showError],
   )
 
   const onDrop = useCallback(
@@ -221,9 +229,9 @@ export function Editor() {
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
       protocol
         .current('create_node', { type_ref: typeRef, position })
-        .catch(setStatus)
+        .catch(showError)
     },
-    [screenToFlowPosition],
+    [screenToFlowPosition, showError],
   )
 
   const onDragOver = useCallback((event) => {
@@ -239,6 +247,22 @@ export function Editor() {
   const selectedWiredInputs = (graph?.edges ?? [])
     .filter((edge) => edge.to === selectedUuid)
     .map((edge) => edge.to_port)
+
+  // Opening the dock shrinks the canvas beneath it, and a node sitting in
+  // the lost width would vanish under the very panel it is being edited
+  // in. When the selection lands covered, pan just enough that it clears
+  // the dock's edge; an already-visible node stays where it is.
+  useEffect(() => {
+    if (selectedUuid === null) return
+    const canvas = canvasRef.current
+    const node = canvas?.querySelector(`[data-id="${selectedUuid}"]`)
+    if (node === null || node === undefined) return
+    const covered =
+      node.getBoundingClientRect().right + 24 - canvas.getBoundingClientRect().right
+    if (covered <= 0) return
+    const view = getViewport()
+    setViewport({ x: view.x - covered / view.zoom, y: view.y, zoom: view.zoom })
+  }, [selectedUuid, getViewport, setViewport])
 
   const types = listing?.types
   const empty =
@@ -274,7 +298,7 @@ export function Editor() {
               </ul>
             )}
           </aside>
-          <main className="canvas">
+          <main className="canvas" ref={canvasRef}>
             <ReactFlow
               nodes={nodes}
               edges={graph === null ? [] : toEdges(graph)}
@@ -313,10 +337,11 @@ export function Editor() {
             type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
             wiredInputs={selectedWiredInputs}
             baseScalars={listing?.baseScalars ?? {}}
-            edit={edit}
           />
         </div>
-        <footer className="status">{status}</footer>
+        <footer className={`status${status.error ? ' error' : ''}`}>
+          {status.text}
+        </footer>
       </div>
     </EditContext.Provider>
   )

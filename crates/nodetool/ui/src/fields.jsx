@@ -27,34 +27,24 @@ export function scalarPossible(port, baseScalars = {}) {
 
 // A stored scalar as its text, for a field to show: the boolean,
 // integer, or float as written, the string bare, no value as empty — the
-// same empty that commits as unset.
+// same empty that commits as unset. A JSON null in the definition — what
+// a non-finite float becomes, which the envelope cannot carry — reads as
+// empty too: the field never shows a value the definition does not hold.
+// (An integer past 2^53 rounds through the JSON number the same way: the
+// envelope's precision, not the reading's.)
 export function scalarText(value) {
-  if (value === undefined) return ''
+  if (value === undefined || value === null) return ''
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   return String(value)
 }
 
-const INTEGER = /^-?\d+$/
-const FLOAT = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/
-
-// The text a field commits as the plain scalar the file format reads it
-// as: boolean, integer, float, otherwise string. Nothing is validated
-// beyond that — whether the value suits its port is compile time's
-// business.
-export function parseScalarText(text) {
-  if (text === 'true') return true
-  if (text === 'false') return false
-  if (INTEGER.test(text)) return Number(text)
-  if (FLOAT.test(text)) return Number(text)
-  return text
-}
-
 // Commit an input's value through the editing seam. Empty text unsets —
-// the definition holds no empty-string stand-in — anything else commits
-// as the plain scalar its text reads as.
+// the definition holds no empty-string stand-in — anything else crosses
+// as the raw text: the server reads it by the file format's own reading,
+// so what is stored is what a hand-written file would carry.
 export function commitParameter(edit, uuid, input, text) {
   if (text === '') edit('set_parameter', { uuid, input })
-  else edit('set_parameter', { uuid, input, value: parseScalarText(text) })
+  else edit('set_parameter', { uuid, input, value: text })
 }
 
 // The commit-cycling field: Enter or leaving the field commits, Escape

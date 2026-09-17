@@ -227,13 +227,13 @@ impl Editor {
         Ok(json!({ "type": "label_set" }))
     }
 
-    /// Set an input's parameter value: the plain scalar the message
-    /// carries, read as the file format reads a hand-written one; an
-    /// absent value clears, an unset input being unset. A connected
-    /// input refuses the edit — an input carries a connection or a
-    /// literal, never both. Beyond that nothing is judged here: whether
-    /// the name is a port of the type and whether the value suits it is
-    /// compile time's business.
+    /// Set an input's parameter value: the typed text the message
+    /// carries, read server-side as the file format reads a hand-written
+    /// one; an absent value clears, an unset input being unset. A
+    /// connected input refuses the edit — an input carries a connection
+    /// or a literal, never both. Beyond that nothing is judged here:
+    /// whether the name is a port of the type and whether the value
+    /// suits it is compile time's business.
     fn set_parameter(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
         let uuid = protocol::take_uuid(fields, "uuid")?;
         let input = protocol::take_string(fields, "input")?;

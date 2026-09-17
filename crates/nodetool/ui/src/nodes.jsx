@@ -15,7 +15,7 @@
 import { Handle, Position } from '@xyflow/react'
 import { commitParameter, Field, useEdit } from './fields.jsx'
 
-function InputPort({ port, node, wired, scalar }) {
+function InputPort({ port, node, wired, scalar, title }) {
   const edit = useEdit()
   return (
     <div
@@ -33,7 +33,7 @@ function InputPort({ port, node, wired, scalar }) {
           <Field
             className="port-field"
             value={node.parameters?.[port.name]}
-            aria-label={port.name}
+            aria-label={`${title} ${port.name}`}
             onCommit={(text) => commitParameter(edit, node.uuid, port.name, text)}
           />
         ))}
@@ -52,9 +52,10 @@ function OutputPort({ port }) {
 
 export function TypeNode({ data, selected }) {
   const { node, type, wiredInputs, scalarInputs } = data
+  const title = node.label ?? type.label
   return (
     <div className={`node${selected ? ' selected' : ''}`}>
-      <div className="node-title">{node.label ?? type.label}</div>
+      <div className="node-title">{title}</div>
       <div className="node-ports">
         <div className="node-inputs">
           {type.inputs.map((port) => (
@@ -64,6 +65,7 @@ export function TypeNode({ data, selected }) {
               node={node}
               wired={wiredInputs.includes(port.name)}
               scalar={scalarInputs.includes(port.name)}
+              title={title}
             />
           ))}
         </div>

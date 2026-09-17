@@ -10,6 +10,8 @@
   --titlebar: #edf1f5;
   --hover: #f0f4f8;
   --accent: #2d72d2;
+  --ring: 0 0 0 2px rgba(45, 114, 210, 0.35);
+  --danger: #cd4246;
 }
 
 * {
@@ -136,7 +138,7 @@ body {
 
 .node.selected {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(45, 114, 210, 0.35);
+  box-shadow: var(--ring);
 }
 
 .node-title {
@@ -323,6 +325,7 @@ body {
 .field:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: var(--ring);
 }
 
 .field::placeholder {
@@ -350,4 +353,8 @@ body {
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--muted);
+}
+
+.status.error {
+  color: var(--danger);
 }

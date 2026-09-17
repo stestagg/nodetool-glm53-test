@@ -1,34 +1,112 @@
-// The scalar text the two views of an input's value share: how a stored
-// scalar renders into a field and how a committed field's text reads
-// back as the plain scalar the file format would carry. Pure functions —
-// the visible proof exercises the field's commit cycle by hand.
-import { describe, expect, it } from 'vitest'
-import { parseScalarText, scalarPossible, scalarText } from './fields.jsx'
+/** @vitest-environment jsdom */
+// The scalar field both views of an input's value share. The commit
+// cycle is the story's core interactive behaviour — Enter or blur
+// commits, Escape discards, an unchanged commit sends nothing, and a
+// definition push re-seeds the draft — so it is pinned on the real
+// component here; what a committed text stores is the server's reading,
+// tested server-side against the loader itself.
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { commitParameter, Field, scalarPossible, scalarText } from './fields.jsx'
+
+afterEach(cleanup)
+
+function field() {
+  return screen.getByRole('textbox')
+}
+
+describe('Field', () => {
+  it('commits a changed draft on Enter', () => {
+    const onCommit = vi.fn()
+    render(<Field value="7" onCommit={onCommit} />)
+    fireEvent.change(field(), { target: { value: '9' } })
+    fireEvent.keyDown(field(), { key: 'Enter' })
+    expect(onCommit).toHaveBeenCalledWith('9')
+  })
+
+  it('commits a changed draft on blur', () => {
+    const onCommit = vi.fn()
+    render(<Field value="7" onCommit={onCommit} />)
+    fireEvent.change(field(), { target: { value: '2.5' } })
+    fireEvent.blur(field())
+    expect(onCommit).toHaveBeenCalledWith('2.5')
+  })
+
+  it('sends nothing while the draft is the stored value', () => {
+    const onCommit = vi.fn()
+    render(<Field value="7" onCommit={onCommit} />)
+    fireEvent.keyDown(field(), { key: 'Enter' })
+    fireEvent.blur(field())
+    expect(onCommit).not.toHaveBeenCalled()
+  })
+
+  it('Escape discards the draft, and the next blur commits nothing', () => {
+    const onCommit = vi.fn()
+    render(<Field value="7" onCommit={onCommit} />)
+    fireEvent.change(field(), { target: { value: 'half-typed' } })
+    fireEvent.keyDown(field(), { key: 'Escape' })
+    expect(field().value).toBe('7')
+    fireEvent.blur(field())
+    expect(onCommit).not.toHaveBeenCalled()
+  })
+
+  it('a definition push re-seeds the draft, even mid-edit', () => {
+    const onCommit = vi.fn()
+    const { rerender } = render(<Field value="7" onCommit={onCommit} />)
+    fireEvent.change(field(), { target: { value: '9' } })
+    rerender(<Field value="42" onCommit={onCommit} />)
+    expect(field().value).toBe('42')
+  })
+
+  it('Enter then blur before the push lands sends the same commit twice', () => {
+    const onCommit = vi.fn()
+    render(<Field value="7" onCommit={onCommit} />)
+    fireEvent.change(field(), { target: { value: '9' } })
+    fireEvent.keyDown(field(), { key: 'Enter' })
+    fireEvent.blur(field())
+    expect(onCommit).toHaveBeenCalledTimes(2)
+    expect(onCommit).toHaveBeenNthCalledWith(2, '9')
+  })
+
+  it('Escape after an Enter commit returns to the stored value until the push re-seeds', () => {
+    const onCommit = vi.fn()
+    const { rerender } = render(<Field value="7" onCommit={onCommit} />)
+    fireEvent.change(field(), { target: { value: '9' } })
+    fireEvent.keyDown(field(), { key: 'Enter' })
+    fireEvent.keyDown(field(), { key: 'Escape' })
+    expect(field().value).toBe('7')
+    rerender(<Field value="9" onCommit={onCommit} />)
+    expect(field().value).toBe('9')
+  })
+})
+
+describe('commitParameter', () => {
+  it('commits the raw text — the server reads it as the file format does', () => {
+    const edit = vi.fn()
+    commitParameter(edit, 'u1', 'radius', '2.5')
+    expect(edit).toHaveBeenCalledWith('set_parameter', {
+      uuid: 'u1',
+      input: 'radius',
+      value: '2.5',
+    })
+  })
+
+  it('empty text unsets — no value rides the message', () => {
+    const edit = vi.fn()
+    commitParameter(edit, 'u1', 'radius', '')
+    expect(edit).toHaveBeenCalledWith('set_parameter', { uuid: 'u1', input: 'radius' })
+  })
+})
 
 describe('scalarText', () => {
   it('renders each stored kind as its scalar text, no value as empty', () => {
     expect(scalarText(undefined)).toBe('')
+    expect(scalarText(null)).toBe('')
     expect(scalarText(true)).toBe('true')
     expect(scalarText(false)).toBe('false')
     expect(scalarText(7)).toBe('7')
     expect(scalarText(2.5)).toBe('2.5')
     expect(scalarText('hi')).toBe('hi')
-  })
-})
-
-describe('parseScalarText', () => {
-  it('reads a committed field as the file format reads its text', () => {
-    expect(parseScalarText('true')).toBe(true)
-    expect(parseScalarText('false')).toBe(false)
-    expect(parseScalarText('7')).toBe(7)
-    expect(parseScalarText('-3')).toBe(-3)
-    expect(parseScalarText('2.5')).toBe(2.5)
-    expect(parseScalarText('-0.5')).toBe(-0.5)
-    expect(parseScalarText('1e3')).toBe(1000)
-    expect(parseScalarText('hi')).toBe('hi')
-    expect(parseScalarText('2.5 kg')).toBe('2.5 kg')
-    expect(parseScalarText('True')).toBe('True')
-    expect(parseScalarText('')).toBe('')
   })
 })
 

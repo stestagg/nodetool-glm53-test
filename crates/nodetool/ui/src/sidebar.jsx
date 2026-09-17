@@ -12,9 +12,10 @@
 // listing shows label editing only: no fields are invented for a type
 // the editor cannot see.
 
-import { commitParameter, Field, scalarPossible } from './fields.jsx'
+import { commitParameter, Field, scalarPossible, useEdit } from './fields.jsx'
 
-export function Sidebar({ node, type, wiredInputs, baseScalars, edit }) {
+export function Sidebar({ node, type, wiredInputs, baseScalars }) {
+  const edit = useEdit()
   if (node === undefined) return null
   const scalarPorts = (type?.inputs ?? []).filter((port) =>
     scalarPossible(port, baseScalars),
@@ -34,11 +35,11 @@ export function Sidebar({ node, type, wiredInputs, baseScalars, edit }) {
         </label>
         <div className="sidebar-fact">
           <span className="sidebar-name">Type</span>
-          <code>{node.type_ref}</code>
+          <code title={node.type_ref}>{node.type_ref}</code>
         </div>
         <div className="sidebar-fact">
           <span className="sidebar-name">UUID</span>
-          <code>{node.uuid}</code>
+          <code title={node.uuid}>{node.uuid}</code>
         </div>
       </section>
       {scalarPorts.length > 0 && (
@@ -48,14 +49,14 @@ export function Sidebar({ node, type, wiredInputs, baseScalars, edit }) {
             <div className="sidebar-row" key={port.name}>
               <span className="sidebar-name">{port.name}</span>
               {wiredInputs.includes(port.name) ? (
-                <span className="sidebar-connected" title="connected">
-                  {port.type_refs.join(', ')}
+                <span className="sidebar-connected">
+                  connected — {port.type_refs.join(', ')}
                 </span>
               ) : (
                 <Field
                   className="sidebar-value"
                   value={node.parameters?.[port.name]}
-                  aria-label={port.name}
+                  aria-label={`${node.label ?? type.label} ${port.name}`}
                   onCommit={(text) =>
                     commitParameter(edit, node.uuid, port.name, text)
                   }

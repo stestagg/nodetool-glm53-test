@@ -372,13 +372,17 @@ fn load_parameters(
         })?;
         parameters.insert(
             name.to_owned(),
-            load_parameter(value, &format!("{path}.{name}"))?,
+            read_parameter(value).map_err(|message| err(format!("{path}.{name}"), message))?,
         );
     }
     Ok(parameters)
 }
 
-fn load_parameter(value: &Value, path: &str) -> Result<ParameterValue, LoadError> {
+/// The parameter value one plain scalar carries — the loader's one
+/// reading, shared with the editor's commit path, so a committed value
+/// and a hand-written one are the same value. The refusal is the bare
+/// problem; callers name where the value sat.
+fn read_parameter(value: &Value) -> Result<ParameterValue, String> {
     match value {
         Value::Bool(value) => Ok(ParameterValue::Bool(*value)),
         Value::Number(number) => {
@@ -387,18 +391,27 @@ fn load_parameter(value: &Value, path: &str) -> Result<ParameterValue, LoadError
             } else if number.is_f64() {
                 Ok(ParameterValue::Float(number.as_f64().unwrap()))
             } else {
-                Err(err(
-                    path,
-                    format!("the integer {number} does not fit a signed 64-bit integer"),
+                Err(format!(
+                    "the integer {number} does not fit a signed 64-bit integer"
                 ))
             }
         }
         Value::String(value) => Ok(ParameterValue::Str(value.clone())),
-        other => Err(err(
-            path,
-            format!("a parameter value must be a plain scalar — boolean, integer, float, or string — not {}", kind(other)),
+        other => Err(format!(
+            "must be a plain scalar — boolean, integer, float, or string — not {}",
+            kind(other)
         )),
     }
+}
+
+/// The parameter value the typed text reads as, parsed exactly as the
+/// same text hand-written into a file is parsed: one plain YAML scalar,
+/// boolean, integer, float, or string. The commit crosses the seam as
+/// raw text for this reason — the reading lives here, once.
+pub(crate) fn read_parameter_text(text: &str) -> Result<ParameterValue, String> {
+    let value =
+        serde_yaml::from_str::<Value>(text).map_err(|_| "is not a plain scalar".to_owned())?;
+    read_parameter(&value)
 }
 
 fn load_edges(value: &Value) -> Result<Vec<Edge>, LoadError> {

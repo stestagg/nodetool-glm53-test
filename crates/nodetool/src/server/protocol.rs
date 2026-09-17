@@ -114,49 +114,24 @@ pub fn take_uuid(fields: &mut Map<String, Value>, name: &str) -> Result<Uuid, St
     Uuid::parse_str(&text).map_err(|_| format!("`{name}` must be a uuid"))
 }
 
-/// Take one optional plain-scalar parameter value out of a message's
-/// fields. Absent means the edit clears — an unset input is unset. A
-/// present value is read as the file format reads a hand-written one:
-/// boolean, integer, float, or string; anything else is an error, since
-/// no text field can commit it and only a protocol misuse produces it.
+/// Take one optional parameter commit out of a message's fields. Absent
+/// means the edit clears — an unset input is unset. Present, it is the
+/// typed text carried as a string, and the server reads it by the file
+/// format's own reading ([`crate::graph::read_parameter_text`]), so what
+/// a commit stores is exactly what a hand-written file stores — the
+/// browser hardcodes no scalar rules of its own.
 pub fn take_parameter(
     fields: &mut Map<String, Value>,
     name: &str,
 ) -> Result<Option<ParameterValue>, String> {
-    match fields.remove(name) {
-        None => Ok(None),
-        Some(Value::Bool(value)) => Ok(Some(ParameterValue::Bool(value))),
-        Some(Value::String(value)) => Ok(Some(ParameterValue::Str(value))),
-        Some(Value::Number(number)) => {
-            if number.is_f64() {
-                Ok(Some(ParameterValue::Float(
-                    number.as_f64().unwrap_or(f64::NAN),
-                )))
-            } else if let Some(int) = number.as_i64() {
-                Ok(Some(ParameterValue::Int(int)))
-            } else {
-                Err(format!(
-                    "`{name}` is an integer that does not fit a signed 64-bit integer"
-                ))
-            }
-        }
-        Some(other) => Err(format!(
-            "`{name}` must be a plain scalar — boolean, integer, float, or string — not {}",
-            kind(&other)
-        )),
-    }
-}
-
-/// What kind of JSON value this is, for error messages.
-fn kind(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "a boolean",
-        Value::Number(_) => "a number",
-        Value::String(_) => "a string",
-        Value::Array(_) => "an array",
-        Value::Object(_) => "an object",
-    }
+    let text = match fields.remove(name) {
+        None => return Ok(None),
+        Some(Value::String(text)) => text,
+        Some(_) => return Err(format!("`{name}` must be a string")),
+    };
+    crate::graph::read_parameter_text(&text)
+        .map(Some)
+        .map_err(|message| format!("`{name}` {message}"))
 }
 
 /// A drop or resting position, as the browser measures it.
