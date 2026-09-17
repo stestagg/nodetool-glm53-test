@@ -1,7 +1,6 @@
 ---
 title: Packaging groups in the editor
 date: 2026-09-16
-depends: [23]
 ---
 
 ## Description
@@ -20,8 +19,11 @@ working, unpack when you want to see inside again — rather than a format they
 happen to round-trip through.
 
 **The package gesture.** A package command is available for any non-empty
-selection (20) — a context-menu entry on the selection, with a keyboard path
-per 22's pattern issuing the same operation. Any selection packages: one node
+selection (20) — a context-menu entry on the selection, the editor's first
+context menu, opened by right-click on a selected node without clearing or
+reducing the selection it acts on (right-click on an unselected node selects
+that node alone first, as a plain click does), with a keyboard path per 22's
+pattern issuing the same operation. Any selection packages: one node
 as readily as twenty (a group of one is a legitimate keep-this-intact move,
 and REQ-72 says the gesture invents no special cases to police it). The
 command asks for the group's name in a small dialog on 15's pattern — the one
@@ -36,32 +38,44 @@ becomes an exposed port: an edge from a packaged output to a node outside
 becomes an exposed output port binding that inner output (one port serving all
 its external downstreams — REQ-20's fan-out preserved), and an edge from
 outside into a packaged input becomes an exposed input port binding that
-input. The packaged nodes' canvas positions move into the body's metadata as
-offsets relative to the selection's centroid, and the new group instance sits
-at that centroid — where the user's attention was. The visible result: every
-external wire that touched the selection now lands on the collapsed node's
-ports, the graph means exactly what it meant before, and nothing moved that
-the user didn't choose.
+input. Each derived port takes the bound inner port's name — deduped across
+the new port set ("out", then "out 2", ...) — and declares that inner port's
+type references. The packaged nodes' stored positions move into the body's
+metadata as offsets relative to the selection's centroid — a node carrying no
+stored position contributes neither centroid nor offset and lands by 12's
+fallback on unpack — and the new group instance sits at that centroid, where
+the user's attention was, and takes the selection, so the sidebar shows it as
+20 provides for any selection. The visible result: every external wire that
+touched the selection now lands on the collapsed node's ports, the graph
+means exactly what it meant before, and nothing moved that the user didn't
+choose.
 
 Refusals are honest and cheap: a name that duplicates a document group or
 collides with a linked plugin type reference — 23's error set — is refused
 naming the clash, the dialog's suggestion having already avoided the common
-case; and an edge crossing the boundary that touches an unknown-typed
-placeholder node (12) blocks packaging with a message naming that node, since
-an exposed port must declare types and a placeholder's ports declare none. A
-placeholder wholly inside the selection packages fine — its edges stay
-internal, nobody asks its ports anything. Beyond these the gesture validates
-nothing (REQ-60, REQ-72): a selection with no crossing edges still packages,
-into a group with no exposed ports — legal by 23's format and inert — and
-enforcement stays at compile time as everywhere else.
+case; and an edge crossing the boundary at an unknown-typed placeholder node
+inside the selection (12) blocks packaging with a message naming that node,
+since an exposed port must declare types and a placeholder's ports declare
+none. A placeholder inside the selection whose edges stay internal packages
+fine — nobody asks its ports anything; a placeholder outside the selection
+does not block — the exposed port declares the inner port's type references,
+and the placeholder fails compile after packaging exactly as it did before.
+Beyond these the gesture validates nothing (REQ-60, REQ-72): a selection with
+no crossing edges still packages, into a group with no exposed ports — legal
+by 23's format and inert — and enforcement stays at compile time as everywhere
+else.
 
-**The unpack gesture.** An unpack command on a selected group instance — same
-entry points, context menu and keyboard path — dissolves the instance back
-into its nodes. The body's nodes reappear on the canvas each at its stored
-offset from where the instance sat, so a package → move → unpack cycle puts
-the nodes back around where the group ended up, not where they were first
-drawn — the user's spatial frame survives the round trip; a body node without
-a stored position lands by 12's deterministic fallback. External wires
+**The unpack gesture.** An unpack command on the group instances in the
+selection — same entry points, context menu and keyboard path, one unpack
+operation per instance after 20's fan-out precedent, ordinary nodes in the
+selection left as they are — dissolves each back into its nodes. The body's
+nodes reappear on the canvas each at its stored offset from where the instance
+sat, so a package → move → unpack cycle puts the nodes back around where the
+group ended up, not where they were first drawn — the user's spatial frame
+survives the round trip — and the reappearing nodes take the selection the
+instance held, so unpacking lands the user inside what they just opened up; a
+body node without a stored position lands by 12's deterministic fallback.
+External wires
 re-attach through the bindings: the external upstream of an exposed input
 reaches the bound inner input, the bound inner output feeds the external
 downstreams, and a value typed on an unconnected exposed input (23's inline
@@ -98,40 +112,50 @@ file format (23 wrote it).
 ## Definition of done
 
 - With a non-empty selection on the canvas, a package command is available —
-  a context-menu entry with a keyboard path issuing the same operation — and
-  asks for the group's name in a small dialog pre-filled with an available
-  suggestion, Enter committing and Esc cancelling; on commit the selection
-  becomes one collapsed group instance rendered exactly as 23 renders group
-  instances, sitting at the centroid of the packaged nodes, with the packaged
-  nodes' positions carried into the group body as offsets relative to that
-  centroid. Any non-empty selection packages, including a single node and a
-  selection with no crossing edges. (REQ-44, REQ-55, REQ-56, REQ-12, REQ-72)
+  a context-menu entry with a keyboard path issuing the same operation, the
+  menu opened by right-click on a selected node without clearing or reducing
+  the selection it acts on, right-click on an unselected node selecting that
+  node alone first as a plain click does — and asks for the group's name in a
+  small dialog pre-filled with an available suggestion, Enter committing and
+  Esc cancelling; on commit the selection becomes one collapsed group
+  instance rendered exactly as 23 renders group instances, sitting at the
+  centroid of the packaged nodes, with the packaged nodes' stored positions
+  carried into the group body as offsets relative to that centroid — a node
+  carrying no stored position contributing neither centroid nor offset — and
+  the new instance takes the selection. Any non-empty selection packages,
+  including a single node and a selection with no crossing edges. (REQ-44,
+  REQ-55, REQ-12, REQ-72)
 - The packaging is derived from the held definition: edges crossing the
   selection boundary become the group's exposed ports — an edge from a
   packaged output to a node outside becomes an exposed output port binding
   that inner output and serving all its external downstreams, an edge from
   outside into a packaged input becomes an exposed input port binding that
-  input — and after packaging every wire that touched the selection lands on
-  the collapsed node's ports, the graph meaning exactly what it meant before.
-  Internal edges of the selection, and a group instance inside it, travel
-  into the body unchanged. (REQ-44, REQ-20, REQ-21)
+  input, each derived port taking the bound inner port's name, deduped
+  across the new port set ("out", then "out 2", ...), and declaring that
+  inner port's type references — and after packaging every wire that touched
+  the selection lands on the collapsed node's ports, the graph meaning
+  exactly what it meant before. Internal edges of the selection, and a group
+  instance inside it, travel into the body unchanged. (REQ-44, REQ-20, REQ-21)
 - A refused packaging names its reason and changes nothing: a name
   duplicating a document group or colliding with a linked plugin type
   reference is refused naming the clash; an edge crossing the selection
-  boundary touching an unknown-typed placeholder node blocks packaging naming
-  that node, while a placeholder wholly inside the selection packages fine.
-  In both cases the definition is exactly as it was and the connection stays
-  usable. (REQ-71, REQ-60)
-- An unpack command on a selected group instance — context menu and keyboard
-  path — dissolves it: the body's nodes reappear each at its stored offset
-  from where the instance sat (a node with no stored position by the story 12
+  boundary at an unknown-typed placeholder node inside the selection blocks
+  packaging naming that node, while a placeholder inside the selection whose
+  edges stay internal packages fine. In both cases the definition is exactly
+  as it was and the connection stays usable. (REQ-71, REQ-60)
+- An unpack command on the group instances in the selection — the same
+  context menu and keyboard path, one unpack operation per instance after
+  20's fan-out precedent, ordinary nodes in the selection left as they are —
+  dissolves each: the body's nodes reappear each at its stored offset from
+  where the instance sat (a node with no stored position by the story 12
   deterministic fallback), external wires re-attach through the bindings —
   external upstream to the bound inner input, bound inner output to the
-  external downstreams — and a value typed on an unconnected exposed input
-  lands on the bound inner input as its parameter; a returning uuid that
-  collides with a surviving node is reassigned rather than refusing the
-  gesture; the group definition is removed when no other instance references
-  it and left in place otherwise. (REQ-44, REQ-12, REQ-71)
+  external downstreams — a value typed on an unconnected exposed input lands
+  on the bound inner input as its parameter, the reappearing nodes take the
+  selection, a returning uuid that collides with a surviving node is
+  reassigned rather than refusing the gesture, and the group definition is
+  removed when no other instance references it and left in place otherwise.
+  (REQ-44, REQ-12, REQ-71)
 - Both gestures are single atomic edits applied server-side through their
   own operations in 11's catalogue style and pushed whole, per 12's shape:
   every open tab shows the packaged group or the unpacked nodes together,
@@ -149,13 +173,15 @@ file format (23 wrote it).
   offsets — by 23's round-trip, and unpack works identically after a reopen.
   (REQ-11, REQ-12, REQ-44)
 - Focused tests cover: package derivation — crossing edges to exposed ports,
-  internal edges staying internal, centroid placement, relative offsets in
-  body metadata; unpack splice — wire re-attachment through bindings, the
-  exposed-input value landing on the bound inner input, offset placement, the
-  definition removed with the last instance and kept for surviving ones, uuid
-  collision reassignment; each refusal above answered with the definition
-  untouched; the atomic push to every connection. UI tests (20's runner)
-  cover the gestures end to end: the dialog with its suggestion, the
+  internal edges staying internal, a selection of one and one with no
+  crossing edges packaging into a group with no exposed ports, centroid
+  placement, relative offsets in body metadata; unpack splice — wire
+  re-attachment through bindings, the exposed-input value landing on the
+  bound inner input, offset placement, the definition removed with the last
+  instance and kept for surviving ones, uuid collision reassignment; each
+  refusal above answered with the definition untouched; the atomic push to
+  every connection. UI tests (20's runner) cover the gestures end to end:
+  the dialog with its suggestion, the
   collapsed node with wires landing on its ports, unpack restoring nodes and
   wires, and the run lock silencing both gestures. The workspace builds and
   passes `cargo test` and `cargo clippy` cleanly, with the UI build and UI
@@ -173,9 +199,11 @@ file format (23 wrote it).
 ## Comments
 
 - 2026-09-16 — Scope seams: two new operation messages in 11's catalogue —
-  package and unpack — the first additions since 20's fan-out, and for the
-  reason 20's precedent cannot cover them: no composition of per-node
-  operations derives exposed ports and moves positions atomically, and a
+  package and unpack — the first additions since 20, whose fan-out rode 12's
+  move, 13's delete, and 14's parameter edit rather than extending the
+  catalogue, and for the reason 20's precedent cannot cover them: no
+  composition of per-node operations derives exposed ports and moves
+  positions atomically, and a
   half-applied packaging would be a broken graph. The server derives the
   packaging from the definition it holds, so the browser never holds a second
   copy of the groups format — 23's verbatim rule is the browser's too. All
@@ -196,16 +224,37 @@ file format (23 wrote it).
   because refusing an unpack over an invisible identity would put a format
   detail in the gesture's way; groups of one package without ceremony
   (REQ-72).
-- 2026-09-16 — Why the placeholder-on-the-boundary refusal, and why it is the
-  only structural check: an exposed port must declare types (23's port
-  vocabulary) and a placeholder's ports declare none, so there is nothing
-  honest to carry onto the group's boundary — this is the format's
+- 2026-09-16 — Why the placeholder refusal, and why it is the only structural
+  check: an exposed port must declare types (23's port vocabulary) and a
+  placeholder's ports declare none, so when the placeholder is inside the
+  selection its port is the one that would become the group's exposed port,
+  and there is nothing honest to declare on it — this is the format's
   requirement surfacing at the gesture, not an editor-side rule (REQ-60,
-  REQ-71). Everywhere else packaging trusts the selection and lets compile
-  judge the result, matching the editor's warn-early-enforce-late line.
+  REQ-71). A placeholder outside the selection puts none of its ports on the
+  boundary — the exposed port declares the packaged side's type references —
+  so packaging does not police it; the placeholder fails compile after
+  packaging exactly as it did before. Everywhere else packaging trusts the
+  selection and lets compile judge the result, matching the editor's
+  warn-early-enforce-late line.
 - 2026-09-16 — Relationship to 26: this story is the lifecycle's middle —
   package what is on the canvas, dissolve what is packaged. Creating a second
   instance of a group that already exists (23's reuse rationale:
   "a packaged thing you cannot reuse is barely packaged") is a different
   gesture — nothing here creates an instance without taking its body from the
   canvas — so it is story 26's, sketched in the backlog.
+- 2026-09-17 — Review calls, recorded so they hold: opening the context menu
+  never disturbs the selection it acts on — the editor's first context menu,
+  so 20's plain-click rule needed an explicit right-click settlement or a
+  marquee selection would be destroyed at the moment the menu was opened to
+  act on it, right-click on an unselected node selecting that node alone
+  first as a plain click does; both gestures hand their product the selection
+  (the new group instance, the reappearing nodes), because the packaged nodes
+  cease to exist on commit and 20's sidebar rule would otherwise empty the
+  selection and close the sidebar at the exact moment the gesture produced
+  something; unpack is one unpack operation per group instance in the
+  selection, ordinary nodes untouched — 20's fan-out composing for free, no
+  new mechanism — rather than single-instance-only; and the placeholder
+  refusal is scoped to a crossing edge whose in-selection endpoint is the
+  placeholder's port, the only case with nothing honest to declare on the
+  boundary, a placeholder outside the selection staying compile's to judge
+  exactly as before (REQ-72).
