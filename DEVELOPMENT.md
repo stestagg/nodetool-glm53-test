@@ -35,8 +35,7 @@ scalar data types.
   React application whose canvas is React Flow under a light Blueprint
   look, with the palette of node types docked on the left. `npm install &&
   npm run build` in that directory produces `dist/`, which the server's
-  binary includes at build time, so build the UI before building the
-  workspace.
+  binary includes at build time.
 - `crates/nodetool-utility` — the first-party utility node library, a plugin
   crate whose only dependency is `nodetool`: an `If` router and a `Format`
   node, declared through the same `node_type!` registration path and
@@ -95,7 +94,7 @@ The editor UI builds first; the server embeds its output, so the Rust
 workspace does not build without it:
 
 ```sh
-(cd crates/nodetool/ui && npm install && npm run build)
+(cd crates/nodetool/ui && npm install && npm run build && npm test)
 cargo build
 cargo test --workspace
 cargo clippy --workspace --all-targets
@@ -118,8 +117,8 @@ cargo run -p visual            # the editor on http://127.0.0.1:8420
 `visual` starts the editor server: open the printed address in a browser
 and find the palette of every node type the linked plugins contribute on
 the left and the canvas beside it. Dragging a type onto the canvas creates
-a node where it dropped; dragging a node by its title moves it; a click
-selects; background drag pans; scroll zooms. The server holds the graph:
+a node where it dropped; dragging a node moves it; a click selects;
+background drag pans; scroll zooms. The server holds the graph:
 a reload or a second tab shows the same graph, and an edit in one appears
 in the other.
 

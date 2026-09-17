@@ -86,8 +86,7 @@ pub struct GraphDefinition {
 }
 
 impl GraphDefinition {
-    /// A definition with no name, no nodes, and no edges: the graph a fresh
-    /// editor starts from.
+    /// The graph a fresh editor starts from.
     pub fn empty() -> GraphDefinition {
         GraphDefinition {
             schema_version: SCHEMA_VERSION,

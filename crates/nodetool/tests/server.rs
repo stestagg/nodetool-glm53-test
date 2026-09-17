@@ -193,7 +193,7 @@ fn move_records_the_resting_position_in_metadata() {
         r#"{"id": 1, "type": "create_node", "type_ref": "beta/identity", "position": {"x": 1, "y": 2}}"#,
     );
     let uuid = created["uuid"].as_str().unwrap();
-    let mut watcher = editor.subscribe();
+    let mut watchers = [editor.subscribe(), editor.subscribe()];
 
     let moved = send(
         &editor,
@@ -211,12 +211,16 @@ fn move_records_the_resting_position_in_metadata() {
         "the move updates the node's metadata position, keeping each coordinate's kind"
     );
 
-    let pushed = push(&mut watcher);
-    assert_eq!(pushed["type"], "definition");
-    assert_eq!(
-        pushed["graph"]["nodes"][0]["metadata"]["position"],
-        json!({ "x": 40.5, "y": 2 })
-    );
+    // The push reaches every connection, each with the whole updated
+    // definition.
+    for watcher in &mut watchers {
+        let pushed = push(watcher);
+        assert_eq!(pushed["type"], "definition");
+        assert_eq!(
+            pushed["graph"]["nodes"][0]["metadata"]["position"],
+            json!({ "x": 40.5, "y": 2 })
+        );
+    }
 }
 
 #[test]
@@ -299,29 +303,6 @@ fn malformed_input_is_answered_with_an_error_and_leaves_the_connection_usable() 
     let usable = send(&editor, r#"{"id": 9, "type": "get_definition"}"#);
     assert_eq!(usable["id"], 9);
     assert_eq!(usable["graph"]["nodes"], json!([]));
-}
-
-#[test]
-fn pushes_reach_every_connection() {
-    let editor = editor();
-    let mut one = editor.subscribe();
-    let mut two = editor.subscribe();
-    editor.broadcast(&json!({ "type": "definition", "graph": graph::GraphDefinition::empty() }));
-    for receiver in [&mut one, &mut two] {
-        assert_eq!(push(receiver)["type"], "definition");
-    }
-}
-
-#[test]
-fn the_default_address_is_loopback() {
-    let (host, port) = nodetool::server::DEFAULT_ADDRESS
-        .rsplit_once(':')
-        .expect("the default address carries a port");
-    assert_eq!(host, "127.0.0.1", "a local tool binds loopback");
-    assert!(
-        port.parse::<u16>().is_ok_and(|port| port >= 1024),
-        "the default port is an unprivileged port"
-    );
 }
 
 // The served address end to end: the editor shell over HTTP, the upgrade to

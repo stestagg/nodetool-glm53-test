@@ -77,14 +77,6 @@ impl Editor {
         }
     }
 
-    /// Push one message to every connected editor. This is the channel
-    /// engine events will ride; a push with no connected audience is
-    /// nothing to send.
-    pub fn broadcast(&self, message: &impl serde::Serialize) {
-        let text = serde_json::to_string(message).expect("a broadcast message always serialises");
-        let _ = self.pushes.send(text);
-    }
-
     /// Receive every push from here on: the seam an observer of the push
     /// channel subscribes through, as a connection does on connect.
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
@@ -93,8 +85,9 @@ impl Editor {
 
     /// Answer one protocol message with its reply: the envelope's single
     /// entry point, so a connection is one call per received text. Always
-    /// answers — an unappliable or malformed message gets an error reply
-    /// naming the problem, and the connection carries on.
+    /// answers — a message that parses but cannot be applied, like a
+    /// malformed one, gets an error reply naming the problem, and the
+    /// connection carries on.
     pub fn handle(&self, message: &str) -> String {
         let mut fields = match serde_json::from_str::<Value>(message) {
             Ok(Value::Object(fields)) => fields,
@@ -177,12 +170,9 @@ impl Editor {
         };
         node.metadata
             .insert("position".into(), position.metadata_entry().into());
-        self.graph
-            .lock()
-            .expect("the graph lock is never poisoned")
-            .nodes
-            .push(node);
-        self.push_definition();
+        let mut graph = self.graph.lock().expect("the graph lock is never poisoned");
+        graph.nodes.push(node);
+        self.push_definition(&graph);
         Ok(json!({ "type": "node_created", "uuid": uuid }))
     }
 
@@ -202,32 +192,25 @@ impl Editor {
         // is the node's own bookkeeping and stays untouched.
         node.metadata
             .insert("position".into(), position.metadata_entry().into());
-        drop(graph);
-        self.push_definition();
+        self.push_definition(&graph);
         Ok(json!({ "type": "node_moved" }))
     }
 
     /// Push the whole updated definition to every connection — never the
     /// operation. The browser holds no graph state of its own, so a push it
     /// can render without applying or merging anything is the one shape
-    /// that can never diverge from what the server holds.
-    fn push_definition(&self) {
-        let graph = self
-            .graph
-            .lock()
-            .expect("the graph lock is never poisoned")
-            .clone();
-        match protocol::definition_message(&graph) {
-            Ok(message) => {
-                let _ = self.pushes.send(message);
-            }
-            Err(error) => {
-                let _ = self.pushes.send(protocol::error_reply(
-                    None,
-                    &format!("the updated definition cannot be carried as JSON: {error}"),
-                ));
-            }
-        }
+    /// that can never diverge from what the server holds. Called with the
+    /// graph still locked, so the pushes leave in the order the operations
+    /// applied and an older snapshot can never arrive after a newer one.
+    fn push_definition(&self, graph: &GraphDefinition) {
+        let message = match protocol::definition_message(graph) {
+            Ok(message) => message,
+            Err(error) => protocol::error_reply(
+                None,
+                &format!("the updated definition cannot be carried as JSON: {error}"),
+            ),
+        };
+        let _ = self.pushes.send(message);
     }
 
     async fn accept(self: &Arc<Self>, mut stream: TcpStream) -> io::Result<()> {
@@ -330,7 +313,8 @@ impl Editor {
                 }
             }
         });
-        while let Some(message) = ws::read_message(&mut reader).await.unwrap_or(None) {
+        let mut messages = ws::Reader::new();
+        while let Some(message) = messages.read(&mut reader).await.unwrap_or(None) {
             match message {
                 ws::Message::Text(text) => {
                     if outbound

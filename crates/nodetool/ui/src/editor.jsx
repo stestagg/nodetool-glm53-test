@@ -31,7 +31,7 @@ function recordedPosition(node) {
   return undefined
 }
 
-function toNodes(graph, types) {
+export function toNodes(graph, types) {
   const byRef = new Map((types ?? []).map((type) => [type.type_ref, type]))
   const placeless = graph.nodes
     .filter((node) => recordedPosition(node) === undefined)
@@ -72,16 +72,18 @@ export function Editor() {
 
   useEffect(() => {
     if (graph === null) return
-    // Selection is view state: the definition push replaces what is drawn,
-    // never what the user has picked.
+    // Selection and a drag in flight are view state: the definition push
+    // replaces what is drawn, never what the user has picked or holds.
     setNodes((current) => {
-      const selected = new Set(
-        current.filter((node) => node.selected).map((node) => node.id),
-      )
-      return toNodes(graph, types).map((node) => ({
-        ...node,
-        selected: selected.has(node.id),
-      }))
+      const before = new Map(current.map((node) => [node.id, node]))
+      return toNodes(graph, types).map((node) => {
+        const held = before.get(node.id)
+        return {
+          ...node,
+          selected: held?.selected ?? false,
+          position: held?.dragging ? held.position : node.position,
+        }
+      })
     })
   }, [graph, types])
 
@@ -173,6 +175,9 @@ export function Editor() {
             onDrop={onDrop}
             onDragOver={onDragOver}
             fitView
+            // The initial fit never zooms in past 100%: fitting a small
+            // graph up to maxZoom would lurch the view under the pointer.
+            fitViewOptions={{ maxZoom: 1 }}
             minZoom={0.25}
             maxZoom={2.5}
           >

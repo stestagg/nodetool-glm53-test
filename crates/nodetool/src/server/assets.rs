@@ -3,8 +3,7 @@
 //! one address carries the page and its websocket endpoint alike. Build the
 //! UI (see DEVELOPMENT.md) before building this crate.
 
-/// One served file: its path, content type, and body. The module is private
-/// to the server, so the visibility stops there.
+/// One served file: its path, content type, and body.
 pub struct Asset {
     pub path: &'static str,
     pub content_type: &'static str,

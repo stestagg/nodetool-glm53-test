@@ -54,7 +54,7 @@ export function connect({ onOpen, onGreeting, onDefinition, onError, onClosed })
         break
       case 'error':
         if (message.id === undefined) onError(message.error)
-        else settle(message.id, ({ reject }) => reject(new Error(message.error)))
+        else settle(message.id, ({ reject }) => reject(message.error))
         break
       default:
         onError(`the server sent an unknown message type ${JSON.stringify(message.type)}`)
@@ -71,7 +71,13 @@ export function connect({ onOpen, onGreeting, onDefinition, onError, onClosed })
     })
   }
 
-  socket.onclose = onClosed
+  socket.onclose = () => {
+    // Requests still in flight will never see their replies; settling them
+    // here lets the empty states draw instead of waiting forever.
+    for (const waiting of pending.values()) waiting.reject('connection lost')
+    pending.clear()
+    onClosed()
+  }
 
   return () => socket.close()
 }

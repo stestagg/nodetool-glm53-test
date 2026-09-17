@@ -28,11 +28,10 @@ pub fn greeting() -> String {
     .expect("the greeting always serialises")
 }
 
-/// The node-type listing every linked plugin contributes, straight from the
-/// registry and naming nothing specific to any node or plugin: the
-/// palette's data source, its type references the keys every operation
-/// names a node type by. Sorted by type reference, so every view sees the
-/// same order.
+/// Every linked plugin's node types, straight from the registry — core
+/// names no type or plugin of its own. The palette draws its list from
+/// here, and every operation names a node type by one of these type
+/// references. Sorted by type reference, so every view sees the same order.
 pub fn node_type_listing() -> Vec<&'static NodeType> {
     let mut types: Vec<&'static NodeType> = registry::node_types().collect();
     types.sort_by_key(|node_type| node_type.type_ref);

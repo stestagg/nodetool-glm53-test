@@ -7,6 +7,8 @@
 
 use std::io;
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// The magic GUID the handshake answer hashes the client key with (RFC 6455).
@@ -24,47 +26,81 @@ pub enum Message {
     Pong(Vec<u8>),
 }
 
-/// The `Sec-WebSocket-Accept` answer for a client's handshake key.
+/// The `Sec-WebSocket-Accept` answer for a client's handshake key. The
+/// handshake needs SHA-1 and base64 once, for this one fixed string — two
+/// dependency-light crates for that beat owning the primitives.
 pub fn accept_key(client_key: &str) -> String {
-    base64(&sha1(format!("{client_key}{HANDSHAKE_GUID}").as_bytes()))
+    let digest = sha1_smol::Sha1::from(format!("{client_key}{HANDSHAKE_GUID}"))
+        .digest()
+        .bytes();
+    STANDARD.encode(digest)
 }
 
-/// Read one message. Returns `None` when the peer closed the connection.
+/// One connection's message stream: read messages off it one at a time.
 ///
-/// A message that violates the framing rules — an unmasked frame, a
-/// reserved bit, a frame over the size cap, a bad opcode — is an error that
-/// ends the connection; the caller responds by dropping it.
-pub async fn read_message(reader: &mut (impl AsyncRead + Unpin)) -> io::Result<Option<Message>> {
-    let mut fragment: Option<Vec<u8>> = None;
-    loop {
-        let (fin, opcode, payload) = read_frame(reader).await?;
-        match opcode {
-            0x1 if fin => return Ok(Some(Message::Text(utf8(payload)?))),
-            0x1 => match fragment {
-                None => fragment = Some(payload),
-                Some(_) => return Err(invalid("a new message opened while one is in flight")),
-            },
-            0x0 => {
-                let accumulated = fragment
-                    .as_mut()
-                    .ok_or_else(|| invalid("a continuation frame with no message open"))?;
-                accumulated.extend_from_slice(&payload);
-                if accumulated.len() > MAX_MESSAGE {
-                    return Err(too_large());
+/// The half-assembled fragmented message is state of the stream, not of one
+/// read — a control frame answered while a message is in flight leaves the
+/// fragment open for the continuation that follows it, and the messages come
+/// out in wire order.
+pub struct Reader {
+    fragment: Option<Vec<u8>>,
+}
+
+impl Reader {
+    /// A fresh message stream.
+    pub fn new() -> Reader {
+        Reader { fragment: None }
+    }
+
+    /// Read one message. Returns `None` when the peer closed the connection.
+    ///
+    /// A message that violates the framing rules — an unmasked frame, a
+    /// reserved bit, a frame over the size cap, a bad opcode — is an error
+    /// that ends the connection; the caller responds by dropping it.
+    pub async fn read(
+        &mut self,
+        reader: &mut (impl AsyncRead + Unpin),
+    ) -> io::Result<Option<Message>> {
+        loop {
+            let (fin, opcode, payload) = read_frame(reader).await?;
+            match opcode {
+                0x0 => {
+                    let accumulated = self
+                        .fragment
+                        .as_mut()
+                        .ok_or_else(|| invalid("a continuation frame with no message open"))?;
+                    accumulated.extend_from_slice(&payload);
+                    if accumulated.len() > MAX_MESSAGE {
+                        return Err(too_large());
+                    }
+                    if fin {
+                        let text = utf8(
+                            self.fragment
+                                .take()
+                                .expect("a continuation implies a message open"),
+                        )?;
+                        return Ok(Some(Message::Text(text)));
+                    }
                 }
-                if fin {
-                    let text = utf8(
-                        fragment
-                            .take()
-                            .expect("a continuation implies a message open"),
-                    )?;
-                    return Ok(Some(Message::Text(text)));
+                0x1 => {
+                    // Data frames never interleave a message in flight;
+                    // control frames are the only ones that may.
+                    if self.fragment.is_some() {
+                        return Err(invalid("a new message opened while one is in flight"));
+                    }
+                    if fin {
+                        return Ok(Some(Message::Text(utf8(payload)?)));
+                    }
+                    self.fragment = Some(payload);
                 }
+                0x8 if fin => return Ok(None),
+                // Control frames may interleave a fragmented message (RFC
+                // 6455); the ping or pong is answered out of the stream and
+                // the fragment stays open.
+                0x9 if fin => return Ok(Some(Message::Ping(payload))),
+                0xA if fin => return Ok(Some(Message::Pong(payload))),
+                _ => return Err(violation(opcode)),
             }
-            0x8 if fin => return Ok(None),
-            0x9 if fin => return Ok(Some(Message::Ping(payload))),
-            0xA if fin => return Ok(Some(Message::Pong(payload))),
-            _ => return Err(violation(opcode)),
         }
     }
 }
@@ -75,7 +111,6 @@ fn utf8(payload: Vec<u8>) -> io::Result<String> {
 
 fn violation(opcode: u8) -> io::Error {
     invalid(match opcode {
-        0x0 => "a continuation frame with no message open",
         0x2 => "binary frames carry no part of the protocol",
         _ => "an unexpected frame opcode",
     })
@@ -155,90 +190,96 @@ async fn write_frame(
     writer.flush().await
 }
 
-fn sha1(data: &[u8]) -> [u8; 20] {
-    let mut state: [u32; 5] = [
-        0x6745_2301,
-        0xEFCD_AB89,
-        0x98BA_DCFE,
-        0x1032_5476,
-        0xC3D2_E1F0,
-    ];
-    let bit_length = (data.len() as u64) * 8;
-    let mut message = data.to_vec();
-    message.push(0x80);
-    while message.len() % 64 != 56 {
-        message.push(0);
-    }
-    message.extend_from_slice(&bit_length.to_be_bytes());
-    for block in message.as_chunks::<64>().0 {
-        let mut words = [0u32; 80];
-        for (index, word) in block.as_chunks::<4>().0.iter().enumerate() {
-            words[index] = u32::from_be_bytes(*word);
-        }
-        for index in 16..80 {
-            words[index] =
-                (words[index - 3] ^ words[index - 8] ^ words[index - 14] ^ words[index - 16])
-                    .rotate_left(1);
-        }
-        let (mut a, mut b, mut c, mut d, mut e) =
-            (state[0], state[1], state[2], state[3], state[4]);
-        for (index, word) in words.iter().enumerate() {
-            let (f, k) = match index {
-                0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
-                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
-                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
-                _ => (b ^ c ^ d, 0xCA62_C1D6),
-            };
-            let step = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(*word);
-            e = d;
-            d = c;
-            c = b.rotate_left(30);
-            b = a;
-            a = step;
-        }
-        for (state, round) in state.iter_mut().zip([a, b, c, d, e]) {
-            *state = state.wrapping_add(round);
-        }
-    }
-    let mut digest = [0u8; 20];
-    for (index, word) in state.iter().enumerate() {
-        digest[index * 4..][..4].copy_from_slice(&word.to_be_bytes());
-    }
-    digest
-}
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
 
-const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    use super::*;
 
-fn base64(data: &[u8]) -> String {
-    let mut encoded = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let bytes = [
+    /// One masked client frame, its mask zeros so the payload rides as-is.
+    fn frame(fin: bool, opcode: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = vec![
+            (if fin { 0x80 } else { 0 }) | opcode,
+            0x80 | payload.len() as u8,
             0,
-            chunk[0],
-            chunk.get(1).copied().unwrap_or(0),
-            chunk.get(2).copied().unwrap_or(0),
+            0,
+            0,
+            0,
         ];
-        let word = u32::from_be_bytes(bytes);
-        for (index, sextet) in [
-            (word >> 18) & 0x3F,
-            (word >> 12) & 0x3F,
-            (word >> 6) & 0x3F,
-            word & 0x3F,
-        ]
-        .iter()
-        .enumerate()
-        {
-            if index <= chunk.len() {
-                encoded.push(BASE64[*sextet as usize] as char);
-            } else {
-                encoded.push('=');
-            }
-        }
+        out.extend_from_slice(payload);
+        out
     }
-    encoded
+
+    async fn read(bytes: &[u8]) -> io::Result<Option<Message>> {
+        Reader::new().read(&mut Cursor::new(bytes)).await
+    }
+
+    #[tokio::test]
+    async fn a_fragmented_message_completes_from_its_continuation() {
+        let mut bytes = frame(false, 0x1, b"hello ");
+        bytes.extend(frame(true, 0x0, b"world"));
+        assert_eq!(
+            read(&bytes).await.unwrap(),
+            Some(Message::Text("hello world".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_ping_during_a_fragmented_message_comes_out_before_the_message_completes() {
+        let mut bytes = frame(false, 0x1, b"hello");
+        bytes.extend(frame(true, 0x9, b"keepalive"));
+        bytes.extend(frame(true, 0x0, b" world"));
+        let mut stream = Reader::new();
+        let mut bytes = &bytes[..];
+        assert_eq!(
+            stream.read(&mut bytes).await.unwrap(),
+            Some(Message::Ping(b"keepalive".to_vec()))
+        );
+        assert_eq!(
+            stream.read(&mut bytes).await.unwrap(),
+            Some(Message::Text("hello world".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_continuation_without_a_message_open_is_an_error() {
+        let error = read(&frame(true, 0x0, b"stray")).await.unwrap_err();
+        assert!(error.to_string().contains("no message open"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_new_text_frame_while_a_message_is_in_flight_is_an_error() {
+        let mut bytes = frame(false, 0x1, b"open");
+        bytes.extend(frame(true, 0x1, b"again"));
+        let error = read(&bytes).await.unwrap_err();
+        assert!(
+            error.to_string().contains("while one is in flight"),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unmasked_frame_is_an_error() {
+        let bytes = [0x81, 0x00];
+        let error = read(&bytes).await.unwrap_err();
+        assert!(error.to_string().contains("must be masked"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn reserved_bits_set_are_an_error() {
+        let mut bytes = frame(true, 0x1, b"hi");
+        bytes[0] |= 0x40;
+        let error = read(&bytes).await.unwrap_err();
+        assert!(error.to_string().contains("reserved"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_frame_beyond_the_size_cap_is_an_error() {
+        // The 64-bit extended length declares more than the cap allows, so
+        // the error comes before any payload is read.
+        let mut bytes = vec![0x81, 0x80 | 127];
+        bytes.extend(((MAX_MESSAGE as u64) + 1).to_be_bytes());
+        let error = read(&bytes).await.unwrap_err();
+        assert!(error.to_string().contains("too large"), "{error}");
+    }
 }
