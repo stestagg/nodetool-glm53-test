@@ -94,6 +94,18 @@ body {
   border-color: var(--accent);
 }
 
+/* A quieted control — the editing lock a run holds — reads as present
+   but inert, not gone. */
+.chrome button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chrome button:disabled:hover {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
 /* The palette, docked on the left; the right edge stays free for the
    editing sidebar. */
 
@@ -378,6 +390,12 @@ body {
 
 .field::placeholder {
   color: var(--muted);
+}
+
+.field:disabled {
+  color: var(--muted);
+  background: var(--canvas);
+  cursor: default;
 }
 
 /* An input's small field on the node itself, under its name. */

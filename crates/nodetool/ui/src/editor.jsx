@@ -17,7 +17,7 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { NODE_TYPE, connect } from './protocol.js'
-import { EditContext, scalarPossible } from './fields.jsx'
+import { EditContext, LockContext, scalarPossible } from './fields.jsx'
 import { SelfLoopEdge } from './edges.jsx'
 import { PlaceholderNode, TypeNode } from './nodes.jsx'
 import { Sidebar } from './sidebar.jsx'
@@ -132,10 +132,32 @@ export function saveAsksForPath(file, elsewhere) {
   return elsewhere || file?.path == null
 }
 
+// The chrome's one run control: it flips with the run state — Start when
+// idle, Stop while running, no separate mode — and a start needs
+// something to run, an empty definition leaving it disabled.
+export function runControl(run, graph) {
+  const running = run?.running === true
+  return {
+    running,
+    label: running ? 'Stop' : 'Start',
+    enabled: running || (graph?.nodes.length ?? 0) > 0,
+  }
+}
+
+// The status line's reading of the run state: the running state itself,
+// or the last run's outcome, a failure naming what failed.
+export function runStatusText(run) {
+  if (run?.running === true) return 'running'
+  if (run?.outcome === 'failed') return `run failed: ${run.error ?? 'unknown failure'}`
+  if (run?.outcome) return `run ${run.outcome}`
+  return ''
+}
+
 export function Editor() {
   const [listing, setListing] = useState(null)
   const [graph, setGraph] = useState(null)
   const [file, setFile] = useState(null)
+  const [run, setRun] = useState(null)
   const [nodes, setNodes] = useState([])
   const [status, setStatus] = useState({ text: 'connecting…', error: false })
   const protocol = useRef(null)
@@ -145,6 +167,13 @@ export function Editor() {
   // failed gesture disarms it.
   const pendingRefit = useRef(false)
   const { screenToFlowPosition, getViewport, setViewport, fitView } = useReactFlow()
+
+  // While a run is on the definition is held still: every editing gesture
+  // goes quiet — palette drops, moves, wires, deletion, label and
+  // parameter edits, and the file controls — while selection, panning,
+  // and zoom stay live, looking not being editing. The server refuses
+  // whatever slips through.
+  const locked = run?.running === true
 
   // An error is the one message the user must not miss; the status line
   // paints it red.
@@ -182,17 +211,23 @@ export function Editor() {
         onOpen: (request) => {
           protocol.current = request
           request('list_node_types').then(setListing, showError)
-          request('get_definition').then(({ graph, file }) => {
+          request('get_definition').then(({ graph, file, run }) => {
             setGraph(graph)
             setFile(file)
+            setRun(run)
           }, showError)
         },
         onGreeting: () => setStatus({ text: '' }),
-        onDefinition: (graph, file) => {
+        onDefinition: (graph, file, run) => {
           setGraph(graph)
           setFile(file)
+          setRun(run)
         },
         onFile: ({ path, dirty }) => setFile({ path, dirty }),
+        onRun: (state) => {
+          setRun(state)
+          setStatus({ text: runStatusText(state), error: state.outcome === 'failed' })
+        },
         onError: showError,
         onClosed: () =>
           setStatus({ text: 'connection lost — reload the page', error: true }),
@@ -257,13 +292,13 @@ export function Editor() {
     (event) => {
       event.preventDefault()
       const typeRef = event.dataTransfer.getData(NODE_TYPE)
-      if (typeRef === '' || protocol.current === null) return
+      if (typeRef === '' || locked || protocol.current === null) return
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
       protocol
         .current('create_node', { type_ref: typeRef, position })
         .catch(showError)
     },
-    [screenToFlowPosition, showError],
+    [locked, screenToFlowPosition, showError],
   )
 
   const onDragOver = useCallback((event) => {
@@ -331,6 +366,17 @@ export function Editor() {
     [file, showError],
   )
 
+  // The run control's two acts: a start hands the held definition to the
+  // compiler and runs it; a stop ends the run that is on. Either answers
+  // through the run-state push, which flips the control and the lock.
+  const startRun = useCallback(() => {
+    protocol.current?.('start_run')?.catch(showError)
+  }, [showError])
+
+  const stopRun = useCallback(() => {
+    protocol.current?.('stop_run')?.catch(showError)
+  }, [showError])
+
   // The sidebar's node: the one the canvas holds selected, read off the
   // same node state the canvas draws, so a definition push swaps its
   // contents with everything else.
@@ -359,93 +405,101 @@ export function Editor() {
   const types = listing?.types
   const empty =
     graph !== null && graph.nodes.length === 0 && types !== undefined && types.length > 0
+  const control = runControl(run, graph)
 
   return (
     <EditContext.Provider value={edit}>
-      <div className="app">
-        <header className="chrome">
-          <span className="file-name">{file?.path ?? 'untitled'}</span>
-          {hasUnsavedChanges(file) && (
-            <span className="file-dirty">unsaved changes</span>
-          )}
-          <span className="chrome-space" />
-          <button onClick={newGraph}>New</button>
-          <button onClick={openFile}>Open</button>
-          <button onClick={() => save(false)}>Save</button>
-          <button onClick={() => save(true)}>Save as</button>
-        </header>
-        <div className="workspace">
-          <aside className="palette">
-            <h1 className="palette-title">Nodes</h1>
-            {types === undefined ? null : types.length === 0 ? (
-              <p className="palette-empty">
-                No node types are linked into this binary. Link a plugin crate
-                to see its types here.
-              </p>
-            ) : (
-              <ul className="palette-list">
-                {types.map((type) => (
-                  <li
-                    key={type.type_ref}
-                    className="palette-item"
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.setData(NODE_TYPE, type.type_ref)
-                      event.dataTransfer.effectAllowed = 'move'
-                    }}
-                  >
-                    <div className="palette-label">{type.label}</div>
-                    <div className="palette-plugin">{type.plugin}</div>
-                  </li>
-                ))}
-              </ul>
+      <LockContext.Provider value={locked}>
+        <div className="app">
+          <header className="chrome">
+            <span className="file-name">{file?.path ?? 'untitled'}</span>
+            {hasUnsavedChanges(file) && (
+              <span className="file-dirty">unsaved changes</span>
             )}
-          </aside>
-          <main className="canvas" ref={canvasRef}>
-            <ReactFlow
-              nodes={nodes}
-              edges={graph === null ? [] : toEdges(graph)}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              onNodesChange={onNodesChange}
-              onNodeDragStop={onNodeDragStop}
-              onConnect={onConnect}
-              onConnectEnd={onConnectEnd}
-              onDrop={onDrop}
-              onDragOver={onDragOver}
-              fitView
-              // The initial fit never zooms in past 100%: fitting a small
-              // graph up to maxZoom would lurch the view under the pointer.
-              fitViewOptions={{ maxZoom: 1 }}
-              minZoom={0.25}
-              maxZoom={2.5}
-              // Delete/Backspace is the deletion gesture. A wire is a drag
-              // from either end — a click never starts or lands one — and
-              // the drag threshold keeps a port click from reading as a
-              // drag-off.
-              deleteKeyCode={['Delete', 'Backspace']}
-              connectionDragThreshold={4}
-              connectOnClick={false}
-            >
-              <Background variant="dots" gap={24} size={1.5} />
-            </ReactFlow>
-            {empty && (
-              <div className="canvas-hint">
-                Drag a node type from the palette onto the canvas.
-              </div>
-            )}
-          </main>
-          <Sidebar
-            node={selected}
-            type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
-            wiredInputs={selectedWiredInputs}
-            baseScalars={listing?.baseScalars ?? {}}
-          />
+            <span className="chrome-space" />
+            <button disabled={!control.enabled} onClick={control.running ? stopRun : startRun}>
+              {control.label}
+            </button>
+            <button disabled={locked} onClick={newGraph}>New</button>
+            <button disabled={locked} onClick={openFile}>Open</button>
+            <button disabled={locked} onClick={() => save(false)}>Save</button>
+            <button disabled={locked} onClick={() => save(true)}>Save as</button>
+          </header>
+          <div className="workspace">
+            <aside className="palette">
+              <h1 className="palette-title">Nodes</h1>
+              {types === undefined ? null : types.length === 0 ? (
+                <p className="palette-empty">
+                  No node types are linked into this binary. Link a plugin crate
+                  to see its types here.
+                </p>
+              ) : (
+                <ul className="palette-list">
+                  {types.map((type) => (
+                    <li
+                      key={type.type_ref}
+                      className="palette-item"
+                      draggable={!locked}
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData(NODE_TYPE, type.type_ref)
+                        event.dataTransfer.effectAllowed = 'move'
+                      }}
+                    >
+                      <div className="palette-label">{type.label}</div>
+                      <div className="palette-plugin">{type.plugin}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </aside>
+            <main className="canvas" ref={canvasRef}>
+              <ReactFlow
+                nodes={nodes}
+                edges={graph === null ? [] : toEdges(graph)}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                onNodesChange={onNodesChange}
+                onNodeDragStop={onNodeDragStop}
+                onConnect={onConnect}
+                onConnectEnd={onConnectEnd}
+                onDrop={onDrop}
+                onDragOver={onDragOver}
+                fitView
+                // The initial fit never zooms in past 100%: fitting a small
+                // graph up to maxZoom would lurch the view under the pointer.
+                fitViewOptions={{ maxZoom: 1 }}
+                minZoom={0.25}
+                maxZoom={2.5}
+                // Delete/Backspace is the deletion gesture — the lock takes
+                // it away while a run is on. A wire is a drag from either
+                // end — a click never starts or lands one — and the drag
+                // threshold keeps a port click from reading as a drag-off.
+                deleteKeyCode={locked ? null : ['Delete', 'Backspace']}
+                nodesDraggable={!locked}
+                nodesConnectable={!locked}
+                connectionDragThreshold={4}
+                connectOnClick={false}
+              >
+                <Background variant="dots" gap={24} size={1.5} />
+              </ReactFlow>
+              {empty && (
+                <div className="canvas-hint">
+                  Drag a node type from the palette onto the canvas.
+                </div>
+              )}
+            </main>
+            <Sidebar
+              node={selected}
+              type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
+              wiredInputs={selectedWiredInputs}
+              baseScalars={listing?.baseScalars ?? {}}
+            />
+          </div>
+          <footer className={`status${status.error ? ' error' : ''}`}>
+            {status.text}
+          </footer>
         </div>
-        <footer className={`status${status.error ? ' error' : ''}`}>
-          {status.text}
-        </footer>
-      </div>
+      </LockContext.Provider>
     </EditContext.Provider>
   )
 }

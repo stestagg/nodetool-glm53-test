@@ -12,19 +12,22 @@
 //! which type it is — and re-validates nothing: compile time already
 //! decided, and a run trusts its compiled graph.
 //!
-//! Every node's [`drive`] runs as its own task, and a run ends only two
-//! ways. Every node complete — the wired consumers included, for they are
-//! one more downstream of the same fan-out — so awaiting the run is
-//! sufficient to have received every value and the end of every consumed
-//! stream. Or the first error — a behaviour's, a consumer's, a run task's
-//! panic caught and told where its node is known, or the engine refusing a
-//! node whose type declares no behaviour — ends the run, fail-fast: the
-//! remaining work stops, and the error names the node instance — its label
-//! and uuid — and what went wrong. Mid-run cancellation is engine-internal:
-//! in-flight values may still sit in a hand-off when the run ends; the
-//! guarantee is that the run ends and the error is the last word, not a
-//! frozen instant. The tasks ride the caller's tokio runtime: start a run
-//! inside one.
+//! Every node's [`drive`] runs as its own task, and a run ends three ways.
+//! Every node complete — the wired consumers included, for they are one
+//! more downstream of the same fan-out — so awaiting the run is sufficient
+//! to have received every value and the end of every consumed stream. Or
+//! the first error — a behaviour's, a consumer's, a run task's panic caught
+//! and told where its node is known, or the engine refusing a node whose
+//! type declares no behaviour — ends the run, fail-fast: the remaining
+//! work stops, and the error names the node instance — its label and uuid
+//! — and what went wrong. Or a stop asked on the channel attached with
+//! [`Run::stop_on`] ends it: the remaining work stops where it stands and
+//! in-flight delivery is not promised — the user's stop adopts the
+//! fail-fast cancellation posture, the one ending that abandons undelivered
+//! values. Mid-run cancellation is engine-internal: in-flight values may
+//! still sit in a hand-off when the run ends; the guarantee is that the run
+//! ends and the ending is told, not a frozen instant. The tasks ride the
+//! caller's tokio runtime: start a run inside one.
 //!
 //! A run holds its compiled graph read-only and leaves nothing behind on
 //! it: a second run of the same compiled graph, and a run of a recompiled
@@ -58,6 +61,7 @@ use std::task::Poll;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::watch;
 use tokio::task::{JoinError, JoinSet};
 use uuid::Uuid;
 
@@ -67,15 +71,17 @@ use crate::{ConvertFn, Value};
 
 /// A run of a compiled graph: the engine's one entry point.
 ///
-/// Build it with [`Run::new`], attach consumers with [`Run::consume`] and
-/// an events observer with [`Run::observe`] while it is still being
-/// built — wiring is fixed at start — and run it with [`Run::start`]. The
-/// run borrows its compiled graph, mutates nothing, and leaves nothing
-/// behind: run it again and it starts clean.
+/// Build it with [`Run::new`], attach consumers with [`Run::consume`], an
+/// events observer with [`Run::observe`], and a stop channel with
+/// [`Run::stop_on`] while it is still being built — wiring is fixed at
+/// start — and run it with [`Run::start`]. The run borrows its compiled
+/// graph, mutates nothing, and leaves nothing behind: run it again and it
+/// starts clean.
 pub struct Run<'g> {
     graph: &'g CompiledGraph,
     consumers: Vec<ConsumerWiring>,
     observer: Option<Arc<dyn Observer>>,
+    stop: Option<watch::Receiver<bool>>,
 }
 
 /// One attached consumer: the node output it joins, and the future built
@@ -103,7 +109,22 @@ impl<'g> Run<'g> {
             graph,
             consumers: Vec::new(),
             observer: None,
+            stop: None,
         }
+    }
+
+    /// Attach the channel a stop is asked on: a `true` sent on it ends the
+    /// run as its third ending — the remaining work stops where it stands,
+    /// in-flight delivery is not promised, and the observer is told run
+    /// finished stopped. A run making no progress, hung on an input that
+    /// never fires, is ended by a stop as readily as a busy one. A stop
+    /// arriving before [`Run::start`] begins still ends the run as stopped.
+    /// Attaching is for building: past [`Run::start`] the wiring is fixed.
+    /// A run with no channel attached — the default — ends only its natural
+    /// ways; a channel whose sender is gone can never ask again, and the
+    /// run ends naturally.
+    pub fn stop_on(&mut self, stop: watch::Receiver<bool>) {
+        self.stop = Some(stop);
     }
 
     /// Subscribe the run's events observer. A run with no observer — the
@@ -149,11 +170,13 @@ impl<'g> Run<'g> {
     }
 
     /// Run the graph: every node's behaviour driven as its own task, values
-    /// propagating as they become available. `Ok(())` is every node
-    /// complete, wired consumers included — awaiting the run is sufficient
-    /// to have received every value and the end of every consumed stream.
-    /// `Err` is the first error surfaced, with the remaining work stopped.
-    /// A subscribed observer is told each event as the run unfolds; the
+    /// propagating as they become available. `Ok(())` is the run ended
+    /// without an error — every node complete, wired consumers included, or
+    /// a stop ended it; only the complete ending promises that every value
+    /// was delivered, a stop abandoning whatever is in flight. The
+    /// observer's run-finished outcome names which ending it was. `Err` is
+    /// the first error surfaced, with the remaining work stopped. A
+    /// subscribed observer is told each event as the run unfolds; the
     /// telling never waits on it, and the run ends the same way whether it
     /// listens or not. A subscribed stream always opens and closes: even a
     /// run refused before it starts is told run started, then run finished
@@ -163,6 +186,7 @@ impl<'g> Run<'g> {
             graph,
             consumers,
             observer,
+            mut stop,
         } = self;
         let mut set = JoinSet::new();
 
@@ -293,31 +317,56 @@ impl<'g> Run<'g> {
             ));
         }
 
-        // The run ends one of its two ways: every task joined, or the first
-        // error told. The tasks are the run's own — nobody else cancels
-        // them — so only the join loop cancels, and it returns straight
-        // after aborting the rest. Either way the observer is told the
-        // run's outcome before the run returns, the run's last event, sent
-        // after every node's last one.
-        while let Some(joined) = set.join_next().await {
-            match joined {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
+        // The run ends one of its three ways: every task joined, or the
+        // first error told, or a stop asked. The tasks are the run's own —
+        // nobody else cancels them — so only the join loop cancels, and it
+        // returns straight after aborting the rest. Either way the observer
+        // is told the run's outcome before the run returns, the run's last
+        // event, sent after every node's last one.
+        loop {
+            tokio::select! {
+                joined = set.join_next() => match joined {
+                    Some(Ok(Ok(()))) => {}
+                    Some(Ok(Err(error))) => {
+                        set.abort_all();
+                        let report = error.to_string();
+                        run_finished(&events, RunOutcome::Failed(report));
+                        return Err(error);
+                    }
+                    Some(Err(join_error)) => {
+                        set.abort_all();
+                        let lost = lost_run_task(join_error);
+                        run_finished(&events, RunOutcome::Failed(lost.to_string()));
+                        return Err(lost);
+                    }
+                    None => {
+                        run_finished(&events, RunOutcome::Complete);
+                        return Ok(());
+                    }
+                },
+                _ = wait_stop(&mut stop) => {
                     set.abort_all();
-                    let report = error.to_string();
-                    run_finished(&events, RunOutcome::Failed(report));
-                    return Err(error);
-                }
-                Err(join_error) => {
-                    set.abort_all();
-                    let lost = lost_run_task(join_error);
-                    run_finished(&events, RunOutcome::Failed(lost.to_string()));
-                    return Err(lost);
+                    run_finished(&events, RunOutcome::Stopped);
+                    return Ok(());
                 }
             }
         }
-        run_finished(&events, RunOutcome::Complete);
-        Ok(())
+    }
+}
+
+/// Await a stop on the attached channel, if any. A channel whose sender is
+/// gone can never ask — the run then ends only its natural ways. Cancel-safe:
+/// the select rebuilds the wait every loop, and `changed` keeps its
+/// last-seen version.
+async fn wait_stop(stop: &mut Option<watch::Receiver<bool>>) {
+    let Some(receiver) = stop.as_mut() else {
+        return std::future::pending().await;
+    };
+    loop {
+        match receiver.changed().await {
+            Ok(()) => return,
+            Err(_) => std::future::pending().await,
+        }
     }
 }
 
@@ -487,6 +536,9 @@ pub enum RunOutcome {
     /// The first error ended the run — the same report [`Run::start`]
     /// returns.
     Failed(String),
+    /// A stop asked on the attached channel ended the run: the remaining
+    /// work stopped where it stands, whatever was in flight abandoned.
+    Stopped,
 }
 
 /// The identity of a node instance, as every per-node event names it: the
@@ -567,6 +619,7 @@ impl Observer for PrintingObserver {
             Event::RunFinished { outcome } => match outcome {
                 RunOutcome::Complete => "run completed".to_owned(),
                 RunOutcome::Failed(error) => format!("run failed: {error}"),
+                RunOutcome::Stopped => "run stopped".to_owned(),
             },
         };
         // The observer is a sink: a line that cannot be written — a

@@ -10,6 +10,7 @@
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
+use super::run::{Outcome, RunState};
 use crate::graph::{GraphDefinition, Mapping, ParameterValue, SCHEMA_VERSION};
 use crate::registry;
 use crate::{NodeType, Port};
@@ -91,22 +92,46 @@ pub fn file_state(file: Option<&str>, dirty: bool) -> Value {
     json!({ "path": file, "dirty": dirty })
 }
 
-/// The whole definition with the file state beside it — the message every
-/// connection renders the editor from. The graph is serialized first and
-/// the message composed from that value, so the failure the `Result`
-/// declares — the definition carrying something JSON cannot, which the
-/// caller reports instead of papering over — happens here rather than as
-/// a panic inside the composition.
+/// The run state that travels beside the definition, like the file state:
+/// whether a run is on and, when one is not, how the last one ended —
+/// the outcome, with what failed named. Every connection renders its
+/// run control and the editing lock from here, so no tab keeps run
+/// bookkeeping of its own.
+pub fn run_state(run: &RunState) -> Value {
+    let (running, outcome, error) = match run {
+        RunState::Running { .. } => (true, None, None),
+        RunState::Idle { outcome: None } => (false, None, None),
+        RunState::Idle {
+            outcome: Some(Outcome::Completed),
+        } => (false, Some("completed"), None),
+        RunState::Idle {
+            outcome: Some(Outcome::Stopped),
+        } => (false, Some("stopped"), None),
+        RunState::Idle {
+            outcome: Some(Outcome::Failed(error)),
+        } => (false, Some("failed"), Some(error)),
+    };
+    json!({ "running": running, "outcome": outcome, "error": error })
+}
+
+/// The whole definition with the file state and the run state beside it —
+/// the message every connection renders the editor from. The graph is
+/// serialized first and the message composed from that value, so the
+/// failure the `Result` declares — the definition carrying something JSON
+/// cannot, which the caller reports instead of papering over — happens
+/// here rather than as a panic inside the composition.
 pub fn definition_message(
     graph: &GraphDefinition,
     file: Option<&str>,
     dirty: bool,
+    run: &RunState,
 ) -> Result<String, serde_json::Error> {
     let graph = serde_json::to_value(graph)?;
     serde_json::to_string(&json!({
         "type": "definition",
         "graph": graph,
         "file": file_state(file, dirty),
+        "run": run_state(run),
     }))
 }
 
@@ -115,6 +140,14 @@ pub fn definition_message(
 pub fn file_message(file: Option<&str>, dirty: bool) -> String {
     serde_json::to_string(&json!({ "type": "file", "path": file, "dirty": dirty }))
         .expect("the file state always serialises")
+}
+
+/// The run state pushed alone, for a change that leaves the definition
+/// untouched — a run starting or ending.
+pub fn run_message(run: &RunState) -> String {
+    let mut message = run_state(run);
+    message["type"] = json!("run");
+    serde_json::to_string(&message).expect("the run state always serialises")
 }
 
 /// An error reply, echoing the id of the request it answers when it can.

@@ -12,10 +12,11 @@ export const NODE_TYPE = 'application/x-nodetool-node-type'
 // Open the editor's connection. `onOpen(request)` receives the request
 // function once the socket is live; `onGreeting` fires when the server's
 // greeting push arrives; the others receive pushes and connection events.
-// `onDefinition` carries the graph and the file state beside it; `onFile`
-// carries a file-state change that leaves the graph untouched — a save.
-// Returns a function that closes the connection.
-export function connect({ onOpen, onGreeting, onDefinition, onFile, onError, onClosed }) {
+// `onDefinition` carries the graph, the file state, and the run state
+// beside it; `onFile` carries a file-state change that leaves the graph
+// untouched — a save; `onRun` carries a run-state change — a run starting
+// or ending. Returns a function that closes the connection.
+export function connect({ onOpen, onGreeting, onDefinition, onFile, onRun, onError, onClosed }) {
   const socket = new WebSocket(
     `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`,
   )
@@ -44,13 +45,17 @@ export function connect({ onOpen, onGreeting, onDefinition, onFile, onError, onC
         onGreeting()
         break
       case 'definition':
-        if (message.id === undefined) onDefinition(message.graph, message.file)
+        if (message.id === undefined)
+          onDefinition(message.graph, message.file, message.run)
         else
           settle(message.id, ({ resolve }) =>
-            resolve({ graph: message.graph, file: message.file }))
+            resolve({ graph: message.graph, file: message.file, run: message.run }))
         break
       case 'file':
         onFile(message)
+        break
+      case 'run':
+        onRun(message)
         break
       case 'node_types':
         // The listing and its base-scalar fact ride one reply.
@@ -67,6 +72,8 @@ export function connect({ onOpen, onGreeting, onDefinition, onFile, onError, onC
       case 'file_opened':
       case 'file_saved':
       case 'graph_created':
+      case 'run_started':
+      case 'run_stopped':
         settle(message.id, ({ resolve }) => resolve(message))
         break
       case 'error':

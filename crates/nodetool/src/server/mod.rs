@@ -2,19 +2,26 @@
 //! embedded UI over one address and speaks the JSON envelope protocol over
 //! one websocket connection per browser.
 //!
-//! The server owns the graph and the file it belongs to. It holds the
-//! in-memory definition — the same document the files carry and the
-//! compiler takes — and the browser is a synced view of it: every edit is
-//! an operation applied here, and the whole updated definition is pushed
-//! to every connection, so a reload or a second tab simply asks for the
-//! definition again. The file state — the path being edited and whether
-//! the definition has unsaved changes — travels beside the definition
-//! wherever the definition travels, and is pushed alone when a save
-//! changes it without touching the definition. One graph state, not
-//! two; edits land last-write-wins, with no locking, presence, or merge
-//! ceremony, for a local single-user tool. Opening and saving go through
-//! the one file format's loader and dump, so a file the headless run
-//! takes is the file the editor edits.
+//! The server owns the graph, the file it belongs to, and the run of the
+//! graph. It holds the in-memory definition — the same document the files
+//! carry and the compiler takes — and the browser is a synced view of it:
+//! every edit is an operation applied here, and the whole updated
+//! definition is pushed to every connection, so a reload or a second tab
+//! simply asks for the definition again. The file state — the path being
+//! edited and whether the definition has unsaved changes — travels beside
+//! the definition wherever the definition travels, and is pushed alone
+//! when a save changes it without touching the definition. The run state
+//! — whether a run is on and how the last one ended — travels beside them
+//! the same way. One graph state, not two; edits land last-write-wins,
+//! with no locking, presence, or merge ceremony, for a local single-user
+//! tool. While a run is on, the definition is held still: the UI quiets
+//! its editing controls and the server refuses any edit operation that
+//! arrives, the one rule covering every editing operation. Starting a run
+//! compiles the held definition afresh — every start compiles, nothing
+//! compiled survives a run — and the run's endings come back through the
+//! engine's event stream. Opening and saving go through the one file
+//! format's loader and dump, so a file the headless run takes is the file
+//! the editor edits.
 //!
 //! The websocket is untrusted input at a parse boundary: a message that
 //! fails to parse, is not a JSON object, names an unknown type, or carries
@@ -28,18 +35,22 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::{json, Value};
 use tokio::net::TcpStream;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 
+use crate::compile;
 use crate::graph::{self, Edge, GraphDefinition};
+use crate::registry::Registry;
 use crate::NodeType;
 use uuid::Uuid;
 
 mod assets;
 mod http;
 mod protocol;
+mod run;
 mod ws;
 
 pub use protocol::{greeting, PROTOCOL_VERSION};
+pub use run::{Outcome, RunState};
 
 /// The address the editor serves on by default: loopback only — this is a
 /// local tool.
@@ -52,38 +63,61 @@ enum Outbound {
 }
 
 /// The editing session: the held definition, the file it belongs to —
-/// none while the graph is untitled — and whether the definition has
-/// changed since that file was last opened or saved. One lock over the
-/// three, so a file operation cannot interleave with an edit.
+/// none while the graph is untitled — whether the definition has
+/// changed since that file was last opened or saved, and the run of the
+/// graph. One lock over the four, so a file operation cannot interleave
+/// with an edit, and a run cannot start between an edit's check and its
+/// application.
 struct Session {
     graph: GraphDefinition,
     file: Option<String>,
     dirty: bool,
+    run: RunState,
 }
 
 /// The editing server: the held session, the palette listing of every
-/// linked plugin's node types, and the push channel every connection rides.
+/// linked plugin's node types, the registry the start compiles against,
+/// and the push channel every connection rides.
 pub struct Editor {
-    session: Mutex<Session>,
+    session: Arc<Mutex<Session>>,
     listing: Vec<&'static NodeType>,
+    registry: Registry,
     base_scalars: serde_json::Map<String, Value>,
     pushes: broadcast::Sender<String>,
 }
+
+/// The message types that edit the held definition — the node operations
+/// and the file operations with them. Refused while a run is on; looking
+/// (the listing, the definition) stays open.
+const EDITING: &[&str] = &[
+    "create_node",
+    "move_node",
+    "set_label",
+    "set_parameter",
+    "wire",
+    "unhook",
+    "delete_node",
+    "open_file",
+    "save_file",
+    "new_graph",
+];
 
 impl Editor {
     /// An editor holding `definition` and the file it came from, if any —
     /// `None` for a fresh, untitled graph. Launching on a graph file hands
     /// the loader's definition and the file's path here; the definition is
-    /// clean until an edit lands.
+    /// clean until an edit lands, and no run is on.
     pub fn new(definition: GraphDefinition, file: Option<String>) -> Editor {
         let (pushes, _) = broadcast::channel(64);
         Editor {
-            session: Mutex::new(Session {
+            session: Arc::new(Mutex::new(Session {
                 graph: definition,
                 file,
                 dirty: false,
-            }),
+                run: RunState::Idle { outcome: None },
+            })),
             listing: protocol::node_type_listing(),
+            registry: Registry::collect(),
             base_scalars: protocol::base_scalars(),
             pushes,
         }
@@ -138,6 +172,17 @@ impl Editor {
         if id.is_none() {
             return protocol::error_reply(None, "a message must carry an `id`");
         }
+        // While a run is on the definition is held still, and the server
+        // backs the lock the UI shows: any edit operation that arrives is
+        // refused, naming the running state, before it can touch anything.
+        // One rule, covering every editing operation — the node operations
+        // and the file ones with them.
+        if EDITING.contains(&kind.as_str()) && self.session().run.running() {
+            return protocol::error_reply(
+                id,
+                "a run is on: the definition is held still until it ends",
+            );
+        }
         let reply = match kind.as_str() {
             "list_node_types" => self.list_node_types(&mut fields),
             "get_definition" => self.get_definition(&mut fields),
@@ -151,6 +196,8 @@ impl Editor {
             "open_file" => self.open_file(&mut fields),
             "save_file" => self.save_file(&mut fields),
             "new_graph" => self.new_graph(&mut fields),
+            "start_run" => self.start_run(&mut fields),
+            "stop_run" => self.stop_run(&mut fields),
             other => Err(format!("unknown message type `{other}`")),
         };
         match reply {
@@ -188,6 +235,7 @@ impl Editor {
             "type": "definition",
             "graph": graph,
             "file": protocol::file_state(session.file.as_deref(), session.dirty),
+            "run": protocol::run_state(&session.run),
         }))
     }
 
@@ -436,18 +484,72 @@ impl Editor {
         Ok(json!({ "type": "graph_created" }))
     }
 
-    /// Push the whole updated definition, with the file state beside it,
-    /// to every connection — never the operation. The browser holds no
-    /// graph state of its own, so a push it can render without applying
-    /// or merging anything is the one shape that can never diverge from
-    /// what the server holds. Called with the session still locked, so the
-    /// pushes leave in the order the operations applied and an older
-    /// snapshot can never arrive after a newer one.
+    /// Start a run: the held definition compiles afresh — every start
+    /// compiles, nothing compiled survives a run, so whatever was edited
+    /// last is exactly what runs — and a clean compile begins the run, its
+    /// state pushed to every connection. The compiled graph moves into the
+    /// run's own task and dies with it; the endings come back through the
+    /// engine's event stream. The whole operation holds the session lock:
+    /// the definition compiled is exactly the last one before running, and
+    /// no edit can land between the compile and the run's lock.
+    ///
+    /// A run already on refuses a second start; an empty definition has
+    /// nothing to run and is named; a definition that does not compile is
+    /// answered with the errors, which name what and where, the state left
+    /// idle and editing untouched — enforcement is compile time's, never
+    /// the editor's.
+    fn start_run(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
+        protocol::done(fields)?;
+        let mut session = self.session();
+        if session.run.running() {
+            return Err("a run is already on: stop it before starting another".to_owned());
+        }
+        if session.graph.nodes.is_empty() {
+            return Err("the held definition has no nodes: there is nothing to run".to_owned());
+        }
+        let compiled = compile::compile(&session.graph, &self.registry)
+            .map_err(|errors| format!("the definition does not compile:\n{}", errors.join("\n")))?;
+        let (stop, stop_requested) = watch::channel(false);
+        session.run = RunState::Running { stop };
+        self.push_run(&session);
+        run::spawn(
+            Arc::clone(&self.session),
+            self.pushes.clone(),
+            compiled,
+            stop_requested,
+        );
+        Ok(json!({ "type": "run_started" }))
+    }
+
+    /// Stop the run that is on: the engine ends it — remaining work
+    /// stopped, in-flight delivery not promised — and its run-finished
+    /// event carries the stopped outcome back to every connection. No run
+    /// on, nothing to stop, named.
+    fn stop_run(&self, fields: &mut serde_json::Map<String, Value>) -> Result<Value, String> {
+        protocol::done(fields)?;
+        let session = self.session();
+        match &session.run {
+            RunState::Running { stop } => {
+                let _ = stop.send(true);
+            }
+            RunState::Idle { .. } => return Err("no run is on to stop".to_owned()),
+        }
+        Ok(json!({ "type": "run_stopped" }))
+    }
+
+    /// Push the whole updated definition, with the file state and the run
+    /// state beside it, to every connection — never the operation. The
+    /// browser holds no graph state of its own, so a push it can render
+    /// without applying or merging anything is the one shape that can
+    /// never diverge from what the server holds. Called with the session
+    /// still locked, so the pushes leave in the order the operations
+    /// applied and an older snapshot can never arrive after a newer one.
     fn push_definition(&self, session: &Session) {
         let message = match protocol::definition_message(
             &session.graph,
             session.file.as_deref(),
             session.dirty,
+            &session.run,
         ) {
             Ok(message) => message,
             Err(error) => protocol::error_reply(
@@ -465,6 +567,12 @@ impl Editor {
             session.file.as_deref(),
             session.dirty,
         ));
+    }
+
+    /// Push the run state alone: the one run change that leaves the
+    /// definition untouched, a run starting or ending.
+    fn push_run(&self, session: &Session) {
+        let _ = self.pushes.send(protocol::run_message(&session.run));
     }
 
     async fn accept(self: &Arc<Self>, mut stream: TcpStream) -> io::Result<()> {

@@ -1,0 +1,70 @@
+//! The setup the editor server's test files share: editors to test
+//! against, the one-message seam, and the operation and file helpers the
+//! editing and run tests both build from.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use nodetool::graph;
+use nodetool::server::Editor;
+use serde_json::Value;
+
+pub fn editor() -> Editor {
+    Editor::new(graph::GraphDefinition::empty(), None)
+}
+
+pub fn editor_holding(text: &str) -> Editor {
+    Editor::new(
+        graph::load(text).expect("the test seeds a loadable definition"),
+        None,
+    )
+}
+
+pub fn send(editor: &Editor, message: &str) -> Value {
+    serde_json::from_str(&editor.handle(message)).expect("every reply is a JSON object")
+}
+
+pub fn held_definition(editor: &Editor) -> Value {
+    send(editor, r#"{"id": 0, "type": "get_definition"}"#)["graph"].clone()
+}
+
+/// Create one node at a fixed spot, answering its uuid: the setup step
+/// the wire, label, parameter, unhook, delete, and run tests build
+/// graphs from, positions being incidental to them.
+pub fn create(editor: &Editor, id: u64, type_ref: &str) -> String {
+    send(
+        editor,
+        &format!(
+            r#"{{"id": {id}, "type": "create_node", "type_ref": "{type_ref}", "position": {{"x": 0, "y": 0}}}}"#
+        ),
+    )["uuid"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Set or clear a node's label override; the empty label means the type's
+/// default.
+pub fn edit_label(editor: &Editor, id: u64, uuid: &str, label: &str) -> Value {
+    send(
+        editor,
+        &format!(r#"{{"id": {id}, "type": "set_label", "uuid": "{uuid}", "label": "{label}"}}"#),
+    )
+}
+
+/// A unique path under the system temp directory, so test runs never
+/// collide; the file itself the test writes and removes.
+pub fn temp_path(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("nodetool-{name}-{}.yml", uuid::Uuid::new_v4()))
+}
+
+/// A graph file on disk carrying `text`: what open and save need.
+pub fn written_graph(name: &str, text: &str) -> PathBuf {
+    let path = temp_path(name);
+    fs::write(&path, text).expect("the test writes its graph file");
+    path
+}
+
+pub fn path_field(path: &Path) -> String {
+    serde_json::to_string(&path.to_string_lossy().into_owned()).unwrap()
+}

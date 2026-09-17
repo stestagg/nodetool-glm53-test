@@ -1,0 +1,13 @@
+schema_version: 1
+name: ticker
+nodes:
+- uuid: 6a1d4f2e-3b58-4c97-a2d1-8f5e0c7b9a30
+  type_ref: text/ticker
+  label: The ticker
+  parameters:
+    count: 100000
+  metadata:
+    position:
+      x: 320
+      y: 120
+edges: []

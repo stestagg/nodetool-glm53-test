@@ -55,7 +55,10 @@ scalar data types.
   (`alpha` is sub-grouped, `beta` is flat, `gamma` supplies the compiler
   tests' node types, `delta` supplies the engine tests' node types).
 - `examples/plugins` — small example plugin crates (`shapes` is sub-grouped,
-  `text` is flat).
+  `text` is flat). The text plugin's `Ticker` is a slow source: fired by
+  its `count` parameter it counts from one through the count, a fixed
+  pause between values — the one shipped node a run lasts long enough to
+  watch, edit against, and stop.
 - `examples/list-nodes` — demo binary linked against both example plugins;
   prints the registry listing: node types, then data types with their
   metadata and declared conversions.
@@ -135,9 +138,47 @@ takes at most one upstream, so a wire dropped on an already-wired input
 replaces the old wire, and a wire released anywhere it cannot land cancels
 quietly. Dragging a wired input's end off and letting go unhooks it.
 Delete (or Backspace) removes the selected node together with its wires.
-Nothing is checked while editing — types, ports, and cycles are judged
+nothing is checked while editing — types, ports, and cycles are judged
 when a run is started. The server holds the graph: a reload or a second
 tab shows the same graph, and an edit in one appears in the other.
+
+The chrome carries the run beside the file controls: one control that
+reads Start when the editor is idle and Stop while a run is on — the
+editor session itself is the interactive mode, there is no mode to
+switch on. Start hands the definition the server holds to the compiler —
+every start compiles afresh, so whatever was edited last is exactly what
+runs — and on a clean compile the run begins: the control flips to Stop
+and every connection is pushed the new run state. A compile failure is
+reported in the status line, the errors naming what and where; the run
+never starts, the state stays idle, and editing stays exactly as free as
+it was — the editor never polices, compile decides. While a run is on
+the definition is held still: palette drops, node moves, wires and
+unhooking, deletion, label and parameter edits, and the file controls
+are inert, and a second tab's edit is refused server-side — selection,
+panning, and zoom stay live, looking not being editing. The run ends by
+itself when every node completes — idle returns, the outcome shows
+completed, and editing re-enables without anyone pressing Stop; a node's
+error ends it fail-fast with the failure naming the node instance and
+what went wrong; and Stop ends it promptly, the outcome showing stopped
+— including a run making no progress because a node's input never fires
+(a `Format` whose `template` is neither connected nor parameterised
+while its `value` is, is one way to build that). Run state — idle
+or running, and the last run's outcome — is server state like the file:
+a second tab and a reload show it, and a start or stop made in one tab
+is visible in the others. The editor's outputs no node consumes are
+discarded; attaching a console printer to what a run produces is not the
+editor's business.
+
+```sh
+cargo run -p visual -- examples/visual/graphs/ticker.yml  # the long-running sample
+```
+
+The ticker sample runs a `Ticker` to a large count — 100000 values, one
+every 100ms — so the run lasts while the run control is exercised: drop
+and wire nodes against it and watch every editing gesture do nothing,
+then press Stop and see editing return. Without it, every node the
+shipped plugins build completes in microseconds and no run lasts long
+enough to observe or interrupt.
 
 The editor's graph lives in a graph file. The chrome names the file being
 edited — untitled until a first save — with an unsaved-changes marker an

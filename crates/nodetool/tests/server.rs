@@ -1,56 +1,26 @@
 //! The editor server's operations against the held session: the listing,
 //! the create, move, label, parameter, wire, unhook, and delete
 //! operations, the file operations — launch-with-file, open, save, fresh
-//! graph — and every malformed operation path. The transport — the
-//! greeting, the envelope, the served socket — is connection.rs's.
+//! graph — and every malformed operation path. The run — start, stop, the
+//! outcomes, the editing lock, and the run state's pushes and resync — is
+//! server_run.rs's. The transport — the greeting, the envelope, the
+//! served socket — is connection.rs's.
+
+mod server_common;
 
 use std::fs;
-use std::path::{Path, PathBuf};
 
 use nodetool::graph;
 use nodetool::registry;
 use nodetool::server::Editor;
 use serde_json::{json, Value};
+use server_common::*;
 use test_plugin_alpha as _;
 use test_plugin_beta as _;
-
-fn editor() -> Editor {
-    Editor::new(graph::GraphDefinition::empty(), None)
-}
-
-fn editor_holding(text: &str) -> Editor {
-    Editor::new(
-        graph::load(text).expect("the test seeds a loadable definition"),
-        None,
-    )
-}
-
-fn send(editor: &Editor, message: &str) -> Value {
-    serde_json::from_str(&editor.handle(message)).expect("every reply is a JSON object")
-}
 
 fn push(receiver: &mut tokio::sync::broadcast::Receiver<String>) -> Value {
     serde_json::from_str(&receiver.blocking_recv().expect("a push arrives"))
         .expect("a push is JSON")
-}
-
-fn held_definition(editor: &Editor) -> Value {
-    send(editor, r#"{"id": 0, "type": "get_definition"}"#)["graph"].clone()
-}
-
-/// Create one node at a fixed spot, answering its uuid: the setup step the
-/// wire, label, parameter, unhook, and delete tests build graphs from,
-/// positions being incidental to them.
-fn create(editor: &Editor, id: u64, type_ref: &str) -> String {
-    send(
-        editor,
-        &format!(
-            r#"{{"id": {id}, "type": "create_node", "type_ref": "{type_ref}", "position": {{"x": 0, "y": 0}}}}"#
-        ),
-    )["uuid"]
-        .as_str()
-        .unwrap()
-        .to_owned()
 }
 
 const SEEDED: &str = "schema_version: 1
@@ -65,15 +35,6 @@ nodes:
       position: { x: 80, y: 120 }
       color: \"#4a90d9\"
 edges: []";
-
-/// Set or clear a node's label override; the empty label means the type's
-/// default.
-fn edit_label(editor: &Editor, id: u64, uuid: &str, label: &str) -> Value {
-    send(
-        editor,
-        &format!(r#"{{"id": {id}, "type": "set_label", "uuid": "{uuid}", "label": "{label}"}}"#),
-    )
-}
 
 /// Set or clear an input's parameter value. The value is the typed text,
 /// carried as a JSON string and read server-side as the file format
@@ -921,23 +882,6 @@ nodes:
     metadata:
       position: { x: 30, y: 40 }
 edges: []";
-
-/// A unique path under the system temp directory, so test runs never
-/// collide; the file itself the test writes and removes.
-fn temp_path(name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("nodetool-{name}-{}.yml", uuid::Uuid::new_v4()))
-}
-
-/// A graph file on disk carrying `text`: what open and save need.
-fn written_graph(name: &str, text: &str) -> PathBuf {
-    let path = temp_path(name);
-    fs::write(&path, text).expect("the test writes its graph file");
-    path
-}
-
-fn path_field(path: &Path) -> String {
-    serde_json::to_string(&path.to_string_lossy().into_owned()).unwrap()
-}
 
 /// The file state the editor holds: the current file and the
 /// unsaved-changes marker, as any connection sees it.
