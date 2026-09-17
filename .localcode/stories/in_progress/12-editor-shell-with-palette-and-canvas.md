@@ -1,6 +1,7 @@
 ---
 title: Editor shell with palette and canvas
 date: 2026-09-16
+pr_id: 47
 ---
 
 ## Description
