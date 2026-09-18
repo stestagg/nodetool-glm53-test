@@ -34,7 +34,12 @@
 //! arrives, the one rule covering every editing operation. Starting a run
 //! compiles the held definition afresh — every start compiles, nothing
 //! compiled survives a run — and the run's endings come back through the
-//! engine's event stream. Opening and saving go through the one file
+//! engine's event stream. The values a run delivers on outputs the graph
+//! leaves unconnected are the host's: the binary that launched the server
+//! may supply the consumer they deliver to — the engine's one consumer
+//! mechanism carried through, an attached consumer one more downstream of
+//! the same fan-out — and a host supplying none keeps the engine's
+//! discard. Opening and saving go through the one file
 //! format's loader and dump, so a file the headless run takes is the file
 //! the editor edits.
 //!
@@ -67,7 +72,7 @@ mod run;
 mod ws;
 
 pub use protocol::{greeting, PROTOCOL_VERSION};
-pub use run::{Outcome, RunState};
+pub use run::{Outcome, RunState, UnconnectedConsumer, UnconnectedStream};
 
 /// The address the editor serves on by default: loopback only — this is a
 /// local tool.
@@ -98,8 +103,9 @@ struct Session {
 
 /// The editing server: the held session, the palette listing of every
 /// linked plugin's node types, the registry the start compiles against and
-/// the bridge serialises values through, the plugin-declared UI assets, and
-/// the push channel every connection rides.
+/// the bridge serialises values through, the plugin-declared UI assets,
+/// the push channel every connection rides, and the optional consumer the
+/// hosting binary supplies for the runs' unconnected outputs.
 pub struct Editor {
     session: Arc<Mutex<Session>>,
     listing: Vec<&'static NodeType>,
@@ -108,6 +114,7 @@ pub struct Editor {
     data_types: serde_json::Map<String, Value>,
     plugin_assets: Vec<assets::PluginAsset>,
     pushes: broadcast::Sender<String>,
+    unconnected: Option<UnconnectedConsumer>,
 }
 
 /// The message types that edit the held definition — the node operations
@@ -158,6 +165,7 @@ impl Editor {
             data_types,
             plugin_assets,
             pushes,
+            unconnected: None,
         }
     }
 
@@ -167,6 +175,24 @@ impl Editor {
         self.session
             .lock()
             .expect("the session lock is never poisoned")
+    }
+
+    /// Supply the consumer of the values the runs started from here
+    /// deliver on outputs the graph leaves unconnected: the hosting
+    /// binary's seam for what its runs produce, the engine's consumer
+    /// mechanism carried through — one consumer per unconnected output per
+    /// run, attached as one more downstream of the same fan-out. A host
+    /// supplying none keeps the engine's discard.
+    pub fn consume_unconnected(mut self, consumer: UnconnectedConsumer) -> Editor {
+        self.unconnected = Some(consumer);
+        self
+    }
+
+    /// Whether the held definition has changes no file holds — the dirty
+    /// state the file state carries, read here by the process hosting the
+    /// editor for its exit guard.
+    pub fn unsaved_changes(&self) -> bool {
+        self.session().dirty
     }
 
     /// Serve connections on `listener` forever: UI assets over HTTP, the
@@ -624,6 +650,7 @@ impl Editor {
             Arc::clone(&self.registry),
             compiled,
             stop_requested,
+            self.unconnected.clone(),
         );
         Ok(json!({ "type": "run_started" }))
     }

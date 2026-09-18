@@ -1,34 +1,85 @@
-//! The headless runner from a terminal: `nodetool-fizzbuzz <graph-file>`
-//! loads the file (the one graph file format), compiles it against the
-//! linked plugin's node types, and runs it. Every output the graph leaves
+//! The fizzbuzz binary, both doors of one graph file.
+//!
+//! Headless — the default — `nodetool-fizzbuzz <graph-file>` loads the
+//! file (the one graph file format), compiles it against the linked
+//! plugin's node types, and runs it. Every output the graph leaves
 //! unconnected is the terminal's: each value arriving on one prints as it
 //! arrives — one line, in its plain string form — nothing held back to the
 //! end. Any graph the linked nodes can express runs the same way; the
 //! shipped proof is `graphs/fizzbuzz.yml`.
 //!
-//! Values go to stdout. A file that cannot be read or loaded, a graph that
-//! fails to compile, and a run that ends in an error go to stderr, naming
-//! what and where, with a non-zero exit.
+//! `nodetool-fizzbuzz --ui [graph-file]` hosts the editor instead: the
+//! server starts on its loopback default, the file — when one is given —
+//! is loaded into the held definition through the same loader, so a file
+//! the headless run takes is the file the editor opens, and the served
+//! address is printed; opening it in a browser shows the editor over this
+//! binary's own linked nodes. The terminal keeps its seat: the binary
+//! hands the server the printer for the outputs a run leaves unconnected,
+//! so a run started from the browser prints here exactly as a headless
+//! run does. Quitting is guarded at the process edge: Ctrl-C over unsaved
+//! changes warns and stands down, and the next Ctrl-C quits.
+//!
+//! Values go to stdout. A file that cannot be read or loaded, a graph
+//! that fails to compile, and a run that ends in an error go to stderr,
+//! naming what and where, with a non-zero exit — in UI mode only the
+//! launch's load faults do, a session past its launch reporting through
+//! the editor's own surfaces.
 
 use std::io::{self, Write};
 use std::process::ExitCode;
+use std::sync::Arc;
 
+use tokio::signal;
 use tokio::sync::watch;
 
+use nodetool::behaviour::Receiver;
 use nodetool::compile;
-use nodetool::engine::Run;
+use nodetool::engine::{self, Run};
 use nodetool::graph;
 use nodetool::registry::{self, Registry};
+use nodetool::server::{
+    read_definition, Editor, UnconnectedConsumer, UnconnectedStream, DEFAULT_ADDRESS,
+};
 use nodetool::Value;
 use nodetool_fizzbuzz as _;
 
+const USAGE: &str =
+    "usage: nodetool-fizzbuzz <graph-file>\n       nodetool-fizzbuzz --ui [graph-file]";
+
+/// What the invocation asked for: the headless run of a file, or the
+/// editor over a file — or over nothing, an empty canvas.
+#[derive(Debug, PartialEq)]
+enum Mode {
+    Headless(String),
+    Ui(Option<String>),
+}
+
+fn mode(args: &mut impl Iterator<Item = String>) -> Result<Mode, &'static str> {
+    match args.next().as_deref() {
+        Some("--ui") => match (args.next(), args.next()) {
+            (Some(file), None) => Ok(Mode::Ui(Some(file))),
+            (None, None) => Ok(Mode::Ui(None)),
+            _ => Err(USAGE),
+        },
+        Some(path) => Ok(Mode::Headless(path.to_owned())),
+        None => Err(USAGE),
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
-    let Some(path) = std::env::args().nth(1) else {
-        eprintln!("usage: nodetool-fizzbuzz <graph-file>");
-        return ExitCode::from(2);
-    };
-    let text = match std::fs::read_to_string(&path) {
+    match mode(&mut std::env::args().skip(1)) {
+        Ok(Mode::Headless(path)) => headless(&path).await,
+        Ok(Mode::Ui(file)) => ui(file).await,
+        Err(usage) => {
+            eprintln!("{usage}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+async fn headless(path: &str) -> ExitCode {
+    let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) => {
             eprintln!("cannot read {path}: {error}");
@@ -65,28 +116,19 @@ async fn main() -> ExitCode {
     let mut run = Run::new(&compiled);
     let (stop, stopped) = watch::channel(false);
     run.stop_on(stopped);
-    for (uuid, node) in &compiled.nodes {
-        for port in node.node_type.outputs {
-            let fed = compiled
-                .connections
-                .iter()
-                .any(|connection| connection.from == *uuid && connection.from_port == port.name);
-            if fed {
-                continue;
-            }
-            run.consume(*uuid, port.name, {
-                let stop = stop.clone();
-                move |mut values| async move {
-                    while let Some(value) = values.recv().await {
-                        if writeln!(io::stdout().lock(), "{}", plain(&value)).is_err() {
-                            let _ = stop.send(true);
-                            break;
-                        }
+    for (uuid, port) in engine::unconnected_outputs(&compiled) {
+        run.consume(uuid, port, {
+            let stop = stop.clone();
+            move |mut values| async move {
+                while let Some(value) = values.recv().await {
+                    if writeln!(io::stdout().lock(), "{}", plain(&value)).is_err() {
+                        let _ = stop.send(true);
+                        break;
                     }
-                    Ok(())
                 }
-            });
-        }
+                Ok(())
+            }
+        });
     }
 
     match run.start().await {
@@ -96,6 +138,77 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+async fn ui(file: Option<String>) -> ExitCode {
+    let definition = match file.as_deref().map(read_definition) {
+        Some(Ok(definition)) => definition,
+        Some(Err(error)) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+        None => graph::GraphDefinition::empty(),
+    };
+    let listener = match tokio::net::TcpListener::bind(DEFAULT_ADDRESS).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!(
+                "cannot bind {DEFAULT_ADDRESS}: {error}; another editor is probably already running"
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    let editor = Arc::new(Editor::new(definition, file).consume_unconnected(terminal_printer()));
+    let address = listener.local_addr().expect("the listener is bound");
+    let mut serving = tokio::spawn(Arc::clone(&editor).serve(listener));
+    println!("fizzbuzz editor on http://{address}");
+    tokio::select! {
+        served = &mut serving => match served.expect("the editor server task failed") {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        },
+        _ = signal::ctrl_c() => {
+            quit_guard(&editor).await;
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+/// The process edge of the editor's unsaved-changes confirm: a Ctrl-C
+/// over unsaved changes warns and stands down — the session carries on,
+/// saving from the browser still lands — and the next Ctrl-C is the
+/// user's word they know, quitting at once. Nothing unsaved, the first
+/// Ctrl-C quits promptly.
+async fn quit_guard(editor: &Editor) {
+    if editor.unsaved_changes() {
+        eprintln!("the graph has unsaved changes — press Ctrl-C again to quit without saving");
+        signal::ctrl_c()
+            .await
+            .expect("the interrupt listener is installed");
+    }
+}
+
+/// The printer the UI mode supplies to the server: the headless rule
+/// verbatim — every value an unconnected output delivers, one line per
+/// value, in arrival order, in its plain string form, as it arrives. A
+/// write that fails — the reader went away — ends the printing; the run
+/// itself is the editor's, its outcome the browser's.
+fn terminal_printer() -> UnconnectedConsumer {
+    Arc::new(print_stream)
+}
+
+fn print_stream(mut values: Receiver<Value>) -> UnconnectedStream {
+    Box::pin(async move {
+        while let Some(value) = values.recv().await {
+            if writeln!(io::stdout().lock(), "{}", plain(&value)).is_err() {
+                break;
+            }
+        }
+        Ok(())
+    })
 }
 
 /// The plain string form of a value — the Format node's without-template
@@ -117,5 +230,30 @@ fn plain(value: &Value) -> String {
     match registry::data_type_by_id(value.type_id()) {
         Some(data_type) => format!("a {} value", data_type.name),
         None => format!("a value of id {}", value.type_id()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mode_of(args: &[&str]) -> Result<Mode, &'static str> {
+        mode(&mut args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn the_invocations_parse() {
+        assert_eq!(mode_of(&["g.yml"]), Ok(Mode::Headless("g.yml".into())));
+        assert_eq!(mode_of(&["--ui"]), Ok(Mode::Ui(None)));
+        assert_eq!(
+            mode_of(&["--ui", "g.yml"]),
+            Ok(Mode::Ui(Some("g.yml".into())))
+        );
+    }
+
+    #[test]
+    fn a_bare_invocation_and_a_doubled_file_argument_are_usage_errors() {
+        assert_eq!(mode_of(&[]), Err(USAGE));
+        assert_eq!(mode_of(&["--ui", "a.yml", "b.yml"]), Err(USAGE));
     }
 }

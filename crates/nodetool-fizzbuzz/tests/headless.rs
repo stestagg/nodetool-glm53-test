@@ -14,7 +14,7 @@ use std::io::{BufRead, Read};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use common::fizzbuzz_line;
+use common::{fizzbuzz_line, long_counter};
 
 const GRAPH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/graphs/fizzbuzz.yml");
 
@@ -25,21 +25,6 @@ const FIRST_LINE: Duration = Duration::from_secs(10);
 
 fn binary() -> Command {
     Command::new(env!("CARGO_BIN_EXE_nodetool-fizzbuzz"))
-}
-
-/// The shipped graph with the counter's stop raised, as a temp file — the
-/// hand-written long variant the story invites.
-fn long_variant(stop: &str) -> std::path::PathBuf {
-    let hand_written = std::fs::read_to_string(GRAPH)
-        .expect("the shipped graph is readable")
-        .replace("stop: 100", &format!("stop: {stop}"));
-    assert!(
-        hand_written.contains(&format!("stop: {stop}")),
-        "the shipped graph carries the counter's stop"
-    );
-    let path = std::env::temp_dir().join(format!("nodetool-fizzbuzz-{stop}.yml"));
-    std::fs::write(&path, hand_written).expect("the variant is written");
-    path
 }
 
 #[test]
@@ -64,7 +49,7 @@ fn the_shipped_graph_prints_the_classic_sequence_as_its_only_output() {
 
 #[test]
 fn a_longer_range_prints_its_first_line_long_before_the_run_could_end() {
-    let path = long_variant("1000000000");
+    let path = long_counter("1000000000");
 
     let mut child = binary()
         .arg(&path)
@@ -137,7 +122,7 @@ fn a_reader_closing_early_ends_the_run_quietly_not_as_a_failure() {
     // The truncation idiom — `nodetool-fizzbuzz long.yml | head -5`: the
     // reader goes away and the run ends with it, exit 0, no panic and no
     // backtrace on the error stream.
-    let path = long_variant("10000000");
+    let path = long_counter("10000000");
     let mut child = binary()
         .arg(&path)
         .stdout(Stdio::piped())
