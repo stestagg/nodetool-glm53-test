@@ -112,9 +112,15 @@ export function connect({
           onNodeStatus(message)
           break
         case 'node_types':
-          // The listing and its base-scalar fact ride one reply.
+          // The listing and its two flat facts ride one reply: the
+          // base-scalar classification and the per-reference colour and
+          // shape.
           settle(pending, onError, message.id, ({ resolve }) =>
-            resolve({ types: message.node_types, baseScalars: message.base_scalars }))
+            resolve({
+              types: message.node_types,
+              baseScalars: message.base_scalars,
+              dataTypes: message.data_types,
+            }))
           break
         case 'node_created':
         case 'node_moved':

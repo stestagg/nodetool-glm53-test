@@ -25,9 +25,17 @@
 // The mark is the dot at the corner, the glanceable flag; the messages
 // print on the node itself, where they can be read, not only hovered.
 // Marks advise: they disable nothing.
+//
+// The type's declared icon rides the title bar beside the label, and the
+// ports carry the type channel: a port declaring exactly one type renders
+// its dot in that type's declared colour and shape, everything else — a
+// union declaration, a reference the listing does not know — in the
+// neutral pair. The declared types remain readable in the port's
+// tooltip.
 
 import { Handle, Position } from '@xyflow/react'
 import { commitParameter, Field, useEdit } from './fields.jsx'
+import { portAppearance } from './types.js'
 
 // The status state in the title bar, right of the label: one word, the
 // bridge's own vocabulary.
@@ -36,14 +44,29 @@ export function NodeStatus({ status }) {
   return <span className={`node-status ${status}`}>{status}</span>
 }
 
-function InputPort({ port, node, wired, scalar, title }) {
+// The type's declared inline SVG, wherever the type shows: the palette
+// row and the node title bar. Rendered as declared — a plugin is
+// build-time linked code, and a malformed or empty icon is its
+// declaration to fix, not an input to sanitise.
+export function TypeIcon({ icon }) {
+  if (!icon) return null
+  return <span className="type-icon" dangerouslySetInnerHTML={{ __html: icon }} />
+}
+
+function InputPort({ port, node, wired, scalar, appearance, title }) {
   const edit = useEdit()
   return (
     <div
       className={`port in${wired ? ' connected' : ''}`}
       title={port.type_refs.join(', ')}
     >
-      <Handle type="target" position={Position.Left} id={port.name} />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id={port.name}
+        className={appearance.shape === 'square' ? 'square' : undefined}
+        style={{ background: appearance.color, borderColor: appearance.color }}
+      />
       <span className="port-name">{port.name}</span>
       {scalar &&
         (wired ? (
@@ -62,10 +85,16 @@ function InputPort({ port, node, wired, scalar, title }) {
   )
 }
 
-function OutputPort({ port, value }) {
+function OutputPort({ port, appearance, value }) {
   return (
     <div className="port out" title={port.type_refs.join(', ')}>
-      <Handle type="source" position={Position.Right} id={port.name} />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id={port.name}
+        className={appearance.shape === 'square' ? 'square' : undefined}
+        style={{ background: appearance.color, borderColor: appearance.color }}
+      />
       <span className="port-name">{port.name}</span>
       {value !== undefined && (
         <span className="port-value" title={value}>
@@ -77,13 +106,16 @@ function OutputPort({ port, value }) {
 }
 
 export function TypeNode({ data, selected }) {
-  const { node, type, wiredInputs, scalarInputs, marks, status, portValues } = data
+  const { node, type, wiredInputs, scalarInputs, marks, status, portValues, dataTypes } = data
   const title = node.label ?? type.label
   return (
     <div className={`node${selected ? ' selected' : ''}`}>
       {marks?.length > 0 && <div className="node-mark" />}
       <div className="node-title">
-        {title}
+        <span className="node-heading">
+          <TypeIcon icon={type.icon} />
+          {title}
+        </span>
         <NodeStatus status={status} />
       </div>
       <div className="node-ports">
@@ -95,13 +127,19 @@ export function TypeNode({ data, selected }) {
               node={node}
               wired={wiredInputs.includes(port.name)}
               scalar={scalarInputs.includes(port.name)}
+              appearance={portAppearance(port, dataTypes)}
               title={title}
             />
           ))}
         </div>
         <div className="node-outputs">
           {type.outputs.map((port) => (
-            <OutputPort key={port.name} port={port} value={portValues?.[port.name]} />
+            <OutputPort
+              key={port.name}
+              port={port}
+              appearance={portAppearance(port, dataTypes)}
+              value={portValues?.[port.name]}
+            />
           ))}
         </div>
       </div>

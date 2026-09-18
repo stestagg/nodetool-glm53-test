@@ -129,7 +129,12 @@ cargo run -p visual -- examples/visual/graphs/sample.yml  # the editor on a grap
 and find the palette of every node type the linked plugins contribute on
 the left and the canvas beside it — the example links the fizzbuzz
 plugin crate beside the utility and example plugins, so its palette is
-the headless binary's. Dragging a type onto the canvas creates
+the headless binary's. The palette reads as an index: one section per
+plugin headed by the plugin's name, a headed sub-section per declared
+sub-group within it, the types without a sub-group directly under the
+header — plugins, sub-groups, and types alphabetical, every tab and
+reload agreeing — and each row carries the type's declared icon beside
+its label. Dragging a type onto the canvas creates
 a node where it dropped; dragging a node moves it; a click selects,
 opening the editing sidebar on the right — the node's label editable to
 any name, an empty field returning the type's default, the type reference
@@ -146,6 +151,16 @@ takes at most one upstream, so a wire dropped on an already-wired input
 replaces the old wire, and a wire released anywhere it cannot land cancels
 quietly. Dragging a wired input's end off and letting go unhooks it.
 Delete (or Backspace) removes the selected node together with its wires.
+
+The declared data types carry the graph's type channel: a port declaring
+exactly one type renders its dot in that type's declared colour and shape,
+a wire renders in the colour of the source port it flows from, and a
+union-declared port, an unknown type reference, or a type that does not
+declare both a colour and a shape renders in one shared neutral. Colours
+and shapes live with the type declarations — the base scalars' in core,
+custom types' in the declaring plugin's metadata — composed into the
+listing the server serves, so the browser hardcodes no type's appearance;
+the declared types remain readable in a port's tooltip.
 
 Nothing is policed while editing — a graph with problems edits, saves,
 and starts exactly as freely as a clean one — but the problems are shown
@@ -328,7 +343,10 @@ declares their trivial conversions through the same mechanism a plugin uses;
 nothing converts to `String` automatically. A plugin declares custom types
 with `nodetool::data_type!` — its rustdoc is the declaration guide, like
 `node_type!`'s above. A conversion may be declared before its target type is
-registered; targets resolve once every linked crate has contributed.
+registered; targets resolve once every linked crate has contributed. A type's
+metadata may declare its `color` and `shape` — the appearance the editor
+renders its ports and wires in; the base scalars declare theirs the same way,
+and a type that declares neither both takes the editor's neutral.
 
 Read the node registry with `nodetool::registry::node_types()`, or look one
 node type up by its type reference with `nodetool::registry::node_type(type_ref)`.

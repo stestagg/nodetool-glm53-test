@@ -104,6 +104,7 @@ pub struct Editor {
     listing: Vec<&'static NodeType>,
     registry: Registry,
     base_scalars: serde_json::Map<String, Value>,
+    data_types: serde_json::Map<String, Value>,
     pushes: broadcast::Sender<String>,
 }
 
@@ -136,6 +137,9 @@ impl Editor {
         let (pushes, _) = broadcast::channel(64);
         let registry = Registry::collect();
         let problems = problems_of(&definition, &registry);
+        let listing = protocol::node_type_listing();
+        let base_scalars = protocol::base_scalars();
+        let data_types = protocol::data_type_facts(&listing);
         Editor {
             session: Arc::new(Mutex::new(Session {
                 graph: definition,
@@ -145,9 +149,10 @@ impl Editor {
                 problems,
                 display: bridge::RunDisplay::default(),
             })),
-            listing: protocol::node_type_listing(),
+            listing,
             registry,
-            base_scalars: protocol::base_scalars(),
+            base_scalars,
+            data_types,
             pushes,
         }
     }
@@ -256,6 +261,7 @@ impl Editor {
             "type": "node_types",
             "node_types": listing,
             "base_scalars": self.base_scalars,
+            "data_types": self.data_types,
         }))
     }
 

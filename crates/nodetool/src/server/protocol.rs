@@ -8,6 +8,7 @@
 //! malformed to carry an id has none.
 
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::bridge::RunDisplay;
@@ -15,7 +16,7 @@ use super::run::{Outcome, RunState};
 use crate::engine::{Event, RunOutcome};
 use crate::graph::{GraphDefinition, Mapping, ParameterValue, SCHEMA_VERSION};
 use crate::registry;
-use crate::{NodeType, Port};
+use crate::{DataType, MetaValue, NodeType, Port};
 
 /// The protocol version this server speaks; the greeting names it so a
 /// mismatch is visible rather than silent.
@@ -57,6 +58,64 @@ pub fn base_scalars() -> Map<String, Value> {
         );
     }
     facts
+}
+
+/// The neutral pair: the colour and shape a port or wire renders when no
+/// declared appearance informs it — a union-declared port, a reference the
+/// registry does not know, a type that does not declare both. The browser
+/// carries the same pair as its own neutral, so there is one neutral
+/// everywhere.
+const NEUTRAL_COLOR: &str = "#8f99a8";
+const NEUTRAL_SHAPE: &str = "circle";
+
+/// The listing's data-type fact: per data type reference — every name the
+/// registry knows, and every reference the listed node types' ports
+/// declare — the colour and shape its declaration gives it. A type that
+/// does not declare both a colour and a shape, and a reference the
+/// registry does not know, get the neutral pair. Composed here, where the
+/// declarations live, so the browser holds no colour or shape table of its
+/// own: it renders the colour verbatim and takes the neutral for a shape
+/// name outside the small set it draws.
+pub fn data_type_facts(listing: &[&NodeType]) -> Map<String, Value> {
+    let declared: HashMap<&str, &DataType> = registry::data_types()
+        .map(|data_type| (data_type.name, data_type))
+        .collect();
+    let mut references: Vec<&str> = declared.keys().copied().collect();
+    for node_type in listing {
+        for port in node_type.inputs.iter().chain(node_type.outputs.iter()) {
+            for reference in port.type_refs {
+                if !declared.contains_key(reference) && !references.contains(reference) {
+                    references.push(reference);
+                }
+            }
+        }
+    }
+    references.sort_unstable();
+    references
+        .into_iter()
+        .map(|reference| (reference.to_owned(), appearance(reference, &declared)))
+        .collect()
+}
+
+/// One reference's colour and shape: the declared pair when the type
+/// declares both, the neutral pair otherwise. Nothing else about the type
+/// is read, and nothing in core switches on either — the fact is
+/// presentation the browser renders.
+fn appearance(reference: &str, declared: &HashMap<&str, &DataType>) -> Value {
+    let pair = declared.get(reference).and_then(|data_type| {
+        Some(json!({
+            "color": declared_str(data_type, "color")?,
+            "shape": declared_str(data_type, "shape")?,
+        }))
+    });
+    pair.unwrap_or_else(|| json!({ "color": NEUTRAL_COLOR, "shape": NEUTRAL_SHAPE }))
+}
+
+fn declared_str(data_type: &DataType, key: &str) -> Option<&'static str> {
+    match data_type.meta.iter().find(|(name, _)| *name == key) {
+        Some((_, MetaValue::Str(value))) => Some(*value),
+        _ => None,
+    }
 }
 
 pub fn node_type_json(node_type: &NodeType) -> Value {

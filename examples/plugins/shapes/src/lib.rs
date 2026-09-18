@@ -45,6 +45,16 @@ node_type! {
 }
 
 node_type! {
+    type_ref: "shapes/polygon",
+    label: "Polygon",
+    icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M8 2 13.7 6.1 11.5 12.6 4.5 12.6 2.3 6.1Z" fill="#4a90d9"/></svg>"##,
+    plugin: "shapes",
+    sub_group: "2d",
+    inputs: [ sides: "i64" ],
+    outputs: [ shape: "shapes/shape" ],
+}
+
+node_type! {
     type_ref: "shapes/sphere",
     label: "Sphere",
     icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="6" fill="#7b4ad9"/></svg>"##,

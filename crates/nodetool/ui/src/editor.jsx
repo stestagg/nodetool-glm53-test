@@ -40,7 +40,8 @@ import { NODE_TYPE, connect, connectionLost } from './protocol.js'
 import { RunCoalescer } from './coalesce.js'
 import { EditContext, LockContext, scalarPossible } from './fields.jsx'
 import { SelfLoopEdge } from './edges.jsx'
-import { PlaceholderNode, TypeNode } from './nodes.jsx'
+import { portAppearance } from './types.js'
+import { PlaceholderNode, TypeIcon, TypeNode } from './nodes.jsx'
 import { Sidebar } from './sidebar.jsx'
 
 const nodeTypes = { type: TypeNode, placeholder: PlaceholderNode }
@@ -51,6 +52,37 @@ const edgeTypes = { selfloop: SelfLoopEdge }
 // on, with nothing written into the definition.
 const FALLBACK_PITCH = { x: 180, y: 140 }
 
+// The plain ordering the palette reads: by codepoint, so every tab and
+// every browser agrees on the same sections in the same order.
+const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
+
+// The palette's sections, from the listing's plugin and sub-group facts:
+// one section per plugin, a headed sub-section per declared sub-group
+// within it, the ungrouped types directly under the plugin header.
+// Plugins, sub-groups, and types order alphabetically — a deterministic
+// order every tab and reload agrees on.
+export function paletteGroups(types) {
+  const plugins = new Map()
+  for (const type of types) {
+    const subGroup = type.sub_group ?? null
+    const sections = plugins.get(type.plugin) ?? new Map()
+    sections.set(subGroup, [...(sections.get(subGroup) ?? []), type])
+    plugins.set(type.plugin, sections)
+  }
+  return [...plugins.keys()].sort(byName).map((plugin) => {
+    const sections = plugins.get(plugin)
+    return {
+      plugin,
+      sections: [...sections.keys()]
+        .sort((a, b) => (a === null ? -1 : b === null ? 1 : byName(a, b)))
+        .map((subGroup) => ({
+          subGroup,
+          types: sections.get(subGroup).sort((a, b) => byName(a.label, b.label)),
+        })),
+    }
+  })
+}
+
 function recordedPosition(node) {
   const position = node.metadata?.position
   if (typeof position?.x === 'number' && typeof position?.y === 'number') {
@@ -59,8 +91,9 @@ function recordedPosition(node) {
   return undefined
 }
 
-export function toNodes(graph, types, baseScalars, marks, statuses, values) {
-  const byRef = new Map((types ?? []).map((type) => [type.type_ref, type]))
+export function toNodes(graph, listing, marks, statuses, values) {
+  const byRef = new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))
+  const dataTypes = listing?.dataTypes ?? {}
   const placeless = graph.nodes
     .filter((node) => recordedPosition(node) === undefined)
     .sort((a, b) => (a.uuid < b.uuid ? -1 : 1))
@@ -111,11 +144,12 @@ export function toNodes(graph, types, baseScalars, marks, statuses, values) {
         type,
         wiredInputs: wiredInputs.get(node.uuid) ?? [],
         scalarInputs: type.inputs
-          .filter((port) => scalarPossible(port, baseScalars))
+          .filter((port) => scalarPossible(port, listing?.baseScalars))
           .map((port) => port.name),
         marks: at(node.uuid),
         status: status(node.uuid),
         portValues,
+        dataTypes,
       },
     }
   })
@@ -123,10 +157,18 @@ export function toNodes(graph, types, baseScalars, marks, statuses, values) {
 
 // The definition's edges as canvas wires. Not selectable: drag-off is the
 // one way a wire comes off, so there is no second, selected-then-deleted
-// path. A wire in `pulsing` animates — the path a value is travelling.
-export function toEdges(graph, pulsing) {
+// path. A wire renders in the colour of the source port's declared type —
+// the neutral where no single type informs the port; the pulse a value
+// travels rides that same colour as a dash flow. A wire in `pulsing`
+// animates — the path a value is travelling.
+export function toEdges(graph, pulsing, listing) {
+  const byRef = new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))
+  const dataTypes = listing?.dataTypes ?? {}
+  const refOf = new Map(graph.nodes.map((node) => [node.uuid, node.type_ref]))
   return graph.edges.map((edge) => {
     const id = `${edge.from}/${edge.from_port}->${edge.to}/${edge.to_port}`
+    const type = byRef.get(refOf.get(edge.from))
+    const port = type?.outputs.find((output) => output.name === edge.from_port)
     return {
       id,
       source: edge.from,
@@ -136,6 +178,7 @@ export function toEdges(graph, pulsing) {
       selectable: false,
       animated: pulsing?.has(id) === true,
       type: edge.from === edge.to ? 'selfloop' : undefined,
+      style: { stroke: portAppearance(port, dataTypes).color },
     }
   })
 }
@@ -341,14 +384,7 @@ export function Editor() {
     // replaces what is drawn, never what the user has picked or holds.
     setNodes((current) => {
       const before = new Map(current.map((node) => [node.id, node]))
-      return toNodes(
-        graph,
-        listing?.types,
-        listing?.baseScalars,
-        marks,
-        statuses,
-        values,
-      ).map((node) => {
+      return toNodes(graph, listing, marks, statuses, values).map((node) => {
         const held = before.get(node.id)
         return {
           ...node,
@@ -646,28 +682,40 @@ export function Editor() {
                   to see its types here.
                 </p>
               ) : (
-                <ul className="palette-list">
-                  {types.map((type) => (
-                    <li
-                      key={type.type_ref}
-                      className="palette-item"
-                      draggable={editable}
-                      onDragStart={(event) => {
-                        event.dataTransfer.setData(NODE_TYPE, type.type_ref)
-                        event.dataTransfer.effectAllowed = 'move'
-                      }}
-                    >
-                      <div className="palette-label">{type.label}</div>
-                      <div className="palette-plugin">{type.plugin}</div>
-                    </li>
-                  ))}
-                </ul>
+                paletteGroups(types).map((group) => (
+                  <section className="palette-plugin" key={group.plugin}>
+                    <h2 className="palette-heading">{group.plugin}</h2>
+                    {group.sections.map((section) => (
+                      <div className="palette-group" key={section.subGroup ?? ''}>
+                        {section.subGroup !== null && (
+                          <h3 className="palette-subgroup">{section.subGroup}</h3>
+                        )}
+                        <ul className="palette-list">
+                          {section.types.map((type) => (
+                            <li
+                              key={type.type_ref}
+                              className="palette-item"
+                              draggable={editable}
+                              onDragStart={(event) => {
+                                event.dataTransfer.setData(NODE_TYPE, type.type_ref)
+                                event.dataTransfer.effectAllowed = 'move'
+                              }}
+                            >
+                              <TypeIcon icon={type.icon} />
+                              <span className="palette-label">{type.label}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </section>
+                ))
               )}
             </aside>
             <main className="canvas" ref={canvasRef}>
               <ReactFlow
                 nodes={nodes}
-                edges={graph === null ? [] : toEdges(graph, pulsing)}
+                edges={graph === null ? [] : toEdges(graph, pulsing, listing)}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 onNodesChange={onNodesChange}

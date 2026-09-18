@@ -116,7 +116,10 @@ body {
 }
 
 /* The palette, docked on the left; the right edge stays free for the
-   editing sidebar. */
+   editing sidebar. One section per plugin, headed by the plugin's name —
+   the attribution that once rode every row — with a headed sub-section
+   per declared sub-group and the ungrouped types directly under the
+   header. Always open: scroll, not accordions. */
 
 .palette {
   width: 230px;
@@ -136,14 +139,38 @@ body {
   color: var(--muted);
 }
 
+.palette-plugin + .palette-plugin {
+  border-top: 1px solid var(--border);
+}
+
+.palette-heading {
+  margin: 0;
+  padding: 8px 12px 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.palette-subgroup {
+  margin: 0;
+  padding: 5px 12px 1px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .palette-list {
   margin: 0;
-  padding: 0;
+  padding: 0 0 6px;
   list-style: none;
 }
 
 .palette-item {
-  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px;
   cursor: grab;
 }
 
@@ -159,15 +186,27 @@ body {
   font-size: 13px;
 }
 
-.palette-plugin {
-  font-size: 11px;
-  color: var(--muted);
-}
-
 .palette-empty {
   margin: 0;
   padding: 4px 12px 12px;
   color: var(--muted);
+}
+
+/* The type's declared inline SVG, wherever the type shows — the palette
+   row and the node title bar. Rendered as declared, sized by the
+   declaration. */
+
+.type-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.type-icon svg {
+  display: block;
+}
+
+.type-icon:empty {
+  display: none;
 }
 
 /* The canvas. */
@@ -249,6 +288,15 @@ body {
   border-radius: 2px 2px 0 0;
   font-weight: 600;
   cursor: grab;
+}
+
+/* The icon-and-label half of the title bar: the type's declared icon
+   beside the node's current label, centred against the text. */
+
+.node-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 /* The run's status on the node: one word in the bridge's vocabulary, a
@@ -335,14 +383,23 @@ body {
   justify-content: flex-end;
 }
 
+/* The port dot: the type channel's own — a port declaring exactly one
+   type renders in that type's declared colour and shape (colour and
+   border inline, shape by class), everything else in the neutral pair.
+   The neutral is the grey round dot the untyped canvas always had. */
+
 .port .react-flow__handle {
   position: absolute;
   width: 8px;
   height: 8px;
   background: #8f99a8;
-  border: 1px solid #68707a;
+  border: 1px solid #8f99a8;
   border-radius: 50%;
   cursor: grab;
+}
+
+.port .react-flow__handle.square {
+  border-radius: 1px;
 }
 
 /* The dot stays small; the invisible ring around it meets the 24px
@@ -363,13 +420,6 @@ body {
   right: -4px;
 }
 
-/* A wire reaches this input: the port dot carries the accent. */
-
-.port.connected .react-flow__handle {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
 /* The latest value at an emitting output port: small text beside the
    port name, replaced by each new emission, persisting after the run
    until the next start. Long values truncate, never stretching the
@@ -386,21 +436,22 @@ body {
   color: var(--accent);
 }
 
-/* Wires are the canvas's core artifact: a 2px stroke in the dark grey,
-   since the default faint one drowns on the light canvas and vanishes
-   zoomed out. The live line a drag draws reads the same. A pulsing wire
-   — one a value is travelling — carries the accent, its dash flow the
-   movement; the platform's reduced-motion preference quiets it, which
+/* Wires are the canvas's core artifact: 2px strokes, since the default
+   faint one drowns on the light canvas and vanishes zoomed out. Each
+   wire's colour rides inline — the type channel's, from the source
+   port's declared type — so the stylesheet carries only the width and
+   the live line a drag draws, which is not a wire yet and stays
+   neutral. The pulse a value travels rides the wire's own colour as a
+   dash flow; the platform's reduced-motion preference quiets it, which
    the pulse logic honours at the source. */
 
 .canvas .react-flow__edge-path,
 .canvas .react-flow__connection-path {
-  stroke: var(--muted);
   stroke-width: 2;
 }
 
-.canvas .react-flow__edge.animated .react-flow__edge-path {
-  stroke: var(--accent);
+.canvas .react-flow__connection-path {
+  stroke: var(--muted);
 }
 
 /* An unknown-typed node: visibly inert, saying what it cannot show. */

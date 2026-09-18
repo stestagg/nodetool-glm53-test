@@ -509,6 +509,39 @@ fn the_listing_carries_the_base_scalar_classification() {
 }
 
 #[test]
+fn the_listing_carries_the_colour_and_shape_fact() {
+    let editor = editor();
+    let reply = send(&editor, r#"{"id": 1, "type": "list_node_types"}"#);
+    let facts = &reply["data_types"];
+    // A base scalar's declaration is its fact.
+    assert_eq!(
+        facts["String"],
+        json!({ "color": "#238551", "shape": "circle" })
+    );
+    assert_eq!(
+        facts["i32"],
+        json!({ "color": "#2d72d2", "shape": "square" })
+    );
+    // A custom type's declaration is its fact.
+    assert_eq!(
+        facts["beta/tinted"],
+        json!({ "color": "#0e9488", "shape": "square" })
+    );
+    // A registered type that declares no colour and shape takes the
+    // neutral pair.
+    assert_eq!(
+        facts["alpha/ratio"],
+        json!({ "color": "#8f99a8", "shape": "circle" })
+    );
+    // So does a reference the registry does not know — one a listed node
+    // type's port declares.
+    assert_eq!(
+        facts["beta/ghost-type"],
+        json!({ "color": "#8f99a8", "shape": "circle" })
+    );
+}
+
+#[test]
 fn malformed_label_and_parameter_edits_are_errors_and_leave_the_connection_usable() {
     let editor = editor();
     let adder = create(&editor, 1, "alpha/add");
