@@ -1,10 +1,11 @@
-// The scalar field both views of an input's value share: the node's
-// inline field and the sidebar's parameter row render and commit the same
-// scalar text, so an edit in either view appears in the other. Which
-// inputs get a field is read off the listing's base-scalar fact — an
-// input whose declared types include a core base scalar, whatever union
-// it declares; an input declared only on plugin custom types is opaque
-// to the editor and gets none.
+// The scalar fields: the one both views of a single input's value share —
+// the node's inline field and the sidebar's parameter row render and
+// commit the same scalar text, so an edit in either view appears in the
+// other — and the multi-selection's field beside it, bent to what a
+// commit across several nodes means. Which inputs get a field is read off
+// the listing's base-scalar fact — an input whose declared types include
+// a core base scalar, whatever union it declares; an input declared only
+// on plugin custom types is opaque to the editor and gets none.
 
 import { createContext, useContext, useEffect, useState } from 'react'
 
@@ -81,6 +82,49 @@ export function Field({ value, placeholder = '', onCommit, className = '', ...re
         else if (event.key === 'Escape') setDraft(stored)
       }}
       onBlur={commit}
+      {...rest}
+    />
+  )
+}
+
+// The multi-selection's field, beside the single one: the same commit
+// cycle bent to what a commit across several nodes means. Enter is
+// deliberate — on an untouched mixed field it commits the clear, empty
+// meaning unset on every node — while leaving the field commits only an
+// edit, so a stray click away from a mixed field cannot unset anything.
+// The mixed state marks the value area rather than sitting plain blank:
+// blank alone must mean unset-everywhere. A run's lock disables it.
+export function SelectionField({ text = '', mixed = false, onCommit, className = '', ...rest }) {
+  const [draft, setDraft] = useState(text)
+  const [edited, setEdited] = useState(false)
+  useEffect(() => {
+    setDraft(text)
+    setEdited(false)
+  }, [text, mixed])
+  const locked = useLocked()
+  const commit = () => {
+    if (draft !== text || mixed) onCommit(draft)
+  }
+  return (
+    <input
+      className={`field nodrag ${className}`}
+      value={draft}
+      placeholder={mixed ? 'mixed' : undefined}
+      disabled={locked}
+      onChange={(event) => {
+        setDraft(event.target.value)
+        setEdited(true)
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') commit()
+        else if (event.key === 'Escape') {
+          setDraft(text)
+          setEdited(false)
+        }
+      }}
+      onBlur={() => {
+        if (edited) commit()
+      }}
       {...rest}
     />
   )

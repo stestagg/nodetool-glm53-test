@@ -152,6 +152,24 @@ replaces the old wire, and a wire released anywhere it cannot land cancels
 quietly. Dragging a wired input's end off and letting go unhooks it.
 Delete (or Backspace) removes the selected node together with its wires.
 
+Selection scales to batches. A shift-click-drag on the background draws a
+rectangle and the nodes it covers join the selection; a shift-click on a
+node toggles it in or out; a plain click keeps selecting one node alone
+and a plain background click clears the selection — the two background
+drags differing by Shift alone. With several nodes selected, dragging any
+of them moves the whole selection, one move landing where each node
+rests, and Delete (or Backspace) — only where no field has focus, so a
+stray keypress in a text field cannot cost nodes — removes every selected
+node together with their wires, unknown-typed placeholders included;
+alone, a placeholder stays inert. The sidebar with a multi-selection
+names the selection by its count and shows only the parameter fields the
+nodes hold in common — an input declared scalar-possible and unconnected
+on every one of them — each at its shared value, marked `mixed` where the
+values differ; a commit lands on every node, an empty commit unsets the
+parameter everywhere, a field left untouched commits nothing, and where
+nothing is common the sidebar says so plainly. No label editing in a
+multi-selection: a label names one node.
+
 The declared data types carry the graph's type channel: a port declaring
 exactly one type renders its dot in that type's declared colour and shape,
 a wire renders in the colour of the source port it flows from, and a

@@ -15,8 +15,11 @@ import { describe, expect, it } from 'vitest'
 import { NEUTRAL } from './types.js'
 import {
   bannerText,
+  deleteSelection,
+  dragMoves,
   emittedTargets,
   hasUnsavedChanges,
+  inTextField,
   nodeMarks,
   offPortUnhook,
   paletteGroups,
@@ -25,6 +28,7 @@ import {
   saveAsksForPath,
   toEdges,
   toNodes,
+  withDraggablePlaceholders,
 } from './editor.jsx'
 
 describe('toNodes', () => {
@@ -42,7 +46,6 @@ describe('toNodes', () => {
     expect(nodes[0]).toMatchObject({
       id: 'u1',
       type: 'placeholder',
-      draggable: false,
       selectable: true,
       data: { label: 'The circle' },
     })
@@ -570,5 +573,89 @@ describe('emittedTargets', () => {
   it('a port with no wires pulses nothing, and neither does another node\'s emission', () => {
     expect(emittedTargets(edges, 'src', 'spare')).toEqual([])
     expect(emittedTargets(edges, 'other', 'out')).toEqual(['other/out->z/in'])
+  })
+})
+
+describe('dragMoves', () => {
+  const typed = (id, x, y) => ({ id, type: 'type', position: { x, y } })
+  const ghost = (id, x, y) => ({ id, type: 'placeholder', position: { x, y } })
+
+  it('a lone typed node commits itself where it rests', () => {
+    expect(dragMoves([typed('u1', 30, 40)])).toEqual([{ uuid: 'u1', position: { x: 30, y: 40 } }])
+  })
+
+  it('a lone placeholder commits nothing — story 12 keeps it inert', () => {
+    expect(dragMoves([ghost('u1', 30, 40)])).toEqual([])
+  })
+
+  it('a multi-selection commits one move per node that travelled, placeholders included', () => {
+    expect(dragMoves([typed('u1', 10, 10), ghost('u2', 20, 20), typed('u3', 30, 30)])).toEqual([
+      { uuid: 'u1', position: { x: 10, y: 10 } },
+      { uuid: 'u2', position: { x: 20, y: 20 } },
+      { uuid: 'u3', position: { x: 30, y: 30 } },
+    ])
+  })
+})
+
+describe('deleteSelection', () => {
+  const drawn = (id, type, selected) => ({ id, type, selected })
+
+  it('with no selection nothing is removed', () => {
+    expect(deleteSelection([drawn('u1', 'type', false)])).toEqual([])
+  })
+
+  it('a selection of one removes a typed node', () => {
+    expect(deleteSelection([drawn('u1', 'type', false), drawn('u2', 'type', true)])).toEqual(['u2'])
+  })
+
+  it('a selection of one spares a lone placeholder', () => {
+    expect(deleteSelection([drawn('u1', 'placeholder', true)])).toEqual([])
+  })
+
+  it('a multi-selection removes every selected node, placeholders included', () => {
+    const nodes = [
+      drawn('u1', 'type', true),
+      drawn('u2', 'placeholder', true),
+      drawn('u3', 'type', false),
+    ]
+    expect(deleteSelection(nodes)).toEqual(['u1', 'u2'])
+  })
+})
+
+describe('withDraggablePlaceholders', () => {
+  const drawn = (id, type, selected, draggable) => ({ id, type, selected, draggable })
+
+  it('a placeholder is draggable only inside a multi-selection', () => {
+    const multi = [
+      drawn('u1', 'placeholder', true, false),
+      drawn('u2', 'type', true, true),
+    ]
+    expect(withDraggablePlaceholders(multi)[0].draggable).toBe(true)
+    expect(withDraggablePlaceholders(multi)[1].draggable).toBe(true)
+    const alone = [drawn('u1', 'placeholder', true, false)]
+    expect(withDraggablePlaceholders(alone)[0].draggable).toBe(false)
+    const none = [drawn('u1', 'placeholder', false, false)]
+    expect(withDraggablePlaceholders(none)[0].draggable).toBe(false)
+  })
+
+  it('typed nodes keep their own flags', () => {
+    const nodes = [drawn('u1', 'type', true, true)]
+    expect(withDraggablePlaceholders(nodes)).toEqual(nodes)
+  })
+})
+
+describe('inTextField', () => {
+  const fake = (closest) => ({ closest: () => closest })
+
+  it('a target inside an input, textarea, or contenteditable keeps the keys for text', () => {
+    expect(inTextField(fake(['input']))).toBe(true)
+    expect(inTextField(fake(['textarea']))).toBe(true)
+    expect(inTextField(fake([null, '[contenteditable]']))).toBe(true)
+  })
+
+  it('the canvas and anything without a text ancestor do not', () => {
+    expect(inTextField(fake(null))).toBe(false)
+    expect(inTextField({})).toBe(false)
+    expect(inTextField(undefined)).toBe(false)
   })
 })

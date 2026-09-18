@@ -152,10 +152,10 @@ export function TypeNode({ data, selected }) {
   )
 }
 
-export function PlaceholderNode({ data }) {
+export function PlaceholderNode({ data, selected }) {
   const marks = data.marks ?? []
   return (
-    <div className="node placeholder">
+    <div className={`node placeholder${selected ? ' selected' : ''}`}>
       <div className="node-title">
         {data.label}
         <NodeStatus status={data.status} />
