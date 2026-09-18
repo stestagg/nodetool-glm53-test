@@ -12,10 +12,19 @@
 use nodetool::behaviour::Io;
 use nodetool::{Uuid, Value};
 
-/// The arithmetic and identity every member of the numeric family shares.
-/// Comparisons ride the standard `PartialEq`/`PartialOrd` the base scalars
-/// already carry.
-pub trait Numeric: Copy + Send + Sync + PartialEq + PartialOrd + 'static {
+/// The arithmetic, identity, and text form every member of the numeric
+/// family shares. Comparisons ride the standard `PartialEq`/`PartialOrd`
+/// and rendering the standard `Display` the base scalars already carry.
+pub trait Numeric:
+    Copy
+    + Send
+    + Sync
+    + PartialEq
+    + PartialOrd
+    + std::fmt::Display
+    + std::ops::Rem<Output = Self>
+    + 'static
+{
     /// The data type reference this member is registered under.
     const TYPE_REF: &'static str;
     /// The data type id this member's values carry.

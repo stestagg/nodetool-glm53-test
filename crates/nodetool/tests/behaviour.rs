@@ -747,6 +747,7 @@ async fn the_registry_hands_the_declared_behaviour_to_the_driver() {
         label: node_type.label.to_owned(),
         parameters: Default::default(),
         families: Default::default(),
+        fed: Default::default(),
     };
     let mut behaviour = (node_type
         .behaviour

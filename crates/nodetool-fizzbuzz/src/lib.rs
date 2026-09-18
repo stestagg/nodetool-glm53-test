@@ -1,6 +1,7 @@
 //! The fizzbuzz node library: a counter source, the six condition
-//! comparisons, and the output terminus — the nodes the fizzbuzz graph
-//! runs on.
+//! comparisons beside the divisibility condition, the case selection that
+//! turns the count and its divisibility streams into the fizzbuzz string,
+//! and the output terminus — the nodes the fizzbuzz graph runs on.
 //!
 //! The library is the first written against the generic-port idiom: one
 //! node type per node, its numeric ports declared as one port family —
@@ -12,10 +13,11 @@
 //! these are: they are ordinary node types through and through,
 //! registered through the one `node_type!` path.
 //!
-//! Nothing here prints or retrieves a run's product: the events stream
-//! carries emissions, and the collected vec is the output node's own
-//! state until the run-end retrieval seam lands.
+//! Nothing here prints a run's product: printing is the binary's terminal
+//! rule. The collected vec is the output node's own state, for a program
+//! that wants the run's product collected.
 
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 use nodetool::async_trait;
@@ -31,7 +33,10 @@ use crate::numeric::{
     NUMERIC_FAMILY,
 };
 
-mod numeric;
+/// The generic-port idiom, plugin-side: the numeric family the fizzbuzz
+/// nodes are written against, and the `Numeric` trait the generic bodies
+/// are written over.
+pub mod numeric;
 
 /// The counter's sequence logic, generic over the family member the
 /// compiler resolved: start, then start+step, and so on while the
@@ -79,11 +84,27 @@ fn counter(compiled: &CompiledNode) -> Box<dyn Behaviour> {
 /// mid-stream.
 fn counter_check(compiled: &CompiledNode) -> Vec<String> {
     if compiled.families.contains_key(NUMERIC_FAMILY) {
-        for_numeric!(compiled, counter_step_check)
+        let mut errors = carried_check(compiled, &["start", "stop", "step"]);
+        errors.extend(for_numeric!(compiled, counter_step_check));
+        errors
     } else {
         // The family itself failed to compile; it reported its own error.
         Vec::new()
     }
+}
+
+/// The compile-time form of an input the behaviour reads but nothing
+/// carries: neither a connection feeds it nor a parameter holds it, so the
+/// node's gate waits on an input whose stream is empty — the run would
+/// stall there without end, with nothing to read and no error to show.
+fn carried_check(compiled: &CompiledNode, names: &[&str]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| !compiled.parameters.contains_key(*name) && !compiled.fed.contains(*name))
+        .map(|name| {
+            format!("input `{name}` holds no parameter value and no connection feeds it — the node would never fire")
+        })
+        .collect()
 }
 
 fn counter_step_check<T: Numeric>(compiled: &CompiledNode) -> Vec<String> {
@@ -152,6 +173,143 @@ conditions! {
     le_of, condition_le: "fizzbuzz/le", "Less or equal", |a, b| a <= b;
     gt_of, condition_gt: "fizzbuzz/gt", "Greater", |a, b| a > b;
     ge_of, condition_ge: "fizzbuzz/ge", "Greater or equal", |a, b| a >= b;
+}
+
+/// The divisibility comparison: one boolean per `a` arrival, the count's,
+/// paired against the held `b`, the divisor. A `b` arrival only resets the
+/// held divisor. The general condition's pairing would re-emit on that
+/// arrival too — a duplicate no downstream pairing could tell from a
+/// count's own boolean — while this node's consumers pair its stream with
+/// the `a` stream one value per count. One boolean per count, then,
+/// whatever form the divisor takes.
+struct DivisibleLogic<T: Numeric> {
+    _member: PhantomData<T>,
+}
+
+#[async_trait]
+impl<T: Numeric> Behaviour for DivisibleLogic<T> {
+    async fn process(&mut self, trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        if let Trigger::Arrival("a") = trigger {
+            let a = numeric_input::<T>(io, "a");
+            let b = numeric_input::<T>(io, "b");
+            let divisible = b != T::zero() && a % b == T::zero();
+            io.output("result")
+                .emit(Value::new(scalars::BOOL, divisible))
+                .await;
+        }
+        Ok(Flow::Continue)
+    }
+}
+
+fn divisible_of<T: Numeric>(_compiled: &CompiledNode) -> Box<dyn Behaviour> {
+    Box::new(DivisibleLogic {
+        _member: PhantomData::<T>,
+    })
+}
+
+fn divisible_behaviour(compiled: &CompiledNode) -> Box<dyn Behaviour> {
+    for_numeric!(compiled, divisible_of)
+}
+
+fn divisible_check(compiled: &CompiledNode) -> Vec<String> {
+    carried_check(compiled, &["a", "b"])
+}
+
+node_type! {
+    type_ref: "fizzbuzz/divisible",
+    label: "Divisible",
+    icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M12 4 4 12" stroke="#333" stroke-width="1.5" fill="none"/><circle cx="5" cy="5" r="2" stroke="#333" stroke-width="1.5" fill="none"/><circle cx="11" cy="11" r="2" stroke="#333" stroke-width="1.5" fill="none"/></svg>"##,
+    plugin: "fizzbuzz",
+    sub_group: "condition",
+    behaviour: divisible_behaviour,
+    check_parameters: divisible_check,
+    inputs: [ a: ["numeric", NUMERICS], b: ["numeric", NUMERICS] ],
+    outputs: [ result: "bool" ],
+}
+
+/// The case selection's alignment. Its three inputs each arrive one value
+/// per count, in count order — the k-th arrival of each belongs to the
+/// same count — so the node buffers each stream's arrivals and, the moment
+/// all three hold a value, pairs their fronts and emits that count's
+/// fizzbuzz string. The pairing is the node's own, not the driver's
+/// held-value rule: reading the other inputs' current values would pair a
+/// count against whichever neighbours happened to arrive last.
+struct CaseSelection<T: Numeric> {
+    _member: PhantomData<T>,
+    counts: VecDeque<T>,
+    fizz: VecDeque<bool>,
+    buzz: VecDeque<bool>,
+}
+
+#[async_trait]
+impl<T: Numeric> Behaviour for CaseSelection<T> {
+    async fn process(&mut self, trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        match trigger {
+            Trigger::Arrival("count") => self.counts.push_back(numeric_input::<T>(io, "count")),
+            Trigger::Arrival("fizz") => self.fizz.push_back(flag_input(io, "fizz")),
+            Trigger::Arrival("buzz") => self.buzz.push_back(flag_input(io, "buzz")),
+            Trigger::Arrival(_) | Trigger::Start => {}
+        }
+        while self.counts.front().is_some()
+            && self.fizz.front().is_some()
+            && self.buzz.front().is_some()
+        {
+            let count = self.counts.pop_front().expect("the front holds a value");
+            let fizz = self.fizz.pop_front().expect("the front holds a value");
+            let buzz = self.buzz.pop_front().expect("the front holds a value");
+            io.output("text")
+                .emit(Value::new(scalars::STRING, case_text(count, fizz, buzz)))
+                .await;
+        }
+        Ok(Flow::Continue)
+    }
+}
+
+fn case_selection<T: Numeric>(_compiled: &CompiledNode) -> Box<dyn Behaviour> {
+    Box::new(CaseSelection {
+        _member: PhantomData::<T>,
+        counts: VecDeque::new(),
+        fizz: VecDeque::new(),
+        buzz: VecDeque::new(),
+    })
+}
+
+fn case_behaviour(compiled: &CompiledNode) -> Box<dyn Behaviour> {
+    for_numeric!(compiled, case_selection)
+}
+
+fn case_check(compiled: &CompiledNode) -> Vec<String> {
+    carried_check(compiled, &["count", "fizz", "buzz"])
+}
+
+fn case_text<T: Numeric>(count: T, fizz: bool, buzz: bool) -> String {
+    match (fizz, buzz) {
+        (true, true) => "FizzBuzz".to_owned(),
+        (true, false) => "Fizz".to_owned(),
+        (false, true) => "Buzz".to_owned(),
+        (false, false) => count.to_string(),
+    }
+}
+
+/// The input's current value as its declared `bool` — the run is gated on
+/// the input's first value, and the compiler type-checks the port against
+/// its declaration.
+fn flag_input(io: &mut Io<'_>, name: &str) -> bool {
+    io.input(name)
+        .current()
+        .and_then(|value| value.get::<bool>().copied())
+        .expect("the run is gated on this input's first value")
+}
+
+node_type! {
+    type_ref: "fizzbuzz/case",
+    label: "Case selection",
+    icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M2 4h4l6 4M2 8h10M2 12h4l6-4" stroke="#333" stroke-width="1.5" fill="none"/></svg>"##,
+    plugin: "fizzbuzz",
+    behaviour: case_behaviour,
+    check_parameters: case_check,
+    inputs: [ count: ["numeric", NUMERICS], fizz: "bool", buzz: "bool" ],
+    outputs: [ text: "String" ],
 }
 
 /// The output's collection: every string that arrives, in arrival order,
