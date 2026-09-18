@@ -8,8 +8,10 @@ members = [
     "crates/nodetool/tests/plugins/beta",
     "crates/nodetool/tests/plugins/gamma",
     "crates/nodetool/tests/plugins/delta",
+    "crates/nodetool/tests/plugins/epsilon",
     "examples/plugins/shapes",
     "examples/plugins/text",
+    "examples/plugins/badui",
     "examples/list-nodes",
     "examples/list-nodes-empty",
     "examples/load-graph",
@@ -17,4 +19,5 @@ members = [
     "examples/run-node",
     "examples/run-graph",
     "examples/visual",
+    "examples/visual-badui",
 ]

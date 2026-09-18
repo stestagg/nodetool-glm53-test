@@ -6,6 +6,26 @@ use std::fmt;
 use crate::behaviour::BehaviourFn;
 use crate::compile::CompiledNode;
 
+/// A node type's custom UI, as the declaring plugin embeds it: one bundle,
+/// carried in the crate at build time and served by the editor's HTTP
+/// server under a per-plugin path, that replaces the default node rendering
+/// for the type. The browser learns the entry from the listing the server
+/// serves — never a hardcoded path — and loads it against the component
+/// contract version the bundle names.
+#[derive(Clone, Copy, Debug)]
+pub struct NodeUi {
+    /// The component contract version the bundle was built against. The
+    /// editor offers a versioned contract; a bundle naming one it does not
+    /// speak is known before it loads, and the node falls back to the
+    /// default rendering.
+    pub contract: u64,
+    /// The bundle's entry asset, plugin-namespaced — `shapes/stage-node.js`
+    /// is served at `/plugins/shapes/stage-node.js`.
+    pub entry: &'static str,
+    /// The bundle's text, embedded at build time.
+    pub source: &'static str,
+}
+
 /// A node type as a plugin declares it: pure data, identified by its
 /// [`NodeType::type_ref`] — the key by which the registry, graph files, and
 /// the compiler refer to it.
@@ -21,6 +41,10 @@ pub struct NodeType {
     pub plugin: &'static str,
     /// Optional sub-grouping within the plugin.
     pub sub_group: Option<&'static str>,
+    /// Optional custom node UI: the bundle that renders the type's body
+    /// between the editor's title bar and ports. A type declared without
+    /// one renders by the default node class.
+    pub ui: Option<NodeUi>,
     /// Input ports, on the left of the node.
     pub inputs: &'static [Port],
     /// Output ports, on the right of the node.
@@ -99,10 +123,20 @@ impl fmt::Display for NodeType {
 ///     plugin: "shapes",
 ///     sub_group: "2d",               // optional
 ///     behaviour: circle_behaviour,   // optional; see nodetool::behaviour
+///     ui: nodetool::NodeUi {         // optional; custom node UI
+///         contract: 1,
+///         entry: "shapes/circle-node.js",
+///         source: r#"export default function CircleNode() { ... }"#,
+///     },
 ///     inputs:  [ radius: ["i32", "f64"] ],
 ///     outputs: [ shape: "shapes/shape" ],
 /// }
 /// ```
+///
+/// The optional `ui` arm names a [`NodeUi`] — the bundle rendering the
+/// type's body in the editor, embedded at build time and served under the
+/// plugin's asset path; see `crates/nodetool/ui/src/pluginui.jsx` for the
+/// component contract the bundle is built against.
 ///
 /// A port carries one or more declared type references; write them as a single
 /// literal or a bracketed list. A port may instead declare a *port family*:
@@ -127,6 +161,7 @@ macro_rules! node_type {
         $(, sub_group: $sub_group:literal)?
         $(, behaviour: $behaviour:path)?
         $(, check_parameters: $check:path)?
+        $(, ui: $ui:expr)?
         ,
         inputs: [ $($input_name:ident : $input_types:tt),* $(,)? ]
         ,
@@ -142,6 +177,7 @@ macro_rules! node_type {
                 sub_group: $crate::node_type!(@sub_group $($sub_group)?),
                 behaviour: $crate::node_type!(@behaviour $($behaviour)?),
                 check_parameters: $crate::node_type!(@check $($check)?),
+                ui: $crate::node_type!(@ui $($ui)?),
                 inputs: &[$($crate::node_type!(@port $input_name : $input_types)),*],
                 outputs: &[$($crate::node_type!(@port $output_name : $output_types)),*],
             }
@@ -153,6 +189,8 @@ macro_rules! node_type {
     (@behaviour) => { None };
     (@check $check:path) => { Some($check) };
     (@check) => { None };
+    (@ui $ui:expr) => { Some($ui) };
+    (@ui) => { None };
     (@port $name:ident : [$family:literal, [$($type:literal),+ $(,)?]]) => {
         $crate::Port {
             name: stringify!($name),

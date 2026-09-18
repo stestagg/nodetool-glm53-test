@@ -14,24 +14,6 @@ use uuid::Uuid;
 
 use crate::Value;
 
-/// A data type as its declarer contributes it: pure data, identified by a
-/// stable [`DataType::id`] and a unique [`DataType::name`] — the name being
-/// the reference ports carry — optionally declaring conversions to other
-/// types and carrying metadata.
-#[derive(Clone, Copy, Debug)]
-pub struct DataType {
-    /// Stable identity, unique across the registered types.
-    pub id: Uuid,
-    /// Unique name; the reference ports carry (scalars use their Rust names).
-    pub name: &'static str,
-    /// Conversions declared to other types, each with the function that
-    /// performs it.
-    pub conversions: &'static [Conversion],
-    /// Free-form metadata: a map of plain values, printable and serialisable
-    /// to the browser.
-    pub meta: &'static [(&'static str, MetaValue)],
-}
-
 /// A conversion a [`DataType`] declares to another type: the target's id and
 /// the function that performs it.
 #[derive(Clone, Copy, Debug)]
@@ -45,6 +27,53 @@ pub struct Conversion {
 /// value ([`Value`]): the declarer reads and produces erased values as it
 /// pleases — core sees none of their shapes.
 pub type ConvertFn = fn(&Value) -> Option<Value>;
+
+/// The signature of a type-value serialisation function: the value's one-way
+/// display form, called generically by the bridge wherever a value of the
+/// type crosses to the browser. Display only — nothing travels back, so
+/// there is no deserialiser to declare.
+pub type SerialiseFn = fn(&Value) -> Option<String>;
+
+/// A data type's custom value UI, as the declaring plugin embeds it: the
+/// serialiser that puts the type's values in their browser form, and the
+/// bundle that renders that form wherever the values display. Carried in the
+/// crate at build time, served under a per-plugin path, loaded by the
+/// browser against the component contract version the bundle names.
+#[derive(Clone, Copy, Debug)]
+pub struct ValueUi {
+    /// The component contract version the bundle was built against; see
+    /// `nodetool::NodeUi::contract`.
+    pub contract: u64,
+    /// The value's browser form: called once per crossing, at the bridge.
+    pub serialise: SerialiseFn,
+    /// The bundle's entry asset, plugin-namespaced — served at
+    /// `/plugins/<entry>` like a node UI bundle's.
+    pub entry: &'static str,
+    /// The bundle's text, embedded at build time.
+    pub source: &'static str,
+}
+
+/// A data type as its declarer contributes it: pure data, identified by a
+/// stable [`DataType::id`] and a unique [`DataType::name`] — the name being
+/// the reference ports carry — optionally declaring conversions, carrying
+/// metadata, and declaring the type-value UI its values display through.
+#[derive(Clone, Copy, Debug)]
+pub struct DataType {
+    /// Stable identity, unique across the registered types.
+    pub id: Uuid,
+    /// Unique name; the reference ports carry (scalars use their Rust names).
+    pub name: &'static str,
+    /// Conversions declared to other types, each with the function that
+    /// performs it.
+    pub conversions: &'static [Conversion],
+    /// Free-form metadata: a map of plain values, printable and serialisable
+    /// to the browser.
+    pub meta: &'static [(&'static str, MetaValue)],
+    /// Optional custom value UI: the serialiser and display bundle values of
+    /// this type cross and render through. A type declared without one
+    /// crosses contentless, as the default rendering always has.
+    pub ui: Option<ValueUi>,
+}
 
 /// A plain metadata value: what a [`DataType`]'s metadata map carries.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,6 +124,10 @@ inventory::collect! { DataType }
 ///     None
 /// }
 ///
+/// fn shape_text(value: &Value) -> Option<String> {
+///     None
+/// }
+///
 /// nodetool::data_type! {
 ///     id: nodetool::uuid!("a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d"),
 ///     name: "shapes/shape",
@@ -103,6 +136,12 @@ inventory::collect! { DataType }
 ///         "color" => nodetool::MetaValue::Str("#4a90d9"),
 ///         "shape" => nodetool::MetaValue::Str("circle"),
 ///     ],
+///     ui: nodetool::ValueUi {  // optional; custom value UI
+///         contract: 1,
+///         serialise: shape_text,
+///         entry: "shapes/shape-value.js",
+///         source: r#"export default function ShapeValue() { ... }"#,
+///     },
 /// }
 /// ```
 ///
@@ -117,6 +156,15 @@ inventory::collect! { DataType }
 /// drawn set, `circle` or `square` — the editor composes the pair into the
 /// listing it serves, taking the neutral for a type that does not declare
 /// both.
+///
+/// The optional `ui` arm names a [`ValueUi`] — the serialisation function
+/// ([`SerialiseFn`]) called at the bridge wherever a value of the type
+/// crosses to the browser, and the bundle rendering that form wherever the
+/// values display; the serialisation is display only, nothing travels back.
+/// A type declared without `ui` crosses contentless, exactly as the default
+/// rendering has always carried it. See
+/// `crates/nodetool/ui/src/pluginui.jsx` for the component contract the
+/// bundle is built against.
 #[macro_export]
 macro_rules! data_type {
     (
@@ -124,6 +172,7 @@ macro_rules! data_type {
         name: $name:literal
         $(, conversions: [ $($target:expr => $convert:expr),* $(,)? ])?
         $(, meta: [ $($key:literal => $value:expr),* $(,)? ])?
+        $(, ui: $ui:expr)?
         $(,)?
     ) => {
         $crate::inventory::submit! {
@@ -132,7 +181,10 @@ macro_rules! data_type {
                 name: $name,
                 conversions: &[$($($crate::Conversion { target: $target, convert: $convert }),*)?],
                 meta: &[$($(($key, $value)),*)?],
+                ui: $crate::data_type!(@ui $($ui)?),
             }
         }
     };
+    (@ui $ui:expr) => { Some($ui) };
+    (@ui) => { None };
 }

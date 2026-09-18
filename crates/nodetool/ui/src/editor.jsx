@@ -49,6 +49,13 @@ import {
 import { NODE_TYPE, connect, connectionLost } from './protocol.js'
 import { RunCoalescer } from './coalesce.js'
 import { EditContext, LockContext, scalarPossible } from './fields.jsx'
+import {
+  PluginUiContext,
+  bodyTypeRefs,
+  createBundleStore,
+  valueTypeRefs,
+} from './pluginui.jsx'
+import { createElement } from 'react'
 import { SelfLoopEdge } from './edges.jsx'
 import { byName, portAppearance } from './types.js'
 import { PlaceholderNode, TypeIcon, TypeNode } from './nodes.jsx'
@@ -371,6 +378,13 @@ export function Editor() {
   const [values, setValues] = useState({})
   const [pulsing, setPulsing] = useState(() => new Set())
   const [nodes, setNodes] = useState([])
+  // The loaded plugin bundles, per attachment point: a node type's body
+  // component and a type's value component, absent until the first node of
+  // the type or the first displayed value asks for the bundle, and null
+  // once a load or a render has failed there — the default class and the
+  // contentless readout taking over, the failure reported.
+  const [bodies, setBodies] = useState({})
+  const [valueBodies, setValueBodies] = useState({})
   const [status, setStatus] = useState({ text: 'connecting…', error: false })
   // The connection: connecting until the first greeting, open while it
   // holds, lost on every drop the client is retrying, and incompatible
@@ -413,6 +427,11 @@ export function Editor() {
   // next definition arrival, which brings the view to the graph; a
   // failed gesture disarms it.
   const pendingRefit = useRef(false)
+  // The page's one bundle table: whatever node UI and value UI the
+  // listing's facts name, loaded once each however many nodes and ports
+  // ask for them.
+  const bundles = useRef(null)
+  if (bundles.current === null) bundles.current = createBundleStore()
   const { screenToFlowPosition, getViewport, setViewport, fitView } = useReactFlow()
 
   // The background's two drags differ by Shift alone, and so do the two
@@ -454,16 +473,13 @@ export function Editor() {
 
   // A toast is the one surface a transient report arrives through:
   // dismissed on click, and on its own — a happening, never the durable
-  // truth, which lives in the marks and the chrome state.
-  const dismissToast = useCallback((id) => {
-    setToasts((current) => current.filter((toast) => toast.id !== id))
-  }, [])
-  // A toast is the one surface a transient report arrives through:
-  // dismissed on click, and on its own — a happening, never the durable
   // truth, which lives in the marks and the chrome state. A connection
   // loss is chrome state of its own, the banner's: a request the loss
   // settles arrives marked `connectionLost` and is not toasted beside
   // the banner saying the same thing.
+  const dismissToast = useCallback((id) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id))
+  }, [])
   const showToast = useCallback(
     (report) => {
       if (report === connectionLost) return
@@ -493,6 +509,53 @@ export function Editor() {
   }, [])
 
   const marks = useMemo(() => nodeMarks(problems, run), [problems, run])
+
+  // A failed bundle is reported through the toast surface naming the type,
+  // and its attachment point marked fallen-back: the node renders by the
+  // default class, the value readout stays contentless, and neither asks
+  // for the bundle again this page. A load in flight collects one
+  // rejection handler per effect run that found it pending — the value
+  // effect re-runs per animation frame while its type's values stream —
+  // so the report, unlike the fallback, is guarded per attachment point:
+  // one failure names the type once.
+  const reportedBodies = useRef(new Set())
+  const reportedValues = useRef(new Set())
+  const failedBundle = (reported, setState) => (ref, error) => {
+    setState((current) => (current[ref] === null ? current : { ...current, [ref]: null }))
+    if (reported.current.has(ref)) return
+    reported.current.add(ref)
+    showToast(`plugin UI for ${ref} failed: ${error?.message ?? error}`)
+  }
+  const failBody = useCallback(failedBundle(reportedBodies, setBodies), [showToast])
+  const failValue = useCallback(failedBundle(reportedValues, setValueBodies), [showToast])
+
+  // Node-type UI loads lazily: the first node of the type on the canvas
+  // asks for its bundle, the palette asking for nothing. Value UI loads
+  // the same way, at the first displayed value. A bundle that has not
+  // arrived delays nothing — the nodes it belongs to render by the default
+  // class until it lands.
+  useEffect(() => {
+    if (graph === null || listing === null) return
+    const byRef = new Map(listing.types.map((type) => [type.type_ref, type]))
+    for (const ref of bodyTypeRefs(graph, listing.types)) {
+      if (bodies[ref] !== undefined) continue
+      bundles.current.attempt(byRef.get(ref).ui).then(
+        (body) => setBodies((current) => ({ ...current, [ref]: body })),
+        (error) => failBody(ref, error),
+      )
+    }
+  }, [graph, listing, bodies, failBody])
+
+  useEffect(() => {
+    if (graph === null || listing === null) return
+    for (const ref of valueTypeRefs(graph, listing.types, listing.dataTypes, values)) {
+      if (valueBodies[ref] !== undefined) continue
+      bundles.current.attempt(listing.dataTypes[ref].ui).then(
+        (body) => setValueBodies((current) => ({ ...current, [ref]: body })),
+        (error) => failValue(ref, error),
+      )
+    }
+  }, [graph, listing, values, valueBodies, failValue])
 
   useEffect(() => {
     if (graph === null) return
@@ -846,43 +909,49 @@ export function Editor() {
               )}
             </aside>
             <main className="canvas" ref={canvasRef}>
-              <ReactFlow
-                nodes={nodes}
-                edges={graph === null ? [] : toEdges(graph, pulsing, listing)}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                onNodesChange={onNodesChange}
-                onNodeDragStop={onNodeDragStop}
-                onConnect={onConnect}
-                onConnectEnd={onConnectEnd}
-                onDrop={onDrop}
-                onDragOver={onDragOver}
-                fitView
-                // The initial fit never zooms in past 100%: fitting a small
-                // graph up to maxZoom would lurch the view under the pointer.
-                fitViewOptions={{ maxZoom: 1 }}
-                minZoom={0.25}
-                maxZoom={2.5}
-                // Shift rides the shell's own tracker — backgroundDrag
-                // above — and multiSelectionKeyCode makes a shift-click
-                // on a node a toggle, React Flow's selection key retired
-                // so its capture can never swallow a node's pointerdown.
-                // The delete key is this shell's own gesture — fanning
-                // out to the delete operation per selected node — so
-                // React Flow's is retired. A wire is a drag from either
-                // end — a click never starts or lands one — and the drag
-                // threshold keeps a port click from reading as a drag-off.
-                multiSelectionKeyCode="Shift"
-                selectionKeyCode={null}
-                deleteKeyCode={null}
-                {...backgroundDrag(shiftHeld)}
-                nodesDraggable={editable}
-                nodesConnectable={editable}
-                connectionDragThreshold={4}
-                connectOnClick={false}
+              {/* The plugin UI contract rides the canvas subtree alone: its
+                  readers are the node renderings, nothing in the chrome. */}
+              <PluginUiContext.Provider
+                value={{ h: createElement, bodies, valueBodies, failBody, failValue }}
               >
-                <Background variant="dots" gap={24} size={1.5} />
-              </ReactFlow>
+                <ReactFlow
+                  nodes={nodes}
+                  edges={graph === null ? [] : toEdges(graph, pulsing, listing)}
+                  nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
+                  onNodesChange={onNodesChange}
+                  onNodeDragStop={onNodeDragStop}
+                  onConnect={onConnect}
+                  onConnectEnd={onConnectEnd}
+                  onDrop={onDrop}
+                  onDragOver={onDragOver}
+                  fitView
+                  // The initial fit never zooms in past 100%: fitting a small
+                  // graph up to maxZoom would lurch the view under the pointer.
+                  fitViewOptions={{ maxZoom: 1 }}
+                  minZoom={0.25}
+                  maxZoom={2.5}
+                  // Shift rides the shell's own tracker — backgroundDrag
+                  // above — and multiSelectionKeyCode makes a shift-click
+                  // on a node a toggle, React Flow's selection key retired
+                  // so its capture can never swallow a node's pointerdown.
+                  // The delete key is this shell's own gesture — fanning
+                  // out to the delete operation per selected node — so
+                  // React Flow's is retired. A wire is a drag from either
+                  // end — a click never starts or lands one — and the drag
+                  // threshold keeps a port click from reading as a drag-off.
+                  multiSelectionKeyCode="Shift"
+                  selectionKeyCode={null}
+                  deleteKeyCode={null}
+                  {...backgroundDrag(shiftHeld)}
+                  nodesDraggable={editable}
+                  nodesConnectable={editable}
+                  connectionDragThreshold={4}
+                  connectOnClick={false}
+                >
+                  <Background variant="dots" gap={24} size={1.5} />
+                </ReactFlow>
+              </PluginUiContext.Provider>
               {empty && (
                 <div className="canvas-hint">
                   Drag a node type from the palette onto the canvas.
