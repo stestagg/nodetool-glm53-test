@@ -224,3 +224,5 @@ reshaped around groups (24's call).
   v1 file silently gaining meaning. This is the first use of the version
   field for growth, and it is additive only — the vision's migration stance
   (a version field is enough, no tooling) respected.
+
+- 2026-09-18: Implemented in pull request #60 (http://localhost:8080/gitea/localcode/nodetool/pulls/60).
