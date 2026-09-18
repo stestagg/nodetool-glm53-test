@@ -252,9 +252,9 @@ body {
 }
 
 /* The run's status on the node: one word in the bridge's vocabulary, a
-   state not a decoration. Distinct hues, contrast on the title bar; the
-   running one carries a beat, honoured only while the platform allows
-   motion. */
+   state not a decoration. Distinct hues, each clearing the 4.5:1 contrast
+   floor on the title bar at this size; the running one carries a beat,
+   honoured only while the platform allows motion. */
 
 .node-status {
   font-size: 10px;
@@ -263,15 +263,15 @@ body {
 }
 
 .node-status.running {
-  color: var(--accent);
+  color: #215db0;
 }
 
 .node-status.completed {
-  color: #238551;
+  color: #1c6e42;
 }
 
 .node-status.failed {
-  color: var(--danger);
+  color: #a83a3e;
 }
 
 .node-status.stopped {
@@ -285,7 +285,7 @@ body {
   height: 6px;
   margin-right: 4px;
   border-radius: 50%;
-  background: var(--accent);
+  background: #215db0;
 }
 
 @media (prefers-reduced-motion: no-preference) {

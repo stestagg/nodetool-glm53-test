@@ -21,7 +21,6 @@ import {
   runControl,
   runStatusText,
   saveAsksForPath,
-  snapshotValues,
   toEdges,
   toNodes,
 } from './editor.jsx'
@@ -429,21 +428,5 @@ describe('emittedTargets', () => {
   it('a port with no wires pulses nothing, and neither does another node\'s emission', () => {
     expect(emittedTargets(edges, 'src', 'spare')).toEqual([])
     expect(emittedTargets(edges, 'other', 'out')).toEqual(['other/out->z/in'])
-  })
-})
-
-describe('snapshotValues', () => {
-  it('flattens the resync display into the per-port keys the canvas reads', () => {
-    expect(
-      snapshotValues({
-        statuses: { u1: 'completed' },
-        values: [{ node: 'u1', port: 'out', value: '50' }],
-      }),
-    ).toEqual({ 'u1/out': '50' })
-  })
-
-  it('an empty or missing display reads as no values', () => {
-    expect(snapshotValues({ statuses: {}, values: [] })).toEqual({})
-    expect(snapshotValues(undefined)).toEqual({})
   })
 })

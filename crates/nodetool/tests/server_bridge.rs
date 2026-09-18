@@ -3,10 +3,12 @@
 //! story 07's closure rule, extended to the stopped outcome — the latest
 //! value per emitting port held and riding the connect-time resync, and
 //! runs that never wait on a connection: a stalled or closed one leaves
-//! the run's values, timing, and completion untouched, and one whose
-//! outbound queue passes its bound is dropped.
+//! the run's values, timing, and completion untouched, and one that
+//! cannot keep up is dropped over its real socket.
 
 mod server_common;
+
+use std::sync::Arc;
 
 use nodetool::server::Editor;
 use serde_json::{json, Value};
@@ -60,6 +62,30 @@ edges:
     to: 00000000-0000-0000-0000-0000000000d2
     to_port: a";
 
+/// A graph whose run pushes more than a stalled connection's socket can
+/// hold: the counter fans out to `width` pairers, each emitting once per
+/// value it receives, so the run's pushes run past any buffer a
+/// non-reading connection's kernel holds.
+fn fan_out(width: usize) -> String {
+    let mut graph = String::from(
+        "schema_version: 1\nname: fan out\nnodes:\n  - uuid: 00000000-0000-0000-0000-0000000000d1\n    type_ref: delta/counter\n",
+    );
+    for index in 0..width {
+        graph.push_str(&format!(
+            "  - uuid: 00000000-0000-0000-0000-{:012x}\n    type_ref: delta/pairer\n    parameters:\n      b: 1\n",
+            0x0000000000e0u32 + index as u32,
+        ));
+    }
+    graph.push_str("edges:\n");
+    for index in 0..width {
+        graph.push_str(&format!(
+            "  - from: 00000000-0000-0000-0000-0000000000d1\n    from_port: out\n    to: 00000000-0000-0000-0000-{:012x}\n    to_port: a\n",
+            0x0000000000e0u32 + index as u32,
+        ));
+    }
+    graph
+}
+
 /// A run that never ends by itself: the pairer's second input is neither
 /// connected nor parameterised, so its gate never opens — the hang a stop
 /// exists to end.
@@ -76,7 +102,9 @@ edges:
     to: 00000000-0000-0000-0000-0000000000d2
     to_port: a";
 
-/// A scalar source beside a custom-typed one, neither wired downstream.
+/// A scalar source beside a union output whose second emission is a
+/// custom type: the port's scalar text is held first, then the custom
+/// emission displaces it. Neither is wired downstream.
 const SOURCES: &str = "schema_version: 1
 name: sources
 nodes:
@@ -134,8 +162,16 @@ async fn wait_idle(editor: &Editor) -> Value {
     panic!("the run never ended");
 }
 
-fn held_display(editor: &Editor) -> Value {
-    send(editor, r#"{"id": 0, "type": "get_definition"}"#)["run_display"].clone()
+/// The run display the connect-time resync delivers: asked for over the
+/// one-message seam, arriving as its own push — the shape a connecting tab
+/// actually receives it in.
+async fn held_display(editor: &Editor) -> Value {
+    let mut watcher = editor.subscribe();
+    send(editor, r#"{"id": 0, "type": "get_definition"}"#);
+    let push: Value = serde_json::from_str(&watcher.recv().await.expect("a push arrives"))
+        .expect("a push is JSON");
+    assert_eq!(push["type"], "run_display");
+    push
 }
 
 #[tokio::test]
@@ -204,15 +240,15 @@ async fn the_resync_carries_the_run_state_and_the_per_node_display() {
     let mut watcher = editor.subscribe();
 
     assert_eq!(
-        held_display(&editor),
-        json!({ "statuses": {}, "values": [] }),
+        held_display(&editor).await,
+        json!({ "type": "run_display", "statuses": {}, "values": {} }),
         "before the session's first run the display is empty"
     );
 
     send(&editor, r#"{"id": 1, "type": "start_run"}"#);
     through_run_end(&mut watcher).await;
 
-    let display = held_display(&editor);
+    let display = held_display(&editor).await;
     assert_eq!(
         display["statuses"],
         json!({ "00000000-0000-0000-0000-0000000000d1": "completed" }),
@@ -220,15 +256,11 @@ async fn the_resync_carries_the_run_state_and_the_per_node_display() {
     );
     assert_eq!(
         display["values"],
-        json!([{
-            "node": "00000000-0000-0000-0000-0000000000d1",
-            "port": "out",
-            "value": "50",
-        }]),
+        json!({ "00000000-0000-0000-0000-0000000000d1/out": "50" }),
         "the counter's last ticked value is evidence of what the run did"
     );
     assert_eq!(
-        held_display(&editor)["values"],
+        held_display(&editor).await["values"],
         display["values"],
         "the display persists for as long as the run's does"
     );
@@ -242,22 +274,31 @@ async fn scalar_emissions_carry_their_text_and_custom_emissions_carry_no_content
     send(&editor, r#"{"id": 1, "type": "start_run"}"#);
     let pushes = through_run_end(&mut watcher).await;
 
-    let emissions: Vec<&Value> = run_events(&pushes)
+    let scalar = run_events(&pushes)
         .into_iter()
-        .filter(|event| event["event"] == "emitted")
-        .collect();
-    let scalar = emissions
-        .iter()
-        .find(|event| event["node"] == json!("00000000-0000-0000-0000-0000000000d1"))
+        .find(|event| {
+            event["event"] == "emitted"
+                && event["node"] == json!("00000000-0000-0000-0000-0000000000d1")
+        })
         .unwrap();
     assert_eq!(
         scalar["value"],
         json!("1"),
         "the base scalar renders its text"
     );
-    let custom = emissions
-        .iter()
-        .find(|event| event["node"] == json!("00000000-0000-0000-0000-0000000000d3"))
+
+    let mut shaper = run_events(&pushes).into_iter().filter(|event| {
+        event["event"] == "emitted"
+            && event["node"] == json!("00000000-0000-0000-0000-0000000000d3")
+    });
+    let held = shaper.next().expect("the scalar emission crosses");
+    assert_eq!(
+        held["value"],
+        json!("1"),
+        "the union port's scalar emission carries its text like any other"
+    );
+    let custom = shaper
+        .next()
         .expect("the custom-typed emission crosses — the wire animates from it");
     assert_eq!(custom["port"], json!("mark"));
     assert!(
@@ -265,7 +306,7 @@ async fn scalar_emissions_carry_their_text_and_custom_emissions_carry_no_content
         "nothing core would have to invent: {custom}"
     );
 
-    let display = held_display(&editor);
+    let display = held_display(&editor).await;
     assert_eq!(
         display["statuses"],
         json!({
@@ -275,12 +316,48 @@ async fn scalar_emissions_carry_their_text_and_custom_emissions_carry_no_content
     );
     assert_eq!(
         display["values"],
-        json!([{
-            "node": "00000000-0000-0000-0000-0000000000d1",
-            "port": "out",
-            "value": "50",
-        }]),
-        "only what core can render is held for the snapshot"
+        json!({ "00000000-0000-0000-0000-0000000000d1/out": "50" }),
+        "the custom emission is the port's latest, and it is nothing at all: the scalar it displaced no longer stands for the port"
+    );
+}
+
+#[tokio::test]
+async fn the_next_start_resets_the_canvas() {
+    let editor = editor_holding(FAILING);
+    let mut watcher = editor.subscribe();
+
+    send(&editor, r#"{"id": 1, "type": "start_run"}"#);
+    through_run_end(&mut watcher).await;
+
+    // Idle editing returns before the second run: the pairer, marked
+    // stopped by the first run's failure, goes from the definition.
+    send(
+        &editor,
+        r#"{"id": 2, "type": "delete_node", "uuid": "00000000-0000-0000-0000-0000000000d2"}"#,
+    );
+    send(&editor, r#"{"id": 3, "type": "start_run"}"#);
+    through_run_end(&mut watcher).await;
+
+    let ended = held_display(&editor).await["statuses"].clone();
+    let mut named: Vec<String> = ended
+        .as_object()
+        .expect("statuses is an object")
+        .keys()
+        .cloned()
+        .collect();
+    named.sort();
+    assert_eq!(
+        named,
+        vec![
+            "00000000-0000-0000-0000-0000000000d1".to_owned(),
+            "00000000-0000-0000-0000-0000000000d5".to_owned(),
+        ],
+        "the ended snapshot names exactly the second run's nodes: the deleted node's stale mark did not ride it"
+    );
+    assert_eq!(
+        ended["00000000-0000-0000-0000-0000000000d5"],
+        json!("failed"),
+        "the failure's mark stands"
     );
 }
 
@@ -320,7 +397,7 @@ async fn a_failed_run_closes_started_nodes_as_stopped_and_names_the_failed_one()
         "the failure's explanation rides the forwarded event: {failure}"
     );
 
-    let display = held_display(&editor);
+    let display = held_display(&editor).await;
     assert_eq!(
         display["statuses"]["00000000-0000-0000-0000-0000000000d5"],
         json!("failed")
@@ -347,7 +424,7 @@ async fn a_user_stopped_run_closes_its_running_nodes_as_stopped() {
         }
     }
     assert_eq!(
-        held_display(&editor)["statuses"],
+        held_display(&editor).await["statuses"],
         json!({
             "00000000-0000-0000-0000-0000000000d1": "running",
             "00000000-0000-0000-0000-0000000000d2": "running",
@@ -374,7 +451,7 @@ async fn a_user_stopped_run_closes_its_running_nodes_as_stopped() {
         "the stop closes every started node without its own final transition"
     );
     assert_eq!(
-        held_display(&editor)["statuses"],
+        held_display(&editor).await["statuses"],
         json!({
             "00000000-0000-0000-0000-0000000000d1": "stopped",
             "00000000-0000-0000-0000-0000000000d2": "stopped",
@@ -383,11 +460,12 @@ async fn a_user_stopped_run_closes_its_running_nodes_as_stopped() {
 }
 
 #[tokio::test]
-async fn a_stalled_or_closed_connection_never_touches_the_run_and_one_past_its_bound_is_dropped() {
+async fn a_stalled_or_closed_connection_never_touches_the_run() {
     let editor = editor_holding(PAIRED);
-    let mut stalled = editor.subscribe();
-    let closed = editor.subscribe();
-    drop(closed);
+    // One subscriber that never reads from here on — the stall — and one
+    // that is closed outright.
+    let _stalled = editor.subscribe();
+    drop(editor.subscribe());
 
     send(&editor, r#"{"id": 1, "type": "start_run"}"#);
     let run = wait_idle(&editor).await;
@@ -397,26 +475,70 @@ async fn a_stalled_or_closed_connection_never_touches_the_run_and_one_past_its_b
         "a stalled and a closed connection changed neither the run's completion nor its values"
     );
     assert_eq!(
-        held_display(&editor)["values"],
-        json!([
-            {
-                "node": "00000000-0000-0000-0000-0000000000d1",
-                "port": "out",
-                "value": "50",
-            },
-            {
-                "node": "00000000-0000-0000-0000-0000000000d2",
-                "port": "sum",
-                "value": "51",
-            },
-        ]),
+        held_display(&editor).await["values"],
+        json!({
+            "00000000-0000-0000-0000-0000000000d1/out": "50",
+            "00000000-0000-0000-0000-0000000000d2/sum": "51",
+        }),
         "the run's own values, timing, and completion stand"
     );
+}
 
-    match stalled.try_recv() {
-        Err(broadcast::error::TryRecvError::Lagged(_)) => {}
-        other => panic!(
-            "a connection whose outbound queue passed its bound is dropped, not served stale: {other:?}"
-        ),
-    }
+#[tokio::test]
+async fn a_connection_that_cannot_keep_up_is_dropped_over_its_socket_and_the_run_is_untouched() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let editor = Arc::new(editor_holding(&fan_out(1250)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(Arc::clone(&editor).serve(listener));
+    let mut watcher = editor.subscribe();
+
+    // The connection asks for a receive buffer a fraction of the run's
+    // pushes hold, then stops reading: the pump's writes have nowhere to
+    // go, and the push channel passes its bound while the pump sits
+    // stalled mid-write.
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_recv_buffer_size(4096).unwrap();
+    let mut stalled = socket.connect(address).await.unwrap();
+    stalled
+        .write_all(
+            b"GET /ws HTTP/1.1\r\nHost: editor\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let mut head = [0u8; 1024];
+    let read = stalled.read(&mut head).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&head[..read]).starts_with("HTTP/1.1 101"),
+        "the upgrade answer arrives"
+    );
+
+    send(&editor, r#"{"id": 1, "type": "start_run"}"#);
+    let pushes = through_run_end(&mut watcher).await;
+    assert_eq!(
+        pushes.last().unwrap()["outcome"],
+        json!("completed"),
+        "the run never waits on a connection that cannot keep up"
+    );
+
+    // The server has dropped the stalled connection: reading now drains
+    // whatever crossed before the drop, then meets the end the drop made.
+    let mut dropped = Vec::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        stalled.read_to_end(&mut dropped),
+    )
+    .await
+    .expect("the server ended the connection")
+    .expect("the read does not fail");
+    assert!(!dropped.is_empty(), "pushes crossed before the drop");
+
+    assert_eq!(
+        held_display(&editor).await["values"]["00000000-0000-0000-0000-0000000000d1/out"],
+        json!("50"),
+        "the dropped connection left the run's own display standing"
+    );
+
+    server.abort();
 }

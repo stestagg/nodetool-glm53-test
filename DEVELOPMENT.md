@@ -194,7 +194,7 @@ is visible in the others. The editor's outputs no node consumes are
 discarded; attaching a console printer to what a run produces is not the
 editor's business.
 
-While the run is on the canvas animates with it. Each node carries its
+While the run is on, the canvas animates with it. Each node carries its
 derived status in its title bar — running from its start, completed or
 failed from its own ending, stopped when a failed or stopped run
 abandons it — and every value an output emits travels its wires as a
@@ -225,11 +225,11 @@ value at the ticker's output ticks upward; a second tab opened mid-run
 joins with the same statuses and values. Editing the guard's
 `forbidden` parameter to `one` — a value the drip's second line
 carries — arms it: the next run fails there, the guard marks failed,
-the node it feeds marks stopped, and both marks remain after idle
-returns and through a reload. Stop on a later run leaves stopped marks;
-starting again resets the canvas and animates afresh. The sample also
-keeps its editing-lock duty: while it runs, every editing gesture is
-inert, until the run ends or Stop is pressed.
+and the drip and the splitter it abandons mark stopped; the marks
+remain after idle returns and through a reload. Stop on a later run
+leaves stopped marks; starting again resets the canvas and animates
+afresh. The sample also keeps its editing-lock duty: while it runs,
+every editing gesture is inert, until the run ends or Stop is pressed.
 
 The editor's graph lives in a graph file. The chrome names the file being
 edited — untitled until a first save — with an unsaved-changes marker an

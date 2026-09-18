@@ -14,8 +14,11 @@
 //! — whether a run is on and how the last one ended — travels beside them
 //! the same way, and with it the run display: the per-node status and the
 //! latest value per output port the bridge ([`bridge`]) derives from the
-//! run's own events and holds beside the rest, so a browser connecting at
-//! any time is given the canvas as it stands. The run's events themselves
+//! run's own events and holds beside the rest. The display rides the push
+//! channel — a connecting tab is given it as a push of its own, on the
+//! one ordered stream every later status change and emission rides — so a
+//! browser connecting at any time is given the canvas as it stands. The
+//! run's events themselves
 //! cross to every connection as they occur, forwarded by the bridge, the
 //! one observer the editor subscribes to the engine with. So do the
 //! problems: after every change to the held
@@ -264,12 +267,23 @@ impl Editor {
         protocol::done(fields)?;
         let graph = serde_json::to_value(&session.graph)
             .map_err(|error| format!("the held definition cannot be carried as JSON: {error}"))?;
+        // The run display rides the push channel, not this reply: pushes
+        // are sent under the session lock and read by each connection in
+        // the order sent, so the snapshot a connecting tab joins with is
+        // ordered against every later status change and emission. A reply
+        // could not promise that — the reply and the pushes share one
+        // write pump with no order between them, and a push sent after the
+        // reply was composed can reach the browser first, leaving the
+        // older snapshot it carries to revert state the tab has applied —
+        // durable for statuses, which are pushed once per transition.
+        let _ = self
+            .pushes
+            .send(protocol::run_display_message(&session.display));
         Ok(json!({
             "type": "definition",
             "graph": graph,
             "file": protocol::file_state(session.file.as_deref(), session.dirty),
             "run": protocol::run_state(&session.run),
-            "run_display": session.display.snapshot(),
             "problems": protocol::problems_state(&session.problems),
         }))
     }
@@ -623,11 +637,11 @@ impl Editor {
     }
 
     /// Push the whole updated definition, with the file state, the run
-    /// state, and the problems beside it, to every connection — never the
-    /// operation. Every definition change lands here, so the problems the
-    /// compile finds are recomputed beside it: held as state like the
-    /// definition itself, travelling with it wherever it travels. The
-    /// browser holds no graph state of its own, so a push it can render
+    /// state, and the problems beside it — never the operation. Every
+    /// definition change lands here, so the problems the compile finds are
+    /// recomputed beside it: held as state like the definition itself,
+    /// travelling with it wherever it travels. The browser holds no graph
+    /// state of its own, so a push it can render
     /// without applying or merging anything is the one shape that can
     /// never diverge from what the server holds. Called with the session
     /// still locked, so the pushes leave in the order the operations
@@ -640,7 +654,6 @@ impl Editor {
             session.dirty,
             &session.run,
             &session.problems,
-            &session.display,
         ) {
             Ok(message) => message,
             Err(error) => protocol::error_reply(

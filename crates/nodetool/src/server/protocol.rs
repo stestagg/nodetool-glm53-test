@@ -116,20 +116,21 @@ pub fn run_state(run: &RunState) -> Value {
     })
 }
 
-/// The whole definition with the file state, the run state, the run
-/// display, and the problems beside it — the message every connection
-/// renders the editor from. The graph is serialized first and the message
-/// composed from that value, so the failure the `Result` declares — the
-/// definition carrying something JSON cannot, which the caller reports
-/// instead of papering over — happens here rather than as a panic inside
-/// the composition.
+/// The whole definition with the file state, the run state, and the
+/// problems beside it — the message every connection renders the editor
+/// from. The graph is serialized first and the message composed from that
+/// value, so the failure the `Result` declares — the definition carrying
+/// something JSON cannot, which the caller reports instead of papering
+/// over — happens here rather than as a panic inside the composition. The
+/// run display is not beside them: it travels as its own push, so a tab
+/// joining mid-run receives it in the same ordered stream every later
+/// status change and emission rides.
 pub fn definition_message(
     graph: &GraphDefinition,
     file: Option<&str>,
     dirty: bool,
     run: &RunState,
     problems: &[crate::compile::Problem],
-    display: &RunDisplay,
 ) -> Result<String, serde_json::Error> {
     let graph = serde_json::to_value(graph)?;
     serde_json::to_string(&json!({
@@ -137,7 +138,6 @@ pub fn definition_message(
         "graph": graph,
         "file": file_state(file, dirty),
         "run": run_state(run),
-        "run_display": display.snapshot(),
         "problems": problems_state(problems),
     }))
 }
@@ -185,6 +185,18 @@ pub fn node_status_message(node: Uuid, status: &str) -> String {
         "status": status,
     }))
     .expect("a node status always serialises")
+}
+
+/// The run display pushed alone: the per-node statuses and latest values a
+/// connecting tab is given, riding the one ordered channel every later
+/// status change and emission rides. Pushes are sent under the session
+/// lock, so a change the bridge derives later can never overtake the
+/// snapshot a tab joins with — the stale-canvas-overwritten-by-a-push race
+/// a reply-carried snapshot could not rule out.
+pub fn run_display_message(display: &RunDisplay) -> String {
+    let mut message = display.snapshot();
+    message["type"] = json!("run_display");
+    serde_json::to_string(&message).expect("the run display always serialises")
 }
 
 /// An engine event forwarded as it occurred — every event, values

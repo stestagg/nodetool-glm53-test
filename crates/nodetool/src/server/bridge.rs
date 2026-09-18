@@ -2,23 +2,27 @@
 //! 07's event stream composed as a single subscriber, speaking over the
 //! push channel to every connection.
 //!
-//! It does three things with each event, in order. It forwards the event
-//! itself, untouched in its browser form — every event, values included,
-//! no sampling, thinning, or aggregation; the editor is not to be less
+//! It does four things with each event. It forwards the event itself,
+//! untouched in its browser form — every event, values included, no
+//! sampling, thinning, or aggregation; the editor is not to be less
 //! truthful than the headless terminal's printing observer. It derives the
 //! node status the events define — running from a node's started event,
 //! completed or failed from its own final transition, and stopped when a
 //! failed or user-stopped run-finished closes a started node without one —
 //! once, here, keyed by instance uuid, and pushes each derived change as
-//! state. And it holds the latest value per emitting port, a base scalar
-//! as its plain string form, a plugin custom type as nothing at all —
-//! rendering those is plugin territory, core staying opaque to them.
+//! state. It holds the latest value per emitting port, a base scalar as
+//! its plain string form, a plugin custom type as nothing at all — the
+//! port's held entry goes with it, so no scalar a custom emission
+//! displaced lingers as the port's latest; rendering custom types is
+//! plugin territory, core staying opaque to them. And it carries a
+//! run-finished outcome back into the run state — the ending the chrome
+//! shows arrives through this observer, not beside it.
 //!
 //! The statuses and the values persist after the run ends — the failure
 //! stays locatable, the counter's last ticked value is evidence of what
-//! the run did — until the next start resets them, and travel the
-//! connect-time snapshot beside the run state, so a browser connecting at
-//! any time sees the canvas the first tab sees.
+//! the run did — until the next start resets them. The connect-time
+//! snapshot carries them, so a browser connecting at any time sees the
+//! canvas the first tab sees.
 //!
 //! The run never waits on any of this: an observer is a sink, and the
 //! push channel is bounded per connection — a connection that cannot keep
@@ -35,7 +39,6 @@ use super::run::{Outcome, RunState};
 use super::Session;
 use crate::async_trait;
 use crate::engine::{Event, Observer, RunOutcome};
-use crate::Value;
 
 /// A node's derived status: story 07's, extended with the stopped outcome
 /// a failed or user-stopped run leaves behind. Rendered as its name; the
@@ -61,8 +64,8 @@ impl Status {
 
 /// What the canvas shows of a run, held beside the session state it
 /// belongs to: the per-node derived status and the latest value held per
-/// emitting port. Ordered maps, so the snapshot every connection renders
-/// reads in the same order.
+/// emitting port. The snapshot orders both — statuses by uuid, values by
+/// node and port — so every connection reads the same order.
 #[derive(Default)]
 pub(super) struct RunDisplay {
     statuses: HashMap<Uuid, Status>,
@@ -77,8 +80,11 @@ impl RunDisplay {
         self.values.clear();
     }
 
-    /// The snapshot the connect-time resync carries beside the run state:
-    /// the current displayed truth, mid-run's or the persisted last run's.
+    /// The snapshot a connecting tab is given as the connect-time resync's
+    /// display: the current displayed truth, mid-run's or the persisted
+    /// last run's. Values key the same `uuid/port` composite the browser
+    /// builds from a live emission — one shape on the wire and in the
+    /// canvas.
     pub(super) fn snapshot(&self) -> serde_json::Value {
         json!({
             "statuses": self
@@ -89,10 +95,8 @@ impl RunDisplay {
             "values": self
                 .values
                 .iter()
-                .map(|((uuid, port), text)| {
-                    json!({ "node": uuid, "port": port, "value": text })
-                })
-                .collect::<Vec<_>>(),
+                .map(|((uuid, port), text)| (format!("{uuid}/{port}"), text.clone()))
+                .collect::<BTreeMap<_, _>>(),
         })
     }
 }
@@ -114,7 +118,6 @@ impl Bridge {
         Bridge { session, pushes }
     }
 
-    /// Push one derived status change as state.
     fn push_status(&self, uuid: Uuid, status: Status) {
         let _ = self
             .pushes
@@ -146,18 +149,27 @@ impl Bridge {
         // An emission's browser-renderable text: held as the port's latest,
         // and riding the forwarded event. A plugin custom type renders no
         // content of core's inventing — the event still crosses, the wire
-        // still animates.
+        // still animates, and the port's held entry goes with it, leaving
+        // nothing where the last displayable text stood until a
+        // displayable emission replaces it.
         let value = match &event {
             Event::Emitted {
                 node,
                 port,
                 value: emitted,
-            } => browser_value(emitted).inspect(|text| {
-                session
-                    .display
-                    .values
-                    .insert((node.uuid, port), text.clone());
-            }),
+            } => match crate::scalars::scalar_text(emitted) {
+                Some(text) => {
+                    session
+                        .display
+                        .values
+                        .insert((node.uuid, port), text.clone());
+                    Some(text)
+                }
+                None => {
+                    session.display.values.remove(&(node.uuid, port));
+                    None
+                }
+            },
             _ => None,
         };
         let _ = self
@@ -215,26 +227,4 @@ impl Bridge {
             }
         }
     }
-}
-
-/// A value's reading on the canvas: the base scalars core ships render
-/// their plain string form — the same text the headless runner prints —
-/// and any other type is a plugin's custom type, whose rendering is that
-/// plugin's business.
-fn browser_value(value: &Value) -> Option<String> {
-    if !crate::scalars::is_base_scalar(value.type_id()) {
-        return None;
-    }
-    if let Some(text) = value.get::<String>() {
-        return Some(text.clone());
-    }
-    macro_rules! scalars {
-        ($($ty:ty),* $(,)?) => {$(
-            if let Some(text) = value.get::<$ty>().map(ToString::to_string) {
-                return Some(text);
-            }
-        )*};
-    }
-    scalars!(bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64);
-    None
 }

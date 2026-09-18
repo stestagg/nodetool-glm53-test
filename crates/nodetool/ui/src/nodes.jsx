@@ -67,7 +67,11 @@ function OutputPort({ port, value }) {
     <div className="port out" title={port.type_refs.join(', ')}>
       <Handle type="source" position={Position.Right} id={port.name} />
       <span className="port-name">{port.name}</span>
-      {value !== undefined && <span className="port-value">{value}</span>}
+      {value !== undefined && (
+        <span className="port-value" title={value}>
+          {value}
+        </span>
+      )}
     </div>
   )
 }

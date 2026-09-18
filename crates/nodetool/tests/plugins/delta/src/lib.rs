@@ -112,7 +112,8 @@ fn failer(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
 }
 
 /// The value a shaper emits; opaque to core, this plugin's business — the
-/// fixture for an emission core carries with no content of its own.
+/// fixture for the two readings an emission can take: a base scalar first,
+/// then a custom type core carries with no content of its own.
 pub struct Mark;
 
 data_type! {
@@ -125,6 +126,7 @@ struct Shaper;
 #[async_trait]
 impl Behaviour for Shaper {
     async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        io.output("mark").emit(Value::new(scalars::I32, 1)).await;
         io.output("mark")
             .emit(Value::new(
                 uuid!("d3a5c1e9-4b2d-4f6a-8c0e-9d1b3f5a7c21"),
@@ -196,5 +198,5 @@ node_type! {
     plugin: "delta",
     behaviour: shaper,
     inputs: [],
-    outputs: [ mark: "delta/mark" ],
+    outputs: [ mark: ["i32", "delta/mark"] ],
 }

@@ -9,15 +9,15 @@
 // commit holds — the sidebar and the node's inline fields both committing
 // through the same seam, both views of one stored value.
 //
-// While a run is on the canvas animates from the server's pushes: node
+// While a run is on, the canvas animates from the server's pushes: node
 // statuses arrive already derived — pushed as state, never recomputed
 // here — and each forwarded emission animates the wires it travels and
 // replaces the text at its emitting port. Emissions coalesce through one
-// animation frame: a fast graph updates once per frame, dropping frames,
-// never queueing a backlog, and only the latest value per port is kept —
-// what the canvas shows is always the events' own. A new run resets the
-// canvas; the last run's statuses and values persist after it ends, until
-// the next start.
+// animation frame (the coalescer, coalesce.js): a fast graph updates once
+// per frame, dropping frames, never queueing a backlog, and only the
+// latest value per port is kept — what the canvas shows is always the
+// events' own. A new run resets the canvas; the last run's statuses and
+// values persist after it ends, until the next start.
 //
 // Every report arrives through one surface: a toast in the chrome,
 // dismissed on click and on its own. What toasts deliberately do not
@@ -37,6 +37,7 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { NODE_TYPE, connect, connectionLost } from './protocol.js'
+import { RunCoalescer } from './coalesce.js'
 import { EditContext, LockContext, scalarPossible } from './fields.jsx'
 import { SelfLoopEdge } from './edges.jsx'
 import { PlaceholderNode, TypeNode } from './nodes.jsx'
@@ -49,11 +50,6 @@ const edgeTypes = { selfloop: SelfLoopEdge }
 // uuid: a deterministic, view-local fallback every view and reload agrees
 // on, with nothing written into the definition.
 const FALLBACK_PITCH = { x: 180, y: 140 }
-
-// How long a wire keeps its pulse after an emission: one beat past the
-// last frame the coalescing flushed, so a steady stream reads as a flow
-// and a stopped one goes quiet.
-const PULSE_MS = 300
 
 function recordedPosition(node) {
   const position = node.metadata?.position
@@ -150,16 +146,6 @@ export function emittedTargets(edges, node, port) {
   return edges
     .filter((edge) => edge.from === node && edge.from_port === port)
     .map((edge) => `${edge.from}/${edge.from_port}->${edge.to}/${edge.to_port}`)
-}
-
-// The resync's run display as the per-port map the canvas reads: the
-// latest value of each emitting port, keyed by node and port.
-export function snapshotValues(display) {
-  const values = {}
-  for (const { node, port, value } of display?.values ?? []) {
-    values[`${node}/${port}`] = value
-  }
-  return values
 }
 
 // What a wire drag's ending means when no connection landed: a release on
@@ -279,14 +265,16 @@ export function Editor() {
   // emission handler lives across renders, and the wires it pulses are
   // the ones the last resync carried.
   const graphRef = useRef(null)
-  // The emission coalescing: one animation frame gathers the latest value
-  // per port and the wires an emission crossed, so a fast graph animates
-  // by dropping frames instead of queueing a backlog. `pulseTimer` holds
-  // the beat that quiets the wires once the stream stops.
-  const pendingValues = useRef(null)
-  const pendingPulses = useRef(null)
-  const flushHandle = useRef(null)
-  const pulseTimer = useRef(null)
+  // The coalescer owns the canvas's view of the run's values and pulses,
+  // applying each animation frame's truth to the state above; the status
+  // per node needs no coalescing and stays state alone.
+  const coalescer = useRef(null)
+  if (coalescer.current === null) {
+    coalescer.current = new RunCoalescer(({ values, pulsing }) => {
+      setValues(values)
+      setPulsing(pulsing)
+    })
+  }
   // Armed by a replacement gesture — open, new — and consumed by the
   // next definition arrival, which brings the view to the graph; a
   // failed gesture disarms it.
@@ -327,47 +315,19 @@ export function Editor() {
     [dismissToast],
   )
 
-  // The coalescing flush: whatever the frame gathered lands here — the
-  // latest value per port, the wires an emission crossed, held pulsing
-  // one beat past the last flush. The platform's reduced-motion
-  // preference quiets the pulses; the values are not motion and stay.
-  const flush = useCallback(() => {
-    flushHandle.current = null
-    if (pendingValues.current !== null) {
-      const incoming = pendingValues.current
-      pendingValues.current = null
-      setValues((current) => ({ ...current, ...incoming }))
-    }
-    if (pendingPulses.current !== null && pendingPulses.current.size > 0) {
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        pendingPulses.current = null
-        return
-      }
-      const incoming = pendingPulses.current
-      pendingPulses.current = null
-      setPulsing((current) => {
-        const next = new Set(current)
-        for (const id of incoming) next.add(id)
-        return next
-      })
-      clearTimeout(pulseTimer.current)
-      pulseTimer.current = setTimeout(() => setPulsing(new Set()), PULSE_MS)
-    }
-  }, [])
-
   // A definition arrival — the connect-time resync or a push — replaces
-  // what is drawn, the run display beside it, and the run state it
-  // carries narrates itself the way a run push does. An idle state with
-  // no outcome — what a compile failure leaves — reads as '', leaving
-  // the status line, the refused start's error report, as it is.
-  const resync = useCallback((graph, file, run, problems, display) => {
+  // what is drawn, and the run state it carries narrates itself the way a
+  // run push does. An idle state with no outcome — what a compile failure
+  // leaves — reads as '', leaving the status line, the refused start's
+  // error report, as it is. The run display is not part of it: the
+  // statuses and values arrive as their own push, on the ordered stream
+  // the live changes ride.
+  const resync = useCallback((graph, file, run, problems) => {
     graphRef.current = graph
     setGraph(graph)
     setFile(file)
     setRun(run)
     setProblems(problems ?? [])
-    setStatuses(display?.statuses ?? {})
-    setValues(snapshotValues(display))
     setActing(false)
     const text = runStatusText(run)
     if (text) setStatus({ text, error: run.outcome === 'failed' })
@@ -406,10 +366,7 @@ export function Editor() {
     }
   }, [graph, listing, marks, statuses, values, fitView])
 
-  useEffect(() => () => {
-    clearTimeout(pulseTimer.current)
-    if (flushHandle.current !== null) cancelAnimationFrame(flushHandle.current)
-  }, [])
+  useEffect(() => () => coalescer.current.dispose(), [])
 
   useEffect(
     () =>
@@ -418,8 +375,7 @@ export function Editor() {
           protocol.current = request
           request('list_node_types').then(setListing, showToast)
           request('get_definition').then(
-            ({ graph, file, run, problems, runDisplay }) =>
-              resync(graph, file, run, problems, runDisplay),
+            ({ graph, file, run, problems }) => resync(graph, file, run, problems),
             showToast,
           )
         },
@@ -434,6 +390,13 @@ export function Editor() {
         },
         onDefinition: resync,
         onFile: ({ path, dirty }) => setFile({ path, dirty }),
+        // The run display arrives as its own push — the connect-time
+        // resync's snapshot and nothing else; the live changes that keep
+        // it true ride the same ordered stream behind it.
+        onRunDisplay: ({ statuses, values }) => {
+          setStatuses(statuses ?? {})
+          coalescer.current.replace(values ?? {})
+        },
         onRun: (state) => {
           setRun(state)
           setActing(false)
@@ -441,7 +404,7 @@ export function Editor() {
           // values give way as this run's own events arrive.
           if (state.running) {
             setStatuses({})
-            setValues({})
+            coalescer.current.replace({})
           }
           setStatus({ text: runStatusText(state), error: state.outcome === 'failed' })
           // A failure is a happening: the toast carries it, and the
@@ -454,22 +417,12 @@ export function Editor() {
           // the emissions are what the canvas animates: the value at the
           // emitting port, the wires the value travels.
           if (message.event !== 'emitted') return
-          if (message.value !== undefined) {
-            ;(pendingValues.current ??= {})[`${message.node}/${message.port}`] = message.value
-          }
-          for (const id of emittedTargets(
-            graphRef.current?.edges ?? [],
+          coalescer.current.emitted(
             message.node,
             message.port,
-          )) {
-            ;(pendingPulses.current ??= new Set()).add(id)
-          }
-          if (
-            (pendingValues.current !== null || pendingPulses.current !== null) &&
-            flushHandle.current === null
-          ) {
-            flushHandle.current = requestAnimationFrame(flush)
-          }
+            message.value,
+            emittedTargets(graphRef.current?.edges ?? [], message.node, message.port),
+          )
         },
         onNodeStatus: ({ node, status: derived }) =>
           setStatuses((current) => ({ ...current, [node]: derived })),
@@ -481,7 +434,7 @@ export function Editor() {
           setStatus({ text: '', error: false })
         },
       }),
-    [resync, showToast, flush],
+    [resync, showToast],
   )
 
   // The editing seam every field commit rides: one operation out, the

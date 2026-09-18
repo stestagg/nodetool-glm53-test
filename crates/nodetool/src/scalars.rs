@@ -31,6 +31,25 @@ pub fn is_base_scalar(id: Uuid) -> bool {
     [I8, I16, I32, I64, U8, U16, U32, U64, F32, F64, BOOL, STRING].contains(&id)
 }
 
+/// A base scalar's plain text form — the same reading the canvas holds of
+/// a scalar emission and the headless timeline prints of one. None for
+/// any other value: a plugin custom type's rendering is its plugin's
+/// business, so core invents nothing to stand in for it.
+pub fn scalar_text(value: &Value) -> Option<String> {
+    if !is_base_scalar(value.type_id()) {
+        return None;
+    }
+    macro_rules! scalars {
+        ($($ty:ty),* $(,)?) => {$(
+            if let Some(text) = value.get::<$ty>().map(ToString::to_string) {
+                return Some(text);
+            }
+        )*};
+    }
+    scalars!(String, bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64);
+    None
+}
+
 crate::data_type! { id: I8, name: "i8" }
 crate::data_type! { id: I16, name: "i16", conversions: [ I32 => i16_to_i32 ] }
 crate::data_type! { id: I32, name: "i32", conversions: [ F64 => i32_to_f64 ] }
