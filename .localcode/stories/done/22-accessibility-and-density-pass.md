@@ -223,3 +223,5 @@ the server neither knows nor cares.
   polite live region is the smallest honest completion of that promise.
   Screen-reader behaviour beyond announcing the reports and states the
   editor already shows is not certification this story gives.
+
+- 2026-09-18: Implemented in pull request #59 (http://localhost:8080/gitea/localcode/nodetool/pulls/59).
