@@ -10,11 +10,18 @@
 // destructive-if-wrong decisions — when a save asks for its path, and
 // when a replacement asks about discarding — the marks the compile's
 // problems and the failed run place at their nodes, and the banner a
-// lost connection raises.
+// lost connection raises. The selection's gestures are pinned here too:
+// which keystrokes cost nodes (deleteKeys), how the background's two
+// drags differ (backgroundDrag), which nodes a drag or a delete fans out
+// to, the draggable flag a placeholder travels under, and the node
+// changes the view applies — never a removal.
 import { describe, expect, it } from 'vitest'
+import { SelectionMode } from '@xyflow/react'
 import { NEUTRAL } from './types.js'
 import {
+  backgroundDrag,
   bannerText,
+  deleteKeys,
   deleteSelection,
   dragMoves,
   emittedTargets,
@@ -28,6 +35,7 @@ import {
   saveAsksForPath,
   toEdges,
   toNodes,
+  viewNodeChanges,
   withDraggablePlaceholders,
 } from './editor.jsx'
 
@@ -584,10 +592,6 @@ describe('dragMoves', () => {
     expect(dragMoves([typed('u1', 30, 40)])).toEqual([{ uuid: 'u1', position: { x: 30, y: 40 } }])
   })
 
-  it('a lone placeholder commits nothing — story 12 keeps it inert', () => {
-    expect(dragMoves([ghost('u1', 30, 40)])).toEqual([])
-  })
-
   it('a multi-selection commits one move per node that travelled, placeholders included', () => {
     expect(dragMoves([typed('u1', 10, 10), ghost('u2', 20, 20), typed('u3', 30, 30)])).toEqual([
       { uuid: 'u1', position: { x: 10, y: 10 } },
@@ -622,25 +626,112 @@ describe('deleteSelection', () => {
   })
 })
 
+describe('deleteKeys', () => {
+  const canvas = {
+    ownerDocument: { body: 'body' },
+    contains: (target) => target === 'pane' || target === 'node',
+  }
+  const drawn = (id, type, selected) => ({ id, type, selected })
+  const key = (key, target = 'pane', repeat = false) => ({ key, repeat, target })
+  const multi = [drawn('u1', 'type', true), drawn('u2', 'placeholder', true), drawn('u3', 'type', false)]
+  const inField = { closest: () => ['input'] }
+
+  it('Delete and Backspace over the canvas in focus remove every selected node, placeholders included', () => {
+    expect(deleteKeys(key('Delete'), true, multi, canvas)).toEqual(['u1', 'u2'])
+    expect(deleteKeys(key('Backspace', 'node'), true, multi, canvas)).toEqual(['u1', 'u2'])
+  })
+
+  it('no focused element at all reads as the canvas: the pane takes no focus of its own', () => {
+    expect(deleteKeys(key('Delete', 'body'), true, multi, canvas)).toEqual(['u1', 'u2'])
+  })
+
+  it('a text field keeps the keys as text editing', () => {
+    expect(deleteKeys(key('Backspace', inField), true, multi, canvas)).toEqual([])
+  })
+
+  it('focus on the chrome is not the canvas, and neither is a canvas the shell lost', () => {
+    expect(deleteKeys(key('Backspace', 'save-button'), true, multi, canvas)).toEqual([])
+    expect(deleteKeys(key('Delete'), true, multi, null)).toEqual([])
+  })
+
+  it('the lock takes the gesture away, a held key repeats nothing, and another key is text', () => {
+    expect(deleteKeys(key('Delete'), false, multi, canvas)).toEqual([])
+    expect(deleteKeys(key('Delete', 'pane', true), true, multi, canvas)).toEqual([])
+    expect(deleteKeys(key('d'), true, multi, canvas)).toEqual([])
+  })
+
+  it('a lone placeholder is spared; a multi-selection holding one is not', () => {
+    const lone = [drawn('u1', 'placeholder', true)]
+    expect(deleteKeys(key('Delete'), true, lone, canvas)).toEqual([])
+    const pair = [drawn('u1', 'placeholder', true), drawn('u2', 'type', true)]
+    expect(deleteKeys(key('Delete'), true, pair, canvas)).toEqual(['u1', 'u2'])
+  })
+})
+
+describe('backgroundDrag', () => {
+  it('a plain drag pans; a shift-drag marquees', () => {
+    expect(backgroundDrag(false)).toEqual({
+      panOnDrag: true,
+      selectionOnDrag: false,
+      selectionMode: SelectionMode.Partial,
+    })
+    expect(backgroundDrag(true)).toEqual({
+      panOnDrag: false,
+      selectionOnDrag: true,
+      selectionMode: SelectionMode.Partial,
+    })
+  })
+
+  it('the marquee catches every node the rectangle touches: inside or intersecting', () => {
+    expect(backgroundDrag(true).selectionMode).toBe(SelectionMode.Partial)
+  })
+})
+
 describe('withDraggablePlaceholders', () => {
   const drawn = (id, type, selected, draggable) => ({ id, type, selected, draggable })
 
-  it('a placeholder is draggable only inside a multi-selection', () => {
+  it('a placeholder is draggable only as part of an unlocked multi-selection', () => {
     const multi = [
       drawn('u1', 'placeholder', true, false),
       drawn('u2', 'type', true, true),
     ]
-    expect(withDraggablePlaceholders(multi)[0].draggable).toBe(true)
-    expect(withDraggablePlaceholders(multi)[1].draggable).toBe(true)
-    const alone = [drawn('u1', 'placeholder', true, false)]
-    expect(withDraggablePlaceholders(alone)[0].draggable).toBe(false)
-    const none = [drawn('u1', 'placeholder', false, false)]
-    expect(withDraggablePlaceholders(none)[0].draggable).toBe(false)
+    expect(withDraggablePlaceholders(multi, true)[0].draggable).toBe(true)
+    expect(withDraggablePlaceholders(multi, true)[1]).toEqual(multi[1])
+    expect(withDraggablePlaceholders(multi, false)[0].draggable).toBe(false)
   })
 
-  it('typed nodes keep their own flags', () => {
-    const nodes = [drawn('u1', 'type', true, true)]
-    expect(withDraggablePlaceholders(nodes)).toEqual(nodes)
+  it('a placeholder outside the selection never travels on the selection\'s account', () => {
+    const nodes = [
+      drawn('u1', 'type', true, true),
+      drawn('u2', 'type', true, true),
+      drawn('u3', 'placeholder', false, false),
+    ]
+    expect(withDraggablePlaceholders(nodes, true)[2].draggable).toBe(false)
+  })
+
+  it('a lone placeholder stays inert', () => {
+    const alone = [drawn('u1', 'placeholder', true, false)]
+    expect(withDraggablePlaceholders(alone, true)[0].draggable).toBe(false)
+  })
+})
+
+describe('viewNodeChanges', () => {
+  const node = { id: 'u1', type: 'type', position: { x: 0, y: 0 }, selected: false }
+
+  it('applies the view\'s changes — selection, position — to the drawn nodes', () => {
+    const [drawn] = viewNodeChanges(
+      [
+        { id: 'u1', type: 'select', selected: true },
+        { id: 'u1', type: 'position', position: { x: 5, y: 6 } },
+      ],
+      [node],
+    )
+    expect(drawn.selected).toBe(true)
+    expect(drawn.position).toEqual({ x: 5, y: 6 })
+  })
+
+  it('a remove change is ignored: deletion is the shell\'s gesture, never the view\'s', () => {
+    expect(viewNodeChanges([{ id: 'u1', type: 'remove' }], [node])).toEqual([node])
   })
 })
 

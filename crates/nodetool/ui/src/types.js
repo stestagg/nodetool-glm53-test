@@ -10,6 +10,10 @@
 
 export const NEUTRAL = { color: '#8f99a8', shape: 'circle' }
 
+// The plain codepoint ordering every view agrees on, so every tab and
+// every reload reads the same order.
+export const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
+
 const SHAPES = new Set(['circle', 'square'])
 
 // What a port renders: its single declared type's appearance, or the

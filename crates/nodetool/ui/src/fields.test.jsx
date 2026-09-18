@@ -2,20 +2,14 @@
 // The scalar fields. The single field's commit cycle is story 14's core
 // interactive behaviour — Enter or blur commits, Escape discards, an
 // unchanged commit sends nothing, and a definition push re-seeds the
-// draft — so it is pinned on the real component here; the multi-
-// selection's field beside it carries this story's rules: Enter is
-// deliberate, leaving commits only an edit, and the mixed state marks
-// the value area. What a committed text stores is the server's reading,
-// tested server-side against the loader itself.
+// draft — so it is pinned on the real component here; the same field,
+// mixed, carries this story's rules: Enter is deliberate, leaving commits
+// only an edit, and the mixed state marks the value area. What a
+// committed text stores is the server's reading, tested server-side
+// against the loader itself.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import {
-  SelectionField,
-  commitParameter,
-  Field,
-  scalarPossible,
-  scalarText,
-} from './fields.jsx'
+import { commitParameter, Field, scalarPossible, scalarText } from './fields.jsx'
 
 afterEach(cleanup)
 
@@ -135,10 +129,10 @@ describe('scalarPossible', () => {
   })
 })
 
-describe('SelectionField', () => {
+describe('Field, mixed', () => {
   it('commits a typed value on Enter', () => {
     const onCommit = vi.fn()
-    render(<SelectionField text="7" onCommit={onCommit} />)
+    render(<Field value="7" onCommit={onCommit} />)
     fireEvent.change(field(), { target: { value: '9' } })
     fireEvent.keyDown(field(), { key: 'Enter' })
     expect(onCommit).toHaveBeenCalledWith('9')
@@ -146,7 +140,7 @@ describe('SelectionField', () => {
 
   it('commits a typed value on blur', () => {
     const onCommit = vi.fn()
-    render(<SelectionField text="7" onCommit={onCommit} />)
+    render(<Field value="7" onCommit={onCommit} />)
     fireEvent.change(field(), { target: { value: '2.5' } })
     fireEvent.blur(field())
     expect(onCommit).toHaveBeenCalledWith('2.5')
@@ -154,10 +148,10 @@ describe('SelectionField', () => {
 
   it('leaving without typing commits nothing, mixed or not', () => {
     const onCommit = vi.fn()
-    const { rerender } = render(<SelectionField text="7" onCommit={onCommit} />)
+    const { rerender } = render(<Field value="7" onCommit={onCommit} />)
     fireEvent.blur(field())
     expect(onCommit).not.toHaveBeenCalled()
-    rerender(<SelectionField text="" mixed onCommit={onCommit} />)
+    rerender(<Field value="" mixed onCommit={onCommit} />)
     fireEvent.focus(field())
     fireEvent.blur(field())
     expect(onCommit).not.toHaveBeenCalled()
@@ -165,7 +159,7 @@ describe('SelectionField', () => {
 
   it('Enter on an untouched mixed field is the deliberate clear', () => {
     const onCommit = vi.fn()
-    render(<SelectionField text="" mixed onCommit={onCommit} />)
+    render(<Field value="" mixed onCommit={onCommit} />)
     expect(field().placeholder).toBe('mixed')
     fireEvent.keyDown(field(), { key: 'Enter' })
     expect(onCommit).toHaveBeenCalledWith('')
@@ -173,7 +167,7 @@ describe('SelectionField', () => {
 
   it('typed then cleared commits the unset on blur, from the mixed state', () => {
     const onCommit = vi.fn()
-    render(<SelectionField text="" mixed onCommit={onCommit} />)
+    render(<Field value="" mixed onCommit={onCommit} />)
     fireEvent.change(field(), { target: { value: '9' } })
     fireEvent.change(field(), { target: { value: '' } })
     fireEvent.blur(field())
@@ -182,7 +176,7 @@ describe('SelectionField', () => {
 
   it('an edit that ends at the stored text commits nothing on blur', () => {
     const onCommit = vi.fn()
-    render(<SelectionField text="7" onCommit={onCommit} />)
+    render(<Field value="7" onCommit={onCommit} />)
     fireEvent.change(field(), { target: { value: '9' } })
     fireEvent.change(field(), { target: { value: '7' } })
     fireEvent.blur(field())
@@ -191,13 +185,13 @@ describe('SelectionField', () => {
 
   it('Escape discards, and the next blur commits nothing even on a mixed field', () => {
     const onCommit = vi.fn()
-    const { rerender } = render(<SelectionField text="7" onCommit={onCommit} />)
+    const { rerender } = render(<Field value="7" onCommit={onCommit} />)
     fireEvent.change(field(), { target: { value: '9' } })
     fireEvent.keyDown(field(), { key: 'Escape' })
     expect(field().value).toBe('7')
     fireEvent.blur(field())
     expect(onCommit).not.toHaveBeenCalled()
-    rerender(<SelectionField text="" mixed onCommit={onCommit} />)
+    rerender(<Field value="" mixed onCommit={onCommit} />)
     fireEvent.change(field(), { target: { value: '9' } })
     fireEvent.keyDown(field(), { key: 'Escape' })
     fireEvent.blur(field())
@@ -206,9 +200,9 @@ describe('SelectionField', () => {
 
   it('a push re-seeds the field and clears the mixed marker', () => {
     const onCommit = vi.fn()
-    const { rerender } = render(<SelectionField text="" mixed onCommit={onCommit} />)
+    const { rerender } = render(<Field value="" mixed onCommit={onCommit} />)
     fireEvent.change(field(), { target: { value: '9' } })
-    rerender(<SelectionField text="9" mixed={false} onCommit={onCommit} />)
+    rerender(<Field value="9" mixed={false} onCommit={onCommit} />)
     expect(field().value).toBe('9')
     expect(field().placeholder).toBe('')
     fireEvent.blur(field())

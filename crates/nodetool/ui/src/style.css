@@ -221,7 +221,7 @@ body {
 }
 
 /* React Flow draws an invisible rect over a multi-selection as its own
-   drag-the-selection affordance; the story's gestures live on the nodes
+   drag-the-selection affordance; the editor's gestures live on the nodes
    themselves — shift-click to toggle, a drag of any selected node to
    move the selection — so the overlay yields its pointer events and
    never sits between the user and the nodes. */

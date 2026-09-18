@@ -1,11 +1,11 @@
 // The multi-selection's common-field rule, pinned on the real listing
 // shapes: an input is common when every selected node's type declares it
 // scalar-possible and no edge reaches it on any of them; the value reads
-// uniform or mixed; a placeholder contributes nothing. The commit is the
-// per-node parameter edit, once per node, an empty value unsetting on
-// every one.
-import { describe, expect, it, vi } from 'vitest'
-import { commitCommon, commonFields } from './selection.js'
+// uniform or mixed; a placeholder contributes nothing. The commit that
+// rides a common field is the per-node parameter edit, fanned out at the
+// sidebar — pinned there, on the real component.
+import { describe, expect, it } from 'vitest'
+import { commonFields } from './selection.js'
 
 const baseScalars = { String: true, f64: true, 'alpha/ratio': false }
 const types = new Map([
@@ -128,35 +128,5 @@ describe('commonFields', () => {
       { uuid: 'u2', type_ref: 'alpha/mix', parameters: { text: 'same' } },
     ]
     expect(named(selection(nodes), 'text')).toEqual({ name: 'text', mixed: false, text: 'same' })
-  })
-})
-
-describe('commitCommon', () => {
-  it('sends the existing parameter edit once per node', () => {
-    const edit = vi.fn()
-    const nodes = [
-      { uuid: 'u1', type_ref: 'alpha/add', parameters: {} },
-      { uuid: 'u2', type_ref: 'alpha/add', parameters: {} },
-      { uuid: 'u3', type_ref: 'alpha/add', parameters: {} },
-    ]
-    commitCommon(edit, nodes, 'addend', '9')
-    expect(edit).toHaveBeenCalledTimes(3)
-    expect(edit).toHaveBeenNthCalledWith(2, 'set_parameter', {
-      uuid: 'u2',
-      input: 'addend',
-      value: '9',
-    })
-  })
-
-  it('an empty commit unsets on every node — no value rides any message', () => {
-    const edit = vi.fn()
-    const nodes = [
-      { uuid: 'u1', type_ref: 'alpha/add', parameters: { addend: 7 } },
-      { uuid: 'u2', type_ref: 'alpha/add', parameters: { addend: 9 } },
-    ]
-    commitCommon(edit, nodes, 'addend', '')
-    expect(edit).toHaveBeenCalledTimes(2)
-    expect(edit).toHaveBeenNthCalledWith(1, 'set_parameter', { uuid: 'u1', input: 'addend' })
-    expect(edit).toHaveBeenNthCalledWith(2, 'set_parameter', { uuid: 'u2', input: 'addend' })
   })
 })

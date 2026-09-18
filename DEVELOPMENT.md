@@ -153,15 +153,16 @@ quietly. Dragging a wired input's end off and letting go unhooks it.
 Delete (or Backspace) removes the selected node together with its wires.
 
 Selection scales to batches. A shift-click-drag on the background draws a
-rectangle and the nodes it covers join the selection; a shift-click on a
-node toggles it in or out; a plain click keeps selecting one node alone
-and a plain background click clears the selection — the two background
-drags differing by Shift alone. With several nodes selected, dragging any
-of them moves the whole selection, one move landing where each node
-rests, and Delete (or Backspace) — only where no field has focus, so a
-stray keypress in a text field cannot cost nodes — removes every selected
-node together with their wires, unknown-typed placeholders included;
-alone, a placeholder stays inert. The sidebar with a multi-selection
+rectangle and every node inside or intersecting it joins the selection; a
+shift-click on a node toggles it in or out; a plain click keeps selecting
+one node alone and a plain background click clears the selection — the two
+background drags differing by Shift alone. With several nodes selected,
+dragging any of them — a port drag staying the wire gesture above — moves
+the whole selection, one move landing where each node rests, and Delete
+(or Backspace) with the canvas in focus — a field keeps the keys as text,
+so a stray keypress cannot cost nodes — removes every selected node
+together with their wires, unknown-typed placeholders included; alone, a
+placeholder stays inert. The sidebar with a multi-selection
 names the selection by its count and shows only the parameter fields the
 nodes hold in common — an input declared scalar-possible and unconnected
 on every one of them — each at its shared value, marked `mixed` where the

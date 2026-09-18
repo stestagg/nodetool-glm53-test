@@ -15,8 +15,8 @@
 // listing shows label editing only: no fields are invented for a type
 // the editor cannot see.
 
-import { SelectionField, commitParameter, Field, scalarPossible, useEdit } from './fields.jsx'
-import { commonFields, commitCommon } from './selection.js'
+import { commitParameter, Field, scalarPossible, useEdit } from './fields.jsx'
+import { commonFields } from './selection.js'
 
 export function Sidebar({ node, type, wiredInputs, baseScalars }) {
   const edit = useEdit()
@@ -93,11 +93,20 @@ export function SelectionSidebar({ nodes, types, baseScalars, edges }) {
           fields.map((field) => (
             <div className="sidebar-row" key={field.name}>
               <span className="sidebar-name">{field.name}</span>
-              <SelectionField
-                text={field.text}
+              <Field
+                value={field.text}
                 mixed={field.mixed}
                 aria-label={field.name}
-                onCommit={(value) => commitCommon(edit, nodes, field.name, value)}
+                onCommit={(value) => {
+                  // The existing parameter edit, once per node — an empty
+                  // value unsetting on every one, from the mixed state as
+                  // from an unset one. The server answers each as it
+                  // answers any edit; a refusal for one node leaves the
+                  // others as they landed.
+                  for (const node of nodes) {
+                    commitParameter(edit, node.uuid, field.name, value)
+                  }
+                }}
               />
             </div>
           ))
