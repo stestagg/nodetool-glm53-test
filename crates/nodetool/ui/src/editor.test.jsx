@@ -171,6 +171,18 @@ describe('paletteGroups', () => {
   it('every reload and tab reads the same sections', () => {
     expect(paletteGroups(types)).toEqual(paletteGroups([...types].reverse()))
   })
+
+  it('a label tie orders by type reference, deterministically', () => {
+    const tied = [
+      { type_ref: 'zeta/twin', label: 'Twin', plugin: 'zeta', sub_group: null },
+      { type_ref: 'alpha/twin', label: 'Twin', plugin: 'zeta', sub_group: null },
+    ]
+    expect(paletteGroups(tied)[0].sections[0].types.map((type) => type.type_ref)).toEqual([
+      'alpha/twin',
+      'zeta/twin',
+    ])
+    expect(paletteGroups([...tied].reverse())).toEqual(paletteGroups(tied))
+  })
 })
 
 describe('toEdges', () => {

@@ -343,10 +343,7 @@ declares their trivial conversions through the same mechanism a plugin uses;
 nothing converts to `String` automatically. A plugin declares custom types
 with `nodetool::data_type!` — its rustdoc is the declaration guide, like
 `node_type!`'s above. A conversion may be declared before its target type is
-registered; targets resolve once every linked crate has contributed. A type's
-metadata may declare its `color` and `shape` — the appearance the editor
-renders its ports and wires in; the base scalars declare theirs the same way,
-and a type that declares neither both takes the editor's neutral.
+registered; targets resolve once every linked crate has contributed.
 
 Read the node registry with `nodetool::registry::node_types()`, or look one
 node type up by its type reference with `nodetool::registry::node_type(type_ref)`.

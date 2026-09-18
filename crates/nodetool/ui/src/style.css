@@ -385,15 +385,14 @@ body {
 
 /* The port dot: the type channel's own — a port declaring exactly one
    type renders in that type's declared colour and shape (colour and
-   border inline, shape by class), everything else in the neutral pair.
-   The neutral is the grey round dot the untyped canvas always had. */
+   border inline, the shape as the class name), everything else in the
+   neutral pair. The circle is the base rule's default round dot. */
 
 .port .react-flow__handle {
   position: absolute;
   width: 8px;
   height: 8px;
-  background: #8f99a8;
-  border: 1px solid #8f99a8;
+  border: 1px solid;
   border-radius: 50%;
   cursor: grab;
 }

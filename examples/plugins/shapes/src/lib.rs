@@ -10,6 +10,7 @@ data_type! {
     conversions: [ scalars::F64 => shape_area ],
     meta: [
         "color" => MetaValue::Str("#4a90d9"),
+        "shape" => MetaValue::Str("circle"),
         "summary" => MetaValue::Str("2D and 3D shapes"),
     ],
 }

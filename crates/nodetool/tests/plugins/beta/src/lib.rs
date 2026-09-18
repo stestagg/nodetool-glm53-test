@@ -1,6 +1,6 @@
 //! A flat test plugin: no sub-groups, a multi-reference port, a node type
-//! with no inputs, a custom type with appearance metadata, and a port
-//! reference the registry does not know.
+//! with no inputs, a port reference the registry does not know, and data
+//! types on both sides of the declared-both appearance rule.
 
 use nodetool::node_type;
 use nodetool::{data_type, uuid, MetaValue};
@@ -20,16 +20,7 @@ node_type! {
     icon: "<svg/>",
     plugin: "beta",
     inputs: [],
-    outputs: [ tick: "bool" ],
-}
-
-node_type! {
-    type_ref: "beta/ghost",
-    label: "Ghost",
-    icon: "<svg/>",
-    plugin: "beta",
-    inputs: [],
-    outputs: [ haunt: "beta/ghost-type" ],
+    outputs: [ tick: "bool", haunt: "beta/ghost-type" ],
 }
 
 data_type! {
@@ -39,4 +30,10 @@ data_type! {
         "color" => MetaValue::Str("#0e9488"),
         "shape" => MetaValue::Str("square"),
     ],
+}
+
+data_type! {
+    id: uuid!("d08f0220-243b-4257-b552-d9ff4f2587d4"),
+    name: "beta/hued",
+    meta: [ "color" => MetaValue::Str("#0e9488") ],
 }

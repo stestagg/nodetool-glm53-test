@@ -528,9 +528,14 @@ fn the_listing_carries_the_colour_and_shape_fact() {
         json!({ "color": "#0e9488", "shape": "square" })
     );
     // A registered type that declares no colour and shape takes the
-    // neutral pair.
+    // neutral pair — and so does one declaring exactly one of the two:
+    // the pair is declared whole or not at all.
     assert_eq!(
         facts["alpha/ratio"],
+        json!({ "color": "#8f99a8", "shape": "circle" })
+    );
+    assert_eq!(
+        facts["beta/hued"],
         json!({ "color": "#8f99a8", "shape": "circle" })
     );
     // So does a reference the registry does not know — one a listed node

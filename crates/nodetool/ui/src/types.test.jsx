@@ -5,6 +5,12 @@
 import { describe, expect, it } from 'vitest'
 import { NEUTRAL, portAppearance } from './types.js'
 
+describe('NEUTRAL', () => {
+  it('is the pair the server composes, pinned as a literal against drift', () => {
+    expect(NEUTRAL).toEqual({ color: '#8f99a8', shape: 'circle' })
+  })
+})
+
 describe('portAppearance', () => {
   const dataTypes = {
     String: { color: '#238551', shape: 'circle' },

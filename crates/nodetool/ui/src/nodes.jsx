@@ -64,7 +64,7 @@ function InputPort({ port, node, wired, scalar, appearance, title }) {
         type="target"
         position={Position.Left}
         id={port.name}
-        className={appearance.shape === 'square' ? 'square' : undefined}
+        className={appearance.shape}
         style={{ background: appearance.color, borderColor: appearance.color }}
       />
       <span className="port-name">{port.name}</span>
@@ -92,7 +92,7 @@ function OutputPort({ port, appearance, value }) {
         type="source"
         position={Position.Right}
         id={port.name}
-        className={appearance.shape === 'square' ? 'square' : undefined}
+        className={appearance.shape}
         style={{ background: appearance.color, borderColor: appearance.color }}
       />
       <span className="port-name">{port.name}</span>

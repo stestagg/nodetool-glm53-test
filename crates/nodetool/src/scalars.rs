@@ -57,7 +57,7 @@ pub fn scalar_text(value: &Value) -> Option<String> {
 
 // The appearance declarations: a hue per family from the editor's
 // Blueprint-adjacent palette, the numeric families square and the rest
-// round — the shape distinguishing beside the colour, never colour alone.
+// round — the shape carrying the family, the colour the member within it.
 const NUMERIC_COLOR: &str = "#2d72d2";
 const FLOAT_COLOR: &str = "#9d3f9d";
 const FLAG_COLOR: &str = "#d1820c";
@@ -65,18 +65,42 @@ const TEXT_COLOR: &str = "#238551";
 const SQUARE: &str = "square";
 const ROUND: &str = "circle";
 
-crate::data_type! { id: I8, name: "i8", meta: [ "color" => MetaValue::Str(NUMERIC_COLOR), "shape" => MetaValue::Str(SQUARE) ] }
-crate::data_type! { id: I16, name: "i16", conversions: [ I32 => i16_to_i32 ], meta: [ "color" => MetaValue::Str(NUMERIC_COLOR), "shape" => MetaValue::Str(SQUARE) ] }
-crate::data_type! { id: I32, name: "i32", conversions: [ F64 => i32_to_f64 ], meta: [ "color" => MetaValue::Str(NUMERIC_COLOR), "shape" => MetaValue::Str(SQUARE) ] }
-crate::data_type! { id: I64, name: "i64", meta: [ "color" => MetaValue::Str(NUMERIC_COLOR), "shape" => MetaValue::Str(SQUARE) ] }
-crate::data_type! { id: U8, name: "u8", meta: [ "color" => MetaValue::Str(NUMERIC_COLOR), "shape" => MetaValue::Str(SQUARE) ] }
-crate::data_type! { id: U16, name: "u16", meta: [ "color" => MetaValue::Str(NUMERIC_COLOR), "shape" => MetaValue::Str(SQUARE) ] }
-crate::data_type! { id: U32, name: "u32", meta: [ "color" => MetaValue::Str(NUMERIC_COLOR), "shape" => MetaValue::Str(SQUARE) ] }
-crate::data_type! { id: U64, name: "u64", meta: [ "color" => MetaValue::Str(NUMERIC_COLOR), "shape" => MetaValue::Str(SQUARE) ] }
-crate::data_type! { id: F32, name: "f32", conversions: [ F64 => f32_to_f64 ], meta: [ "color" => MetaValue::Str(FLOAT_COLOR), "shape" => MetaValue::Str(SQUARE) ] }
-crate::data_type! { id: F64, name: "f64", meta: [ "color" => MetaValue::Str(FLOAT_COLOR), "shape" => MetaValue::Str(SQUARE) ] }
-crate::data_type! { id: BOOL, name: "bool", meta: [ "color" => MetaValue::Str(FLAG_COLOR), "shape" => MetaValue::Str(ROUND) ] }
-crate::data_type! { id: STRING, name: "String", meta: [ "color" => MetaValue::Str(TEXT_COLOR), "shape" => MetaValue::Str(ROUND) ] }
+/// Declare a base scalar with its appearance: the colour-and-shape meta
+/// pair every scalar carries, stated once here.
+macro_rules! scalar {
+    ($id:expr, $name:literal, $color:expr, $shape:expr) => {
+        crate::data_type! {
+            id: $id,
+            name: $name,
+            meta: [ "color" => MetaValue::Str($color), "shape" => MetaValue::Str($shape) ],
+        }
+    };
+    (
+        $id:expr, $name:literal,
+        conversions: [ $($target:expr => $convert:expr),* $(,)? ],
+        $color:expr, $shape:expr
+    ) => {
+        crate::data_type! {
+            id: $id,
+            name: $name,
+            conversions: [ $($target => $convert),* ],
+            meta: [ "color" => MetaValue::Str($color), "shape" => MetaValue::Str($shape) ],
+        }
+    };
+}
+
+scalar! { I8, "i8", NUMERIC_COLOR, SQUARE }
+scalar! { I16, "i16", conversions: [I32 => i16_to_i32], NUMERIC_COLOR, SQUARE }
+scalar! { I32, "i32", conversions: [F64 => i32_to_f64], NUMERIC_COLOR, SQUARE }
+scalar! { I64, "i64", NUMERIC_COLOR, SQUARE }
+scalar! { U8, "u8", NUMERIC_COLOR, SQUARE }
+scalar! { U16, "u16", NUMERIC_COLOR, SQUARE }
+scalar! { U32, "u32", NUMERIC_COLOR, SQUARE }
+scalar! { U64, "u64", NUMERIC_COLOR, SQUARE }
+scalar! { F32, "f32", conversions: [F64 => f32_to_f64], FLOAT_COLOR, SQUARE }
+scalar! { F64, "f64", FLOAT_COLOR, SQUARE }
+scalar! { BOOL, "bool", FLAG_COLOR, ROUND }
+scalar! { STRING, "String", TEXT_COLOR, ROUND }
 
 fn i16_to_i32(value: &Value) -> Option<Value> {
     Some(Value::new(I32, *value.get::<i16>()? as i32))

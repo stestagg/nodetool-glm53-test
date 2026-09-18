@@ -113,9 +113,10 @@ inventory::collect! { DataType }
 /// crate has contributed, and a target that never shows up is reported when
 /// the registry is read. Metadata is a map of plain values; a type whose
 /// metadata carries both a `color` and a `shape` declares the appearance the
-/// editor renders its ports and wires in, the shape a name from the
-/// editor's small drawn set — the editor composes the pair into the listing
-/// it serves, taking the neutral for a type that does not declare both.
+/// editor renders its ports and wires in, the shape one of the editor's
+/// drawn set, `circle` or `square` — the editor composes the pair into the
+/// listing it serves, taking the neutral for a type that does not declare
+/// both.
 #[macro_export]
 macro_rules! data_type {
     (

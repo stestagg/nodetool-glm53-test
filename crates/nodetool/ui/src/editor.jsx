@@ -59,8 +59,9 @@ const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 // The palette's sections, from the listing's plugin and sub-group facts:
 // one section per plugin, a headed sub-section per declared sub-group
 // within it, the ungrouped types directly under the plugin header.
-// Plugins, sub-groups, and types order alphabetically — a deterministic
-// order every tab and reload agrees on.
+// Plugins, sub-groups, and types order alphabetically, a type's label tie
+// broken by its type reference — a deterministic order every tab and
+// reload agrees on.
 export function paletteGroups(types) {
   const plugins = new Map()
   for (const type of types) {
@@ -77,7 +78,9 @@ export function paletteGroups(types) {
         .sort((a, b) => (a === null ? -1 : b === null ? 1 : byName(a, b)))
         .map((subGroup) => ({
           subGroup,
-          types: sections.get(subGroup).sort((a, b) => byName(a.label, b.label)),
+          types: sections
+            .get(subGroup)
+            .sort((a, b) => byName(a.label, b.label) || byName(a.type_ref, b.type_ref)),
         })),
     }
   })
@@ -158,9 +161,8 @@ export function toNodes(graph, listing, marks, statuses, values) {
 // The definition's edges as canvas wires. Not selectable: drag-off is the
 // one way a wire comes off, so there is no second, selected-then-deleted
 // path. A wire renders in the colour of the source port's declared type —
-// the neutral where no single type informs the port; the pulse a value
-// travels rides that same colour as a dash flow. A wire in `pulsing`
-// animates — the path a value is travelling.
+// the neutral where no single type informs the port; a wire in `pulsing`
+// animates, the pulse a value travels riding that colour as a dash flow.
 export function toEdges(graph, pulsing, listing) {
   const byRef = new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))
   const dataTypes = listing?.dataTypes ?? {}

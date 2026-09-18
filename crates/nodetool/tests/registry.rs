@@ -15,14 +15,8 @@ fn refs_of(filter: impl Fn(&NodeType) -> bool) -> Vec<&'static str> {
 #[test]
 fn aggregates_node_types_across_plugins() {
     let refs = refs_of(|_| true);
-    assert_eq!(refs.len(), 5);
-    for expected in [
-        "alpha/add",
-        "alpha/concat",
-        "beta/identity",
-        "beta/tick",
-        "beta/ghost",
-    ] {
+    assert_eq!(refs.len(), 4);
+    for expected in ["alpha/add", "alpha/concat", "beta/identity", "beta/tick"] {
         assert!(refs.contains(&expected), "missing {expected} in {refs:?}");
     }
 }
@@ -46,7 +40,7 @@ fn separates_plugins() {
 
     let mut beta = refs_of(|node_type| node_type.plugin == "beta");
     beta.sort_unstable();
-    assert_eq!(beta, ["beta/ghost", "beta/identity", "beta/tick"]);
+    assert_eq!(beta, ["beta/identity", "beta/tick"]);
 }
 
 #[test]
@@ -60,8 +54,7 @@ fn separates_sub_groups_within_a_plugin() {
     assert_eq!(text, ["alpha/concat"]);
 
     let ungrouped = refs_of(|node_type| node_type.sub_group.is_none());
-    assert_eq!(ungrouped.len(), 3);
-    assert!(ungrouped.contains(&"beta/ghost"));
+    assert_eq!(ungrouped.len(), 2);
     assert!(ungrouped.contains(&"beta/identity"));
     assert!(ungrouped.contains(&"beta/tick"));
 }
