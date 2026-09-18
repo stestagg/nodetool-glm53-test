@@ -1,10 +1,11 @@
-// The scalar field both views of an input's value share: the node's
-// inline field and the sidebar's parameter row render and commit the same
-// scalar text, so an edit in either view appears in the other. Which
-// inputs get a field is read off the listing's base-scalar fact — an
-// input whose declared types include a core base scalar, whatever union
-// it declares; an input declared only on plugin custom types is opaque
-// to the editor and gets none.
+// The scalar fields: the one both views of a single input's value share —
+// the node's inline field and the sidebar's parameter row render and
+// commit the same scalar text, so an edit in either view appears in the
+// other — and, mixed, the multi-selection's common field on the same
+// commit cycle. Which inputs get a field is read off the listing's
+// base-scalar fact — an input whose declared types include a core base
+// scalar, whatever union it declares; an input declared only on plugin
+// custom types is opaque to the editor and gets none.
 
 import { createContext, useContext, useEffect, useState } from 'react'
 
@@ -60,27 +61,44 @@ export function commitParameter(edit, uuid, input, text) {
 // discards an uncommitted draft, and an unchanged commit sends nothing.
 // The draft is local; the stored value arrives by definition push and
 // re-seeds the field whenever it changes, so neither view of the stored
-// value is authoritative in the browser. A run's lock disables the field.
-export function Field({ value, placeholder = '', onCommit, className = '', ...rest }) {
+// value is authoritative in the browser. A run's lock disables the
+// field. `mixed` bends the cycle to the multi-selection's commit: the
+// marker rides the placeholder — blank alone must mean unset-everywhere
+// — Enter on an untouched mixed field stays the deliberate clear, empty
+// meaning unset on every node, while leaving the field commits only an
+// edit, so a stray click away from a mixed field cannot unset anything.
+export function Field({ value, mixed = false, placeholder = '', onCommit, className = '', ...rest }) {
   const stored = scalarText(value)
   const [draft, setDraft] = useState(stored)
-  useEffect(() => setDraft(stored), [stored])
+  const [edited, setEdited] = useState(false)
+  useEffect(() => {
+    setDraft(stored)
+    setEdited(false)
+  }, [stored, mixed])
   const locked = useLocked()
   const commit = () => {
-    if (draft !== stored) onCommit(draft)
+    if (draft !== stored || mixed) onCommit(draft)
   }
   return (
     <input
       className={`field nodrag ${className}`}
       value={draft}
-      placeholder={placeholder}
+      placeholder={mixed ? 'mixed' : placeholder}
       disabled={locked}
-      onChange={(event) => setDraft(event.target.value)}
+      onChange={(event) => {
+        setDraft(event.target.value)
+        setEdited(true)
+      }}
       onKeyDown={(event) => {
         if (event.key === 'Enter') commit()
-        else if (event.key === 'Escape') setDraft(stored)
+        else if (event.key === 'Escape') {
+          setDraft(stored)
+          setEdited(false)
+        }
       }}
-      onBlur={commit}
+      onBlur={() => {
+        if (edited) commit()
+      }}
       {...rest}
     />
   )

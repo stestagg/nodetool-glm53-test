@@ -1,13 +1,22 @@
 // The editor shell: a react-flow style canvas under light Blueprint
 // chrome, with the palette of every linked plugin's node types docked on
-// the left and the editing sidebar docked on the right while a node is
-// selected. The browser holds no authoritative graph state — it requests
+// the left and the editing sidebar docked on the right while a selection
+// is open. The browser holds no authoritative graph state — it requests
 // the listing and the definition on load, renders what the server holds,
 // and every edit lands server-side and is pushed back. Drags follow the
 // pointer locally; one operation commits where a dragged node rests,
 // where a wire lands, which node a key press deletes, and what a field
 // commit holds — the sidebar and the node's inline fields both committing
 // through the same seam, both views of one stored value.
+//
+// The selection is view state over those gestures, the way scroll
+// position is: a shift-click-drag on the background marquees, a
+// shift-click toggles a node in or out, plain clicks keep their one-node
+// meaning. What the selection does fans out to the existing per-node
+// operations — a multi-select move the existing move once per node, a
+// multi-select delete the existing delete once per node, a common-field
+// commit the existing parameter edit once per node — so the server
+// receives no message it did not already answer.
 //
 // While a run is on, the canvas animates from the server's pushes: node
 // statuses arrive already derived — pushed as state, never recomputed
@@ -33,6 +42,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   ReactFlow,
+  SelectionMode,
   applyNodeChanges,
   useReactFlow,
 } from '@xyflow/react'
@@ -40,9 +50,9 @@ import { NODE_TYPE, connect, connectionLost } from './protocol.js'
 import { RunCoalescer } from './coalesce.js'
 import { EditContext, LockContext, scalarPossible } from './fields.jsx'
 import { SelfLoopEdge } from './edges.jsx'
-import { portAppearance } from './types.js'
+import { byName, portAppearance } from './types.js'
 import { PlaceholderNode, TypeIcon, TypeNode } from './nodes.jsx'
-import { Sidebar } from './sidebar.jsx'
+import { Sidebar, SelectionSidebar } from './sidebar.jsx'
 
 const nodeTypes = { type: TypeNode, placeholder: PlaceholderNode }
 const edgeTypes = { selfloop: SelfLoopEdge }
@@ -51,10 +61,6 @@ const edgeTypes = { selfloop: SelfLoopEdge }
 // uuid: a deterministic, view-local fallback every view and reload agrees
 // on, with nothing written into the definition.
 const FALLBACK_PITCH = { x: 180, y: 140 }
-
-// The plain ordering the palette reads: by codepoint, so every tab and
-// every browser agrees on the same sections in the same order.
-const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 
 // The palette's sections, from the listing's plugin and sub-group facts:
 // one section per plugin, a headed sub-section per declared sub-group
@@ -126,11 +132,7 @@ export function toNodes(graph, listing, marks, statuses, values) {
         position,
         type: 'placeholder',
         data: { label: node.label ?? node.type_ref, marks: at(node.uuid), status: status(node.uuid) },
-        // Ports unknown, so no dragging or deletion — but the label is
-        // the one attribute its sidebar can edit, so selection stays.
-        draggable: false,
         selectable: true,
-        deletable: false,
       }
     }
     const portValues = {}
@@ -206,6 +208,86 @@ export function offPortUnhook(edges, state) {
     (edge) => edge.to === from.nodeId && edge.to_port === from.id,
   )
   return wired ? { to: from.nodeId, to_port: from.id } : null
+}
+
+// Whether a keyboard event's target sits in a text field: the keys keep
+// their editing meaning there, so the canvas's own — delete among them —
+// wait for focus to return.
+export function inTextField(target) {
+  return target?.closest?.('input, textarea, select, [contenteditable]') != null
+}
+
+// The moves one drag stop commits — the existing move operation, one per
+// node that travelled. A multi-selection moves whole: every node that
+// travelled, placeholders included, the operation being uuid-addressed.
+// A selection of one keeps story 12's line: a typed node commits itself.
+export function dragMoves(group) {
+  return group.map((node) => ({ uuid: node.id, position: node.position }))
+}
+
+// Which nodes the delete key removes: a multi-selection takes every
+// selected node, placeholders included — uuid-addressed operations need
+// no type knowledge — while a selection of one is story 12's delete, a
+// typed node spared nothing and a lone placeholder spared.
+export function deleteSelection(nodes) {
+  const selected = nodes.filter((node) => node.selected)
+  if (selected.length === 1 && selected[0].type === 'placeholder') return []
+  return selected.map((node) => node.id)
+}
+
+// Which nodes a Delete/Backspace keystroke removes, or none — the whole
+// guard chain in one place. The gesture lives on the canvas in focus: a
+// text field keeps the keys as text editing, and so does focus anywhere
+// else in the chrome, while no focused element at all reads as the
+// canvas's — the canvas takes no focus of its own. The lock takes the
+// gesture away with every other edit, and a held key repeats nothing.
+export function deleteKeys(event, editable, nodes, canvas) {
+  if (!editable || event.repeat) return []
+  if (event.key !== 'Delete' && event.key !== 'Backspace') return []
+  if (inTextField(event.target)) return []
+  if (!canvas?.contains(event.target) && event.target !== canvas?.ownerDocument?.body) {
+    return []
+  }
+  return deleteSelection(nodes)
+}
+
+// A placeholder takes part in the uuid-addressed gestures exactly when it
+// is selected inside a multi-selection and editing is unlocked: story 12
+// keeps a lone placeholder inert, a placeholder outside the selection
+// never travels on another pair's account, and the lock holds it as it
+// holds every node. This is the draggable flag the canvas drags read,
+// set from the selection wherever selection changes.
+export function withDraggablePlaceholders(nodes, editable) {
+  const multi = nodes.filter((node) => node.selected).length > 1
+  return nodes.map((node) =>
+    node.type === 'placeholder'
+      ? { ...node, draggable: multi && editable && node.selected }
+      : node,
+  )
+}
+
+// The background's two drags differ by Shift alone, and so does their
+// catch: a plain drag pans, a shift-drag draws the marquee, and the
+// marquee takes every node the rectangle touches — inside or
+// intersecting, the catch a sweep across a clump expects. The props the
+// canvas reads for all of it.
+export function backgroundDrag(shift) {
+  return {
+    selectionOnDrag: shift,
+    panOnDrag: !shift,
+    selectionMode: SelectionMode.Partial,
+  }
+}
+
+// The node changes the canvas applies, save removal: a remove change
+// would drop nodes the server still holds, with no operation sent and no
+// refusal path — deletion is the shell's own gesture, fanned to the
+// delete operation and applied by the definition push that answers it.
+export function viewNodeChanges(changes, nodes) {
+  return applyNodeChanges(
+    changes.filter((change) => change.type !== 'remove'),
+    nodes,
+  )
 }
 
 // Whether the held graph carries unsaved changes — the one condition the
@@ -306,6 +388,13 @@ export function Editor() {
   const protocol = useRef(null)
   const canvasRef = useRef(null)
   const toastId = useRef(0)
+  // The canvas's nodes as the delete gesture reads them: the key handler
+  // lives across renders and reads the latest selection without
+  // re-subscribing for every drag frame.
+  const nodesRef = useRef([])
+  useEffect(() => {
+    nodesRef.current = nodes
+  })
   // The held definition's edges, as the event path reads them: the
   // emission handler lives across renders, and the wires it pulses are
   // the ones the last resync carried.
@@ -325,6 +414,31 @@ export function Editor() {
   // failed gesture disarms it.
   const pendingRefit = useRef(false)
   const { screenToFlowPosition, getViewport, setViewport, fitView } = useReactFlow()
+
+  // The background's two drags differ by Shift alone, and so do the two
+  // node clicks: the shell tracks Shift itself and hands the canvas the
+  // two modes (backgroundDrag below), so a shift-drag on the background
+  // marquees while a plain drag pans, and a pointerdown on a node stays
+  // the node's — to select, to toggle, to drag — rather than being
+  // swallowed by the marquee. The tracker resets on window blur, so
+  // Shift cannot stick past the window that held it.
+  const [shiftHeld, setShiftHeld] = useState(false)
+  useEffect(() => {
+    const onKey = (event, down) => {
+      if (event.key === 'Shift') setShiftHeld(down)
+    }
+    const down = (event) => onKey(event, true)
+    const up = (event) => onKey(event, false)
+    const blur = () => setShiftHeld(false)
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', blur)
+    }
+  }, [])
 
   const connected = connection === 'open'
   // While a run is on the definition is held still, and while the
@@ -386,14 +500,17 @@ export function Editor() {
     // replaces what is drawn, never what the user has picked or holds.
     setNodes((current) => {
       const before = new Map(current.map((node) => [node.id, node]))
-      return toNodes(graph, listing, marks, statuses, values).map((node) => {
-        const held = before.get(node.id)
-        return {
-          ...node,
-          selected: held?.selected ?? false,
-          position: held?.dragging ? held.position : node.position,
-        }
-      })
+      return withDraggablePlaceholders(
+        toNodes(graph, listing, marks, statuses, values).map((node) => {
+          const held = before.get(node.id)
+          return {
+            ...node,
+            selected: held?.selected ?? false,
+            position: held?.dragging ? held.position : node.position,
+          }
+        }),
+        editable,
+      )
     })
     // A replacement brings the view to the graph that arrived, the way
     // the launch fit does; the queued fit waits for the new nodes to be
@@ -402,7 +519,7 @@ export function Editor() {
       pendingRefit.current = false
       fitView({ maxZoom: 1 })
     }
-  }, [graph, listing, marks, statuses, values, fitView])
+  }, [graph, listing, marks, statuses, values, editable, fitView])
 
   useEffect(() => () => coalescer.current.dispose(), [])
 
@@ -484,28 +601,18 @@ export function Editor() {
   }, [showToast])
 
   const onNodesChange = useCallback((changes) => {
-    // A remove change is the server's to apply: the delete operation goes
-    // out, the definition push takes the node and its wires off the
-    // canvas, and the view never holds a deletion the server refused.
-    for (const change of changes) {
-      if (change.type === 'remove' && protocol.current !== null) {
-        protocol.current('delete_node', { uuid: change.id }).catch(showToast)
-      }
-    }
     setNodes((current) =>
-      applyNodeChanges(
-        changes.filter((change) => change.type !== 'remove'),
-        current,
-      ),
+      withDraggablePlaceholders(viewNodeChanges(changes, current), editable),
     )
-  }, [showToast])
+  }, [editable])
 
-  const onNodeDragStop = useCallback((_event, node) => {
-    if (node.type === 'placeholder' || protocol.current === null) return
-    protocol.current('move_node', {
-      uuid: node.id,
-      position: { x: node.position.x, y: node.position.y },
-    }).catch(showToast)
+  const onNodeDragStop = useCallback((_event, _node, group) => {
+    if (protocol.current === null) return
+    for (const { uuid, position } of dragMoves(group)) {
+      protocol
+        .current('move_node', { uuid, position: { x: position.x, y: position.y } })
+        .catch(showToast)
+    }
   }, [showToast])
 
   const onConnect = useCallback((connection) => {
@@ -527,6 +634,21 @@ export function Editor() {
     },
     [graph, showToast],
   )
+
+  // The delete gesture, view-side: Delete/Backspace with the canvas in
+  // focus, the whole guard chain pinned in deleteKeys. The selection
+  // fans out to the existing delete operation, one per node, edges
+  // cascading server-side — no dangling wires.
+  useEffect(() => {
+    if (!editable) return
+    const onKeyDown = (event) => {
+      for (const uuid of deleteKeys(event, editable, nodesRef.current, canvasRef.current)) {
+        protocol.current?.('delete_node', { uuid })?.catch(showToast)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [editable, showToast])
 
   const onDrop = useCallback(
     (event) => {
@@ -578,14 +700,17 @@ export function Editor() {
       .then(() =>
         // The opened graph replaces the one any selection points into.
         setNodes((current) =>
-          current.map((node) => ({ ...node, selected: false })),
+          withDraggablePlaceholders(
+            current.map((node) => ({ ...node, selected: false })),
+            editable,
+          ),
         ),
       )
       .catch((error) => {
         pendingRefit.current = false
         showToast(error)
       })
-  }, [confirmDiscard, file, showToast])
+  }, [confirmDiscard, editable, file, showToast])
 
   // One save mechanism under both chrome entries: a save always knows its
   // target — the current file — and asks only for the first save of an
@@ -623,11 +748,17 @@ export function Editor() {
       })
   }, [acting, run, showToast])
 
-  // The sidebar's node: the one the canvas holds selected, read off the
-  // same node state the canvas draws, so a definition push swaps its
-  // contents with everything else.
-  const selectedUuid = nodes.find((node) => node.selected)?.id ?? null
-  const selected = graph?.nodes.find((node) => node.uuid === selectedUuid)
+  // The sidebar's selection: every node the canvas holds selected, read
+  // off the same node state the canvas draws, so a definition push swaps
+  // its contents with everything else. One selected is the node's own
+  // view; several are the selection's — the fields they hold in common,
+  // committed to every node through the per-node operation each one is.
+  const selectedNodes =
+    graph?.nodes.filter((node) =>
+      nodes.some((drawn) => drawn.selected && drawn.id === node.uuid),
+    ) ?? []
+  const selected = selectedNodes.length === 1 ? selectedNodes[0] : undefined
+  const selectedUuid = selectedNodes.length === 1 ? selected.uuid : null
   const selectedWiredInputs = (graph?.edges ?? [])
     .filter((edge) => edge.to === selectedUuid)
     .map((edge) => edge.to_port)
@@ -732,12 +863,19 @@ export function Editor() {
                 fitViewOptions={{ maxZoom: 1 }}
                 minZoom={0.25}
                 maxZoom={2.5}
-                // Delete/Backspace is the deletion gesture — the lock takes
-                // it away while a run is on, as while the connection is
-                // gone. A wire is a drag from either end — a click never
-                // starts or lands one — and the drag threshold keeps a
-                // port click from reading as a drag-off.
-                deleteKeyCode={editable ? ['Delete', 'Backspace'] : null}
+                // Shift rides the shell's own tracker — backgroundDrag
+                // above — and multiSelectionKeyCode makes a shift-click
+                // on a node a toggle, React Flow's selection key retired
+                // so its capture can never swallow a node's pointerdown.
+                // The delete key is this shell's own gesture — fanning
+                // out to the delete operation per selected node — so
+                // React Flow's is retired. A wire is a drag from either
+                // end — a click never starts or lands one — and the drag
+                // threshold keeps a port click from reading as a drag-off.
+                multiSelectionKeyCode="Shift"
+                selectionKeyCode={null}
+                deleteKeyCode={null}
+                {...backgroundDrag(shiftHeld)}
                 nodesDraggable={editable}
                 nodesConnectable={editable}
                 connectionDragThreshold={4}
@@ -769,6 +907,14 @@ export function Editor() {
               wiredInputs={selectedWiredInputs}
               baseScalars={listing?.baseScalars ?? {}}
             />
+            {selectedNodes.length > 1 && (
+              <SelectionSidebar
+                nodes={selectedNodes}
+                types={new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))}
+                baseScalars={listing?.baseScalars ?? {}}
+                edges={graph?.edges ?? []}
+              />
+            )}
           </div>
           <footer
             className={`status${status.error ? ' error' : ''}`}

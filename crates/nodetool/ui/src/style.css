@@ -215,6 +215,18 @@ body {
   position: relative;
   flex: 1;
   min-width: 0;
+  /* The marquee the shift-drag draws, in the selection's own accent. */
+  --xy-selection-background-color: rgba(45, 114, 210, 0.08);
+  --xy-selection-border: 1px solid rgba(45, 114, 210, 0.8);
+}
+
+/* React Flow draws an invisible rect over a multi-selection as its own
+   drag-the-selection affordance; the editor's gestures live on the nodes
+   themselves — shift-click to toggle, a drag of any selected node to
+   move the selection — so the overlay yields its pointer events and
+   never sits between the user and the nodes. */
+.canvas .react-flow__nodesselection-rect {
+  pointer-events: none;
 }
 
 .canvas .react-flow {
@@ -528,6 +540,15 @@ body {
   flex: 1;
   font-size: 11px;
   color: var(--accent);
+}
+
+/* The multi-selection sidebar's plain statement where no field is common
+   to every selected node. */
+
+.sidebar-empty {
+  margin: 0;
+  padding: 4px 12px 12px;
+  color: var(--muted);
 }
 
 /* The scalar field both views share: a compact input that commits on
