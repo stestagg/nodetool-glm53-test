@@ -1,23 +1,20 @@
 // The Shape stage's node UI — the plugin's own rendering of the body
 // between the editor's title bar and ports. Built against plugin UI
 // contract version 1: the component receives the node's definition slice
-// and the live display state, and issues label and parameter edits through
-// the two helpers the contract hands it, the same operations the sidebar
-// and the default node's inline fields commit. Its styling rides with it —
-// the editor hardcodes nothing plugin-specific.
+// and the live display state, and issues parameter edits through the
+// helper the contract hands it, the same operation the sidebar and the
+// default node's inline fields commit. The editor's title bar already
+// carries the label, icon, and status, and the ports the readouts, so the
+// body holds only what they do not: the staged value and the note's own
+// field. Its styling rides with it — the editor hardcodes nothing
+// plugin-specific.
 
 const BLUE = '#4a90d9'
+// The value chip's ink: dark enough to carry white text at the contract's
+// accessibility floor; the lighter blue stays on the decoration.
+const INK = '#2d5fa8'
 
-export default function StageNode({
-  h,
-  label,
-  parameters,
-  status,
-  portValues,
-  marks,
-  locked,
-  setParameter,
-}) {
+export default function StageNode({ h, parameters, portValues, marks, locked, setParameter }) {
   const note = typeof parameters.note === 'string' ? parameters.note : ''
   return h('div', { style: { display: 'grid', gap: '4px', justifyItems: 'center', maxWidth: '180px' } },
     h('img', {
@@ -31,23 +28,23 @@ export default function StageNode({
       width: 26,
       height: 26,
     }),
-    h('div', { style: { display: 'flex', gap: '6px', alignItems: 'baseline' } },
-      h('strong', { style: { fontSize: '11px' } }, label),
-      status !== undefined && h('span', { style: { fontSize: '9px', color: '#6a7383' } }, status),
-    ),
     h('output', {
       style: {
         minWidth: '72px',
         padding: '3px 8px',
         borderRadius: '3px',
-        background: BLUE,
+        background: INK,
         color: 'white',
         fontWeight: 600,
+        fontSize: '13px',
         textAlign: 'center',
       },
     }, portValues.shape !== undefined ? portValues.shape : '\u2014'),
-    note !== '' && h('p', { style: { margin: 0, fontSize: '11px', color: '#6a7383' } }, note),
+    // The field follows the stored parameter: `key` remounts it when a
+    // change lands from another surface, so it never holds stale text —
+    // and a blur commits only what the user actually typed here.
     h('input', {
+      key: note,
       className: 'field nodrag',
       'aria-label': 'note',
       placeholder: 'caption\u2026',

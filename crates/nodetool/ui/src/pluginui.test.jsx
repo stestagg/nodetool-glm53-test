@@ -18,7 +18,7 @@ import {
   loadBundle,
   valueTypeRefs,
 } from './pluginui.jsx'
-import { EditContext } from './fields.jsx'
+import { EditContext, LockContext } from './fields.jsx'
 import { TypeNode } from './nodes.jsx'
 import { ReactFlowProvider } from '@xyflow/react'
 import { createElement } from 'react'
@@ -133,12 +133,14 @@ const WIDGET = {
   dataTypes: {},
 }
 
-function renderNode(data, context, edit = vi.fn()) {
+function renderNode(data, context, edit = vi.fn(), locked = false) {
   return render(
     <ReactFlowProvider>
       <PluginUiContext.Provider value={{ h: createElement, ...context }}>
         <EditContext.Provider value={edit}>
-          <TypeNode data={data} selected={false} />
+          <LockContext.Provider value={locked}>
+            <TypeNode data={data} selected={false} />
+          </LockContext.Provider>
         </EditContext.Provider>
       </PluginUiContext.Provider>
     </ReactFlowProvider>,
@@ -177,6 +179,16 @@ describe('TypeNode with custom UI', () => {
       setLabel: expect.any(Function),
       setParameter: expect.any(Function),
     })
+  })
+
+  it('a run on rides the contract as locked true, so the bundle controls sit inert', () => {
+    let seen = null
+    const Body = (props) => {
+      seen = props
+      return null
+    }
+    renderNode(WIDGET, { bodies: { 'epsilon/widget': Body } }, vi.fn(), true)
+    expect(seen.locked).toBe(true)
   })
 
   it('the label is the stored override else the type default', () => {

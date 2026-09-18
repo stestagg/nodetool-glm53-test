@@ -11,6 +11,7 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use super::assets::PLUGIN_PREFIX;
 use super::bridge::RunDisplay;
 use super::run::{Outcome, RunState};
 use crate::engine::{Event, RunOutcome};
@@ -127,19 +128,13 @@ fn declared_str(data_type: &DataType, key: &str) -> Option<&'static str> {
     }
 }
 
-/// The path a declared bundle serves at: the per-plugin path composed from
-/// the entry the declaration names. Composed server-side, so the browser
-/// hardcodes no plugin, type, or asset path — the listing fact is the only
-/// thing it reads.
-pub fn plugin_asset_url(entry: &str) -> String {
-    format!("/plugins/{entry}")
-}
-
 /// The listing's ui fact for one declared bundle: the entry asset's served
-/// path and the component contract version the bundle names. Absent when
+/// path — composed from the one per-plugin prefix the server serves under,
+/// so the advertised path and the served path are the same composition —
+/// and the component contract version the bundle names. Absent when
 /// nothing is declared — no fact, no custom UI.
 fn ui_fact(contract: u64, entry: &str) -> Value {
-    json!({ "entry": plugin_asset_url(entry), "contract": contract })
+    json!({ "entry": format!("{PLUGIN_PREFIX}{entry}"), "contract": contract })
 }
 
 pub fn node_type_json(node_type: &NodeType) -> Value {

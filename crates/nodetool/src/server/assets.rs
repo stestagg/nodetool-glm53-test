@@ -47,9 +47,10 @@ pub struct PluginAsset {
 }
 
 /// The per-plugin path every declared bundle serves under — the one path
-/// scheme, composed here where the declarations are read, so the browser
+/// scheme, composed here and in the listing fact that advertises it, so
+/// the served path and the advertised path cannot drift and the browser
 /// hardcodes no plugin, type, or asset path.
-const PLUGIN_PREFIX: &str = "/plugins/";
+pub(super) const PLUGIN_PREFIX: &str = "/plugins/";
 
 /// Every plugin-declared UI bundle of the linked plugins: node-type UI and
 /// type-value UI alike, served the one way. Two declarations naming the
@@ -92,14 +93,10 @@ pub fn plugin_assets() -> Vec<PluginAsset> {
 }
 
 /// The content type an entry serves as, read off its extension — a bundle
-/// is JavaScript today; the other web shapes come free.
+/// is JavaScript today; the next shape a declaration needs adds its arm.
 fn content_type(entry: &str) -> &'static str {
     match entry.rsplit('.').next().unwrap_or(entry) {
         "js" | "mjs" => "text/javascript; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
-        "html" => "text/html; charset=utf-8",
-        "json" => "application/json",
-        "svg" => "image/svg+xml",
         _ => "application/octet-stream",
     }
 }

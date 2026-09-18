@@ -473,16 +473,13 @@ export function Editor() {
 
   // A toast is the one surface a transient report arrives through:
   // dismissed on click, and on its own — a happening, never the durable
-  // truth, which lives in the marks and the chrome state.
-  const dismissToast = useCallback((id) => {
-    setToasts((current) => current.filter((toast) => toast.id !== id))
-  }, [])
-  // A toast is the one surface a transient report arrives through:
-  // dismissed on click, and on its own — a happening, never the durable
   // truth, which lives in the marks and the chrome state. A connection
   // loss is chrome state of its own, the banner's: a request the loss
   // settles arrives marked `connectionLost` and is not toasted beside
   // the banner saying the same thing.
+  const dismissToast = useCallback((id) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id))
+  }, [])
   const showToast = useCallback(
     (report) => {
       if (report === connectionLost) return
@@ -516,13 +513,21 @@ export function Editor() {
   // A failed bundle is reported through the toast surface naming the type,
   // and its attachment point marked fallen-back: the node renders by the
   // default class, the value readout stays contentless, and neither asks
-  // for the bundle again this page.
-  const failedBundle = (setState) => (ref, error) => {
+  // for the bundle again this page. A load in flight collects one
+  // rejection handler per effect run that found it pending — the value
+  // effect re-runs per animation frame while its type's values stream —
+  // so the report, unlike the fallback, is guarded per attachment point:
+  // one failure names the type once.
+  const reportedBodies = useRef(new Set())
+  const reportedValues = useRef(new Set())
+  const failedBundle = (reported, setState) => (ref, error) => {
     setState((current) => (current[ref] === null ? current : { ...current, [ref]: null }))
+    if (reported.current.has(ref)) return
+    reported.current.add(ref)
     showToast(`plugin UI for ${ref} failed: ${error?.message ?? error}`)
   }
-  const failBody = useCallback(failedBundle(setBodies), [showToast])
-  const failValue = useCallback(failedBundle(setValueBodies), [showToast])
+  const failBody = useCallback(failedBundle(reportedBodies, setBodies), [showToast])
+  const failValue = useCallback(failedBundle(reportedValues, setValueBodies), [showToast])
 
   // Node-type UI loads lazily: the first node of the type on the canvas
   // asks for its bundle, the palette asking for nothing. Value UI loads
@@ -844,75 +849,71 @@ export function Editor() {
   const banner = bannerText(connection, mismatch)
 
   return (
-    <PluginUiContext.Provider
-      value={{
-        h: createElement,
-        bodies,
-        valueBodies,
-        failBody,
-        failValue,
-      }}
-    >
-      <EditContext.Provider value={edit}>
-        <LockContext.Provider value={!editable}>
-          <div className={editable ? 'app' : 'app locked'}>
-            <header className="chrome">
-              <span className="file-name">{file?.path ?? 'untitled'}</span>
-              {hasUnsavedChanges(file) && (
-                <span className="file-dirty">unsaved changes</span>
+    <EditContext.Provider value={edit}>
+      <LockContext.Provider value={!editable}>
+        <div className={editable ? 'app' : 'app locked'}>
+          <header className="chrome">
+            <span className="file-name">{file?.path ?? 'untitled'}</span>
+            {hasUnsavedChanges(file) && (
+              <span className="file-dirty">unsaved changes</span>
+            )}
+            <span className="chrome-space" />
+            <button disabled={!control.enabled} onClick={actOnRun}>
+              {control.label}
+            </button>
+            <button disabled={!editable} onClick={newGraph}>New</button>
+            <button disabled={!editable} onClick={openFile}>Open</button>
+            <button disabled={!editable} onClick={() => save(false)}>Save</button>
+            <button disabled={!editable} onClick={() => save(true)}>Save as</button>
+          </header>
+          {/* The banner names the loss without covering the canvas: the
+              view beneath stays where the user left it, looking live. */}
+          {banner && <div className="banner">{banner}</div>}
+          <div className="workspace">
+            <aside className="palette">
+              <h1 className="palette-title">Nodes</h1>
+              {types === undefined ? null : types.length === 0 ? (
+                <p className="palette-empty">
+                  No node types are linked into this binary. Link a plugin crate
+                  to see its types here.
+                </p>
+              ) : (
+                paletteGroups(types).map((group) => (
+                  <section className="palette-plugin" key={group.plugin}>
+                    <h2 className="palette-heading">{group.plugin}</h2>
+                    {group.sections.map((section) => (
+                      <div className="palette-group" key={section.subGroup ?? ''}>
+                        {section.subGroup !== null && (
+                          <h3 className="palette-subgroup">{section.subGroup}</h3>
+                        )}
+                        <ul className="palette-list">
+                          {section.types.map((type) => (
+                            <li
+                              key={type.type_ref}
+                              className="palette-item"
+                              draggable={editable}
+                              onDragStart={(event) => {
+                                event.dataTransfer.setData(NODE_TYPE, type.type_ref)
+                                event.dataTransfer.effectAllowed = 'move'
+                              }}
+                            >
+                              <TypeIcon icon={type.icon} />
+                              <span className="palette-label">{type.label}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </section>
+                ))
               )}
-              <span className="chrome-space" />
-              <button disabled={!control.enabled} onClick={actOnRun}>
-                {control.label}
-              </button>
-              <button disabled={!editable} onClick={newGraph}>New</button>
-              <button disabled={!editable} onClick={openFile}>Open</button>
-              <button disabled={!editable} onClick={() => save(false)}>Save</button>
-              <button disabled={!editable} onClick={() => save(true)}>Save as</button>
-            </header>
-            {/* The banner names the loss without covering the canvas: the
-                view beneath stays where the user left it, looking live. */}
-            {banner && <div className="banner">{banner}</div>}
-            <div className="workspace">
-              <aside className="palette">
-                <h1 className="palette-title">Nodes</h1>
-                {types === undefined ? null : types.length === 0 ? (
-                  <p className="palette-empty">
-                    No node types are linked into this binary. Link a plugin crate
-                    to see its types here.
-                  </p>
-                ) : (
-                  paletteGroups(types).map((group) => (
-                    <section className="palette-plugin" key={group.plugin}>
-                      <h2 className="palette-heading">{group.plugin}</h2>
-                      {group.sections.map((section) => (
-                        <div className="palette-group" key={section.subGroup ?? ''}>
-                          {section.subGroup !== null && (
-                            <h3 className="palette-subgroup">{section.subGroup}</h3>
-                          )}
-                          <ul className="palette-list">
-                            {section.types.map((type) => (
-                              <li
-                                key={type.type_ref}
-                                className="palette-item"
-                                draggable={editable}
-                                onDragStart={(event) => {
-                                  event.dataTransfer.setData(NODE_TYPE, type.type_ref)
-                                  event.dataTransfer.effectAllowed = 'move'
-                                }}
-                              >
-                                <TypeIcon icon={type.icon} />
-                                <span className="palette-label">{type.label}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ))}
-                    </section>
-                  ))
-                )}
-              </aside>
-              <main className="canvas" ref={canvasRef}>
+            </aside>
+            <main className="canvas" ref={canvasRef}>
+              {/* The plugin UI contract rides the canvas subtree alone: its
+                  readers are the node renderings, nothing in the chrome. */}
+              <PluginUiContext.Provider
+                value={{ h: createElement, bodies, valueBodies, failBody, failValue }}
+              >
                 <ReactFlow
                   nodes={nodes}
                   edges={graph === null ? [] : toEdges(graph, pulsing, listing)}
@@ -950,48 +951,48 @@ export function Editor() {
                 >
                   <Background variant="dots" gap={24} size={1.5} />
                 </ReactFlow>
-                {empty && (
-                  <div className="canvas-hint">
-                    Drag a node type from the palette onto the canvas.
-                  </div>
-                )}
-                <div className="toasts">
-                  {toasts.map((toast) => (
-                    <div
-                      key={toast.id}
-                      className="toast"
-                      role="status"
-                      onClick={() => dismissToast(toast.id)}
-                    >
-                      {toast.text}
-                    </div>
-                  ))}
+              </PluginUiContext.Provider>
+              {empty && (
+                <div className="canvas-hint">
+                  Drag a node type from the palette onto the canvas.
                 </div>
-              </main>
-              <Sidebar
-                node={selected}
-                type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
-                wiredInputs={selectedWiredInputs}
-                baseScalars={listing?.baseScalars ?? {}}
-              />
-              {selectedNodes.length > 1 && (
-                <SelectionSidebar
-                  nodes={selectedNodes}
-                  types={new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))}
-                  baseScalars={listing?.baseScalars ?? {}}
-                  edges={graph?.edges ?? []}
-                />
               )}
-            </div>
-            <footer
-              className={`status${status.error ? ' error' : ''}`}
-              aria-live="polite"
-            >
-              {status.text}
-            </footer>
+              <div className="toasts">
+                {toasts.map((toast) => (
+                  <div
+                    key={toast.id}
+                    className="toast"
+                    role="status"
+                    onClick={() => dismissToast(toast.id)}
+                  >
+                    {toast.text}
+                  </div>
+                ))}
+              </div>
+            </main>
+            <Sidebar
+              node={selected}
+              type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
+              wiredInputs={selectedWiredInputs}
+              baseScalars={listing?.baseScalars ?? {}}
+            />
+            {selectedNodes.length > 1 && (
+              <SelectionSidebar
+                nodes={selectedNodes}
+                types={new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))}
+                baseScalars={listing?.baseScalars ?? {}}
+                edges={graph?.edges ?? []}
+              />
+            )}
           </div>
-        </LockContext.Provider>
-      </EditContext.Provider>
-    </PluginUiContext.Provider>
+          <footer
+            className={`status${status.error ? ' error' : ''}`}
+            aria-live="polite"
+          >
+            {status.text}
+          </footer>
+        </div>
+      </LockContext.Provider>
+    </EditContext.Provider>
   )
 }

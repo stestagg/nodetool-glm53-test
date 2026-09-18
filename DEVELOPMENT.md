@@ -196,7 +196,16 @@ declares custom UI renders the plugin's own body between the editor's
 title bar and ports — the shell stays editor-rendered, so every gesture
 on it behaves exactly as on a default node — and a value whose type
 declares value UI displays through the plugin's component wherever values
-display. Both bundles load only when first used, and every failure around
+display. The shapes plugin carries both, and the `Shape stage` is the
+node to watch it on: wire a `Shape source` into it, give the source its
+`side` value, and the staged shape shows in the stage's own body and at
+the source port's readout. The stage's `note` is a second input, and it
+obeys the one gate every input obeys: unwired and unfilled it never
+arrives, the stage never fires, and the run holds until stopped — the
+canvas marks the stage with that warning before any run — so give it its
+caption through the stage's own note field; the edit lands in the sidebar
+like any parameter and the run proceeds. Both bundles load only when first
+used, and every failure around
 them is reported naming the type, the attachment point falling back on
 its own: the node to the default class, the readout to its contentless
 form, the editor never blank.
@@ -269,7 +278,7 @@ is given the current statuses and values beside the run state and then
 joins the live stream, so every open tab animates the same run.
 
 ```sh
-cargo run -p visual -- examples/visual/graphs/sample.yml  # the editor on a graph file
+cargo run -p visual -- examples/visual/graphs/ticker.yml  # the streaming sample
 cargo run -p visual-badui  # the editor with one deliberately unknown-contract bundle linked
 ```
 
