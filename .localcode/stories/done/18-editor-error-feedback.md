@@ -261,3 +261,5 @@ the accessibility pass over these marks, toasts, and banner (22); groups
   Nothing queues: a queued edit would be a second graph source the server
   never sanctioned, the exact divergence 11's server-ownership exists to
   prevent. (REQ-2)
+
+- 2026-09-18: Implemented in pull request #54 (http://localhost:8080/gitea/localcode/nodetool/pulls/54).
