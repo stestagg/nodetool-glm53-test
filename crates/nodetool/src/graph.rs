@@ -73,11 +73,7 @@
 //! reference names it, carrying label, parameters, and metadata like any
 //! node's; groups may instantiate other groups, and a group that,
 //! directly or through others, instantiates itself is an error like a
-//! graph cycle. Loading is structural, so what it checks of a group is
-//! what is document-local: the name's uniqueness, an inner edge landing
-//! outside its own group, a binding naming an inner node the group does
-//! not contain. Whether a referenced type exists, whether a bound port
-//! lines up, whether the declared types bridge is compile time's business.
+//! graph cycle.
 //!
 //! Versions: this reader understands versions 1 and 2, and writes
 //! [`SCHEMA_VERSION`]. A version 1 file means exactly what it always
@@ -89,13 +85,15 @@
 //!
 //! Loading is structural, and deliberately no more. The loader checks the
 //! document's shape — well-formed YAML, nodes and edges where they belong,
-//! edges pointing at nodes in the file, at most one upstream per input, no
-//! unknown fields, a schema version this reader knows, and for groups the
-//! document-local checks stated above — and nothing else:
-//! no node types need to be registered at all, and whether a referenced
-//! type exists, whether ports line up, whether a connection's types are
-//! compatible is compile time's business, so a file referencing types this
-//! binary never linked still loads. What loading guarantees is honesty
+//! edges pointing at nodes in their own graph, at most one upstream per
+//! input, no unknown fields, a schema version this reader knows — and,
+//! for groups, only what is document-local: each name unique in the
+//! document, an inner edge landing inside its own group, a binding naming
+//! an inner node the group contains. Nothing else: no node types need to
+//! be registered at all, and whether a referenced type exists, whether a
+//! bound port lines up, whether the declared types bridge is compile
+//! time's business, so a file referencing types this binary never linked
+//! still loads. What loading guarantees is honesty
 //! about failure: a file that fails to load fails loudly and precisely, the
 //! error naming the offending node, edge, or field and where it sits —
 //! nothing guessed, defaulted, or silently dropped.
@@ -104,8 +102,8 @@
 //! `edges` are required — write `edges: []` for a graph with no edges — and
 //! the schema version must be a non-negative integer this reader supports.
 //! A group carries `name`, `inputs`, `outputs`, `nodes`, and `edges` —
-//! write `inputs: []` for a group with none. Duplicate YAML keys are
-//! rejected rather than silently resolved, and
+//! write `inputs: []` and `outputs: []` for a group with neither. Duplicate
+//! YAML keys are rejected rather than silently resolved, and
 //! parameter names must be strings. One known gap in the locations: a
 //! duplicate key is reported at its mapping's start rather than at the
 //! repeated key, though the message names the key either way.

@@ -9,8 +9,7 @@ use std::collections::BTreeMap;
 use nodetool::compile::{self, inner_identity};
 use nodetool::engine::{Event, Run};
 use nodetool::graph::{
-    self, Edge, GraphDefinition, GroupDefinition, GroupPort, LoadLocation, NodeInstance,
-    ParameterValue, SCHEMA_VERSION,
+    Edge, GraphDefinition, GroupDefinition, GroupPort, NodeInstance, ParameterValue, SCHEMA_VERSION,
 };
 use nodetool::registry::Registry;
 use test_plugin_delta as _;
@@ -27,6 +26,10 @@ const INNER: &str = "00000000-0000-0000-0000-0000000000f1";
 const FAILER: &str = "00000000-0000-0000-0000-0000000000f2";
 const NESTED: &str = "00000000-0000-0000-0000-0000000000f3";
 const DEEPEST: &str = "00000000-0000-0000-0000-0000000000f4";
+const RELAY: &str = "00000000-0000-0000-0000-0000000000c1";
+const A2: &str = "00000000-0000-0000-0000-0000000000a2";
+const E2: &str = "00000000-0000-0000-0000-0000000000e3";
+const F1: &str = "00000000-0000-0000-0000-0000000000f5";
 
 fn parse(uuid: &str) -> Uuid {
     uuid.parse().expect("the test carries a valid uuid")
@@ -203,10 +206,25 @@ fn a_grouped_graph_compiles_like_the_same_graph_written_flat() {
         vec![],
     ));
 
-    assert_eq!(
-        format!("{:?}", packed.connections),
-        format!("{:?}", flat.connections)
-    );
+    // The connections compared field-wise, so a mismatch names the first
+    // differing connection instead of printing two walls of debug text.
+    let connections = |graph: &compile::CompiledGraph| {
+        graph
+            .connections
+            .iter()
+            .map(|connection| {
+                (
+                    connection.from,
+                    connection.from_port,
+                    connection.to,
+                    connection.to_port,
+                    connection.resolved_type.name,
+                    connection.conversion.map(|conversion| conversion.target),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(connections(&packed), connections(&flat));
     for (uuid, node) in &packed.nodes {
         let twin = &flat.nodes[uuid];
         assert_eq!(node.node_type.type_ref, twin.node_type.type_ref);
@@ -265,6 +283,54 @@ fn types_resolve_across_the_boundary_under_the_ordinary_rules() {
     assert!(
         connection.conversion.is_some(),
         "the conversion rides the boundary"
+    );
+}
+
+#[test]
+fn the_identity_fold_is_pinned_to_shared_values() {
+    // groups.test.js pins these same values against the JavaScript mirror
+    // of the fold: one side moving without the other trips here or there.
+    assert_eq!(
+        inner_identity(
+            &[parse("00000000-0000-0000-0000-0000000000e1")],
+            parse("00000000-0000-0000-0000-0000000000f1"),
+        )
+        .to_string(),
+        "00000000-0000-0000-0000-000000000020"
+    );
+    assert_eq!(
+        inner_identity(&[], parse("3f2b8a1c-6d54-4e8a-9b7e-1c2d3e4f5a6b")).to_string(),
+        "3f2b8a1c-6d54-4e8a-9b7e-1c2d3e4f5a6b"
+    );
+    assert_eq!(
+        inner_identity(
+            &[parse("00000000-0000-0000-0000-600000000002")],
+            parse("3f2b8a1c-6d54-4e8a-9b7e-1c2d3e4f5a6b"),
+        )
+        .to_string(),
+        "7e571438-daa8-9d15-36fc-f85a7c9eb4d2"
+    );
+    assert_eq!(
+        inner_identity(
+            &[
+                parse("00000000-0000-0000-0000-600000000002"),
+                parse("00000000-0000-0000-0000-600000000003"),
+            ],
+            parse("3f2b8a1c-6d54-4e8a-9b7e-1c2d3e4f5a6b"),
+        )
+        .to_string(),
+        "fcae2871-b551-3a2a-6df9-30b4f93d69a2"
+    );
+    assert_eq!(
+        inner_identity(
+            &[
+                parse("00000000-0000-0000-0000-0000000000e2"),
+                parse("00000000-0000-0000-0000-0000000000e1"),
+            ],
+            parse("00000000-0000-0000-0000-0000000000f1"),
+        )
+        .to_string(),
+        "00000000-0000-0000-0000-00000000018e"
     );
 }
 
@@ -476,188 +542,250 @@ fn a_group_cycle_through_a_boundary_edge_ends_the_compile() {
     assert_eq!(nodes, vec![parse(INSTANCE)]);
 }
 
-// The file format: round trip and the document-local load errors.
-
-const GROUPED_FILE: &str = "schema_version: 2
-name: grouped
-nodes:
-  - uuid: 00000000-0000-0000-0000-0000000000e1
-    type_ref: double stage
-    label: The stage
-    parameters:
-      value: 3
-    metadata:
-      position: { x: 80, y: 120 }
-  - uuid: 00000000-0000-0000-0000-0000000000b1
-    type_ref: gamma/int_sink
-edges:
-  - from: 00000000-0000-0000-0000-0000000000e1
-    from_port: value
-    to: 00000000-0000-0000-0000-0000000000b1
-    to_port: value
-groups:
-  - name: double stage
-    inputs:
-      - name: value
-        type_refs: [i32]
-        node: 00000000-0000-0000-0000-0000000000f1
-        port: value
-    outputs:
-      - name: value
-        type_refs: [i32]
-        node: 00000000-0000-0000-0000-0000000000f1
-        port: value
-    nodes:
-      - uuid: 00000000-0000-0000-0000-0000000000f1
-        type_ref: gamma/doubler
-        label: The doubler
-        metadata:
-          position: { x: 40, y: 20 }
-          layers: [a, b]
-    edges: []
-";
-
 #[test]
-fn a_group_round_trips_verbatim() {
-    let definition = graph::load(GROUPED_FILE).unwrap();
-    assert_eq!(definition.groups.len(), 1);
-    let stage = &definition.groups[0];
-    assert_eq!(stage.name, "double stage");
-    assert_eq!(stage.inputs[0].name, "value");
-    assert_eq!(stage.inputs[0].type_refs, vec!["i32".to_owned()]);
-    assert_eq!(stage.inputs[0].node.to_string(), INNER);
-    assert_eq!(stage.inputs[0].port, "value");
-    assert_eq!(stage.outputs.len(), 1);
-    assert_eq!(stage.nodes.len(), 1);
-    // Inner metadata, labels included, carried verbatim.
-    let inner = &stage.nodes[0];
-    assert_eq!(inner.label.as_deref(), Some("The doubler"));
-    let metadata = &inner.metadata;
-    let position = metadata
-        .get(graph::Value::String("position".into()))
-        .unwrap();
-    assert_eq!(
-        position.get(graph::Value::String("x".into())),
-        Some(&graph::Value::Number(40.into()))
-    );
-    let layers = metadata.get(graph::Value::String("layers".into())).unwrap();
-    assert_eq!(layers.get(1), Some(&graph::Value::String("b".into())));
-    // The instance is an ordinary node instance.
-    assert_eq!(definition.nodes[0].type_ref, "double stage");
-    assert_eq!(definition.nodes[0].label.as_deref(), Some("The stage"));
-
-    let dumped = graph::dump(&definition);
-    assert_eq!(graph::load(&dumped).unwrap(), definition);
-    assert!(dumped.contains("groups:"), "dumped:\n{dumped}");
-    assert!(dumped.contains("type_refs:"), "dumped:\n{dumped}");
-}
-
-#[test]
-fn a_document_without_groups_dumps_without_the_section() {
-    let definition = graph::load(
-        "schema_version: 2\nnodes:\n  - uuid: 00000000-0000-0000-0000-0000000000a1\n    type_ref: t\nedges: []\n",
-    )
-    .unwrap();
-    assert!(definition.groups.is_empty());
-    let dumped = graph::dump(&definition);
-    assert!(!dumped.contains("groups"), "dumped:\n{dumped}");
-}
-
-#[test]
-fn a_version_1_document_cannot_carry_groups() {
-    let (location, message) =
-        match graph::load("schema_version: 1\nnodes: []\nedges: []\ngroups: []\n") {
-            Err(error) => (error.location, error.message),
-            Ok(_) => panic!("a version 1 document carrying groups loads"),
-        };
-    assert_eq!(location, LoadLocation::Path("schema_version".to_owned()));
+fn an_instantiated_group_cycle_ends_the_compile_before_expanding() {
+    // The flattening recurses through group instances with no base case
+    // on a cycle: the cycle ends the compile before any group is walked.
+    // The error's marks land on the instances the cycle dooms.
+    let a = group("a", vec![], vec![], vec![node(INNER, "b")], vec![]);
+    let b = group("b", vec![], vec![], vec![node(INNER, "a")], vec![]);
+    let (message, nodes) = single_error(compile_errors(&grouped(
+        vec![node(INSTANCE, "a")],
+        vec![],
+        vec![a, b],
+    )));
     assert!(
-        message.contains("version 1") && message.contains("groups"),
+        message.contains("group cycle") && message.contains("a → b → a"),
         "{message}"
     );
+    assert_eq!(nodes, vec![parse(INSTANCE)]);
 }
 
 #[test]
-fn a_group_name_is_unique_in_the_document() {
-    let (location, message) = match graph::load(
-        "schema_version: 2\nnodes: []\nedges: []\ngroups:\n  - name: stage\n    inputs: []\n    outputs: []\n    nodes: []\n    edges: []\n  - name: stage\n    inputs: []\n    outputs: []\n    nodes: []\n    edges: []\n",
-    ) {
-        Err(error) => (error.location, error.message),
-        Ok(_) => panic!("duplicate group names load"),
-    };
-    assert_eq!(location, LoadLocation::Path("groups[1]".to_owned()));
+fn a_group_no_instance_references_is_dead_weight_not_an_error() {
+    // A dead group may collide with a plugin type, bind a port its inner
+    // node does not have, and declare types that cannot bridge — the
+    // hand-writer's to see. Only the cycle keeps its anywhere rule.
+    let dead = group(
+        "gamma/int_sink",
+        vec![port("value", &["String"], INNER, "nope")],
+        vec![],
+        vec![node(INNER, "gamma/doubler")],
+        vec![],
+    );
+    let compiled = compile_ok(&grouped(
+        vec![node(SOURCE, "gamma/int_source")],
+        vec![],
+        vec![dead],
+    ));
+    assert!(compiled.nodes.contains_key(&parse(SOURCE)));
+}
+
+#[test]
+fn an_instance_parameter_naming_no_exposed_input_is_an_error() {
+    // A flat node's typo fails loudly; a group instance's must not vanish
+    // through the boundary unheard.
+    let (message, nodes) = single_error(compile_errors(&grouped(
+        vec![with_parameter(
+            node(INSTANCE, "double stage"),
+            "vlaue",
+            ParameterValue::Int(3),
+        )],
+        vec![],
+        vec![double_stage()],
+    )));
     assert!(
-        message.contains("duplicate group name `stage`"),
+        message.contains("parameter `vlaue` does not name an exposed input"),
         "{message}"
     );
+    assert_eq!(nodes, vec![parse(INSTANCE)]);
 }
 
 #[test]
-fn an_inner_edge_lands_only_on_its_own_group() {
-    let (location, message) = match graph::load(&format!(
-        "schema_version: 2\nnodes:\n  - uuid: {SINK}\n    type_ref: t\nedges: []\ngroups:\n  - name: stage\n    inputs: []\n    outputs: []\n    nodes:\n      - uuid: {INNER}\n        type_ref: t\n    edges:\n      - from: {INNER}\n        from_port: a\n        to: {SINK}\n        to_port: b\n"
-    )) {
-        Err(error) => (error.location, error.message),
-        Ok(_) => panic!("an inner edge landing outside its group loads"),
-    };
-    assert_eq!(
-        location,
-        LoadLocation::Path("groups[0].edges[0]".to_owned())
+fn a_nested_instance_cannot_carry_a_parameter_and_receive_a_boundary_literal() {
+    // The outer stage passes its literal through the boundary; the nested
+    // instance inside also holds its own value for the same exposed
+    // input — reachable only nested, a top-level instance's own
+    // parameter-plus-connection being caught as the flat compile's own.
+    let inner = group(
+        "inner stage",
+        vec![port("value", &["i32"], DEEPEST, "value")],
+        vec![],
+        vec![node(DEEPEST, "gamma/doubler")],
+        vec![],
     );
+    let outer = group(
+        "outer stage",
+        vec![port("value", &["i32"], NESTED, "value")],
+        vec![],
+        vec![with_parameter(
+            node(NESTED, "inner stage"),
+            "value",
+            ParameterValue::Int(5),
+        )],
+        vec![],
+    );
+    let (message, nodes) = single_error(compile_errors(&grouped(
+        vec![with_parameter(
+            node(INSTANCE, "outer stage"),
+            "value",
+            ParameterValue::Int(3),
+        )],
+        vec![],
+        vec![inner, outer],
+    )));
     assert!(
-        message.contains("is not defined in group `stage`") && message.contains(SINK),
+        message.contains(
+            "receives the exposed input `value` through the boundary while carrying a parameter"
+        ),
         "{message}"
     );
+    assert_eq!(nodes, vec![parse(INSTANCE)]);
 }
 
 #[test]
-fn a_binding_names_an_inner_node_the_group_contains() {
-    let (location, message) = match graph::load(&format!(
-        "schema_version: 2\nnodes: []\nedges: []\ngroups:\n  - name: stage\n    inputs:\n      - name: value\n        type_refs: [i32]\n        node: {SINK}\n        port: value\n    outputs: []\n    nodes:\n      - uuid: {INNER}\n        type_ref: t\n    edges: []\n"
-    )) {
-        Err(error) => (error.location, error.message),
-        Ok(_) => panic!("a binding outside its group loads"),
-    };
-    assert_eq!(
-        location,
-        LoadLocation::Path("groups[0].inputs[0]".to_owned())
+fn an_inner_node_cannot_hold_a_parameter_and_receive_the_boundary_literal() {
+    // The group's inner doubler holds its own value; the instance
+    // supplies another through the exposed input — one input, one value.
+    let stage = group(
+        "double stage",
+        vec![port("value", &["i32"], INNER, "value")],
+        vec![],
+        vec![with_parameter(
+            node(INNER, "gamma/doubler"),
+            "value",
+            ParameterValue::Int(5),
+        )],
+        vec![],
     );
+    let (message, nodes) = single_error(compile_errors(&grouped(
+        vec![with_parameter(
+            node(INSTANCE, "double stage"),
+            "value",
+            ParameterValue::Int(3),
+        )],
+        vec![],
+        vec![stage],
+    )));
     assert!(
-        message.contains("binds node")
-            && message.contains(SINK)
-            && message.contains("does not contain"),
+        message.contains("receives more than one parameter value"),
         "{message}"
     );
+    assert_eq!(nodes, vec![parse(INSTANCE)]);
 }
 
 #[test]
-fn a_groups_inner_graph_carries_the_ordinary_cross_checks() {
-    let yaml = format!(
-        "schema_version: 2\nnodes: []\nedges: []\ngroups:\n  - name: stage\n    inputs: []\n    outputs: []\n    nodes:\n      - uuid: {INNER}\n        type_ref: t\n      - uuid: {INNER}\n        type_ref: t\n    edges: []\n"
+fn an_exposed_input_the_inside_also_feeds_is_the_ordinary_double_feed() {
+    // The boundary binding is an ordinary connection once flattened: an
+    // exposed input whose port an inner edge feeds too, with the instance
+    // wired externally, is the flat graph's own "receives more than one
+    // connection".
+    let stage = group(
+        "double stage",
+        vec![port("value", &["i32"], INNER, "value")],
+        vec![port("value", &["i32"], INNER, "value")],
+        vec![
+            node(RELAY, "gamma/passthrough"),
+            node(INNER, "gamma/doubler"),
+        ],
+        vec![edge(RELAY, "value", INNER, "value")],
     );
-    let (location, message) = match graph::load(&yaml) {
-        Err(error) => (error.location, error.message),
-        Ok(_) => panic!("duplicate inner uuids load"),
-    };
-    assert_eq!(
-        location,
-        LoadLocation::Path("groups[0].nodes[1]".to_owned())
+    let (message, nodes) = single_error(compile_errors(&grouped(
+        vec![
+            node(SOURCE, "gamma/int_source"),
+            node(INSTANCE, "double stage"),
+            node(SINK, "gamma/int_sink"),
+        ],
+        vec![
+            edge(SOURCE, "value", INSTANCE, "value"),
+            edge(INSTANCE, "value", SINK, "value"),
+        ],
+        vec![stage],
+    )));
+    assert!(
+        message.contains("receives more than one connection"),
+        "{message}"
     );
-    assert!(message.contains("duplicate node uuid"), "{message}");
+    assert_eq!(nodes, vec![parse(INSTANCE)]);
 }
 
 #[test]
-fn the_definition_carries_groups_to_the_browser_verbatim() {
-    let definition = graph::load(GROUPED_FILE).unwrap();
-    let carried = serde_json::to_value(&definition).unwrap();
-    assert_eq!(carried["groups"][0]["name"], "double stage");
-    assert_eq!(carried["groups"][0]["inputs"][0]["port"], "value");
-    assert_eq!(
-        carried["groups"][0]["nodes"][0]["metadata"]["position"]["x"],
-        40
+fn an_inner_edge_landing_on_a_nested_instance_lands_on_the_compiled_node() {
+    // The nested instance's own uuid joins the chain its inside derives
+    // from, so an inner edge reaching through it points at the identity
+    // the expansion actually pushed — not at one nobody carries.
+    let inner = group(
+        "inner stage",
+        vec![port("text", &["i32"], F1, "value")],
+        vec![],
+        vec![node(F1, "gamma/doubler")],
+        vec![],
     );
-    assert_eq!(carried["nodes"][0]["type_ref"], "double stage");
+    let outer = group(
+        "outer stage",
+        vec![port("text", &["i32"], A2, "value")],
+        vec![],
+        vec![node(A2, "gamma/doubler"), node(E2, "inner stage")],
+        vec![edge(A2, "value", E2, "text")],
+    );
+    let compiled = compile_ok(&grouped(
+        vec![with_parameter(
+            node(INSTANCE, "outer stage"),
+            "text",
+            ParameterValue::Int(3),
+        )],
+        vec![],
+        vec![inner, outer],
+    ));
+
+    let a2 = inner_identity(&[parse(INSTANCE)], parse(A2));
+    let f1 = inner_identity(&[parse(INSTANCE), parse(E2)], parse(F1));
+    assert_eq!(compiled.connections.len(), 1);
+    assert_eq!(compiled.connections[0].from, a2);
+    assert_eq!(compiled.connections[0].to, f1);
 }
+
+#[test]
+fn an_in_memory_definition_cannot_name_two_groups_alike() {
+    // The loader refuses a duplicate; a definition built in memory meets
+    // the same refusal in the flattener.
+    let (message, nodes) = single_error(compile_errors(&grouped(
+        vec![],
+        vec![],
+        vec![double_stage(), double_stage()],
+    )));
+    assert!(
+        message.contains("duplicate group name `double stage`"),
+        "{message}"
+    );
+    assert!(nodes.is_empty());
+}
+
+#[test]
+fn an_inner_edge_landing_outside_its_group_is_an_error_at_compile() {
+    // The loader refuses the same shape document-locally; a definition
+    // built in memory meets the refusal in the flattener's rewiring.
+    let stage = group(
+        "double stage",
+        vec![],
+        vec![],
+        vec![node(INNER, "gamma/doubler")],
+        vec![edge(INNER, "value", SINK, "value")],
+    );
+    let (message, nodes) = single_error(compile_errors(&grouped(
+        vec![node(INSTANCE, "double stage")],
+        vec![],
+        vec![stage],
+    )));
+    assert!(
+        message.contains("inner edge of group `double stage`") && message.contains(SINK),
+        "{message}"
+    );
+    assert!(nodes.is_empty());
+}
+
+// The file format's groups section lives in groups_format.rs: the round
+// trip, the version gate, and the document-local load errors.
 
 // The run: events named so the inside is findable from the outside.
 

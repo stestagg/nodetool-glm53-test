@@ -117,11 +117,9 @@ describe('groupFacts', () => {
     // An inside emission with no boundary shows nothing.
     const loose = innerIdentity([OUTER], LOOSE)
     expect(facts.emissions.has(`${loose}/text`)).toBe(false)
-    expect(facts.inside.get(OUTER)).toEqual([
-      innerIdentity([OUTER], MID),
-      deep,
-      loose,
-    ])
+    // The nested instance is no node in the flat graph: the inside lists
+    // only the plain inner nodes, so a completed run completes the group.
+    expect(facts.inside.get(OUTER)).toEqual([deep, loose])
   })
 })
 

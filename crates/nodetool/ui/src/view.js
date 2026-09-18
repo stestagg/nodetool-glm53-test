@@ -21,10 +21,12 @@ function recordedPosition(node) {
   return undefined
 }
 
-export function toNodes(graph, listing, marks, statuses, values) {
+// `facts` — the document's group facts — arrives composed where the
+// caller already holds them (the editor keeps one per definition
+// arrival); absent, it is derived here.
+export function toNodes(graph, listing, marks, statuses, values, facts = groupFacts(graph)) {
   // A group instance's type reference resolves against the document's
   // groups before the listing's, so a group never reads as unknown.
-  const facts = groupFacts(graph)
   const byRef = new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))
   const dataTypes = listing?.dataTypes ?? {}
   const placeless = graph.nodes
@@ -96,8 +98,7 @@ export function toNodes(graph, listing, marks, statuses, values) {
 // path. A wire renders in the colour of the source port's declared type —
 // the neutral where no single type informs the port; a wire in `pulsing`
 // animates, the pulse a value travels riding that colour as a dash flow.
-export function toEdges(graph, pulsing, listing) {
-  const facts = groupFacts(graph)
+export function toEdges(graph, pulsing, listing, facts = groupFacts(graph)) {
   const byRef = new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))
   const dataTypes = listing?.dataTypes ?? {}
   const refOf = new Map(graph.nodes.map((node) => [node.uuid, node.type_ref]))

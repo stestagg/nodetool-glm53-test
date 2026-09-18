@@ -73,16 +73,22 @@ export function groupFacts(graph) {
     owner: new Map(),
     inside: new Map(),
   }
-  // One instance's whole inside: every inner identity beneath it, however
-  // deeply nested — the statuses its collapsed mark aggregates.
+  // One instance's whole inside: every plain inner node beneath it,
+  // however deeply nested — the statuses its collapsed mark aggregates.
+  // A nested instance is no node in the flat graph: it is recursed into,
+  // never listed, so the aggregate reads real inner nodes only and a
+  // completed run completes the group.
   const collect = (group, instanceUuid, chain, inside) => {
     for (const node of group.nodes ?? []) {
+      const nested = byName.get(node.type_ref)
+      if (nested !== undefined) {
+        collect(nested, instanceUuid, [...chain, node.uuid], inside)
+        continue
+      }
       const identity = innerIdentity(chain, node.uuid)
       facts.inner.add(identity)
       facts.owner.set(identity, instanceUuid)
       inside.push(identity)
-      const nested = byName.get(node.type_ref)
-      if (nested !== undefined) collect(nested, instanceUuid, [...chain, node.uuid], inside)
     }
   }
   // One exposed output, followed through the nested instances its binding

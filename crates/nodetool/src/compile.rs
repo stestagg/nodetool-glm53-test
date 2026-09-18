@@ -181,12 +181,8 @@ fn compile_flat(
             .join(" → ");
         // A self-loop's walk names its node twice; the mark list says
         // where the problem lives, once is enough.
-        let mut marks = Vec::new();
-        for uuid in &cycle {
-            if !marks.contains(uuid) {
-                marks.push(*uuid);
-            }
-        }
+        let mut marks = cycle;
+        marks.dedup();
         errors.push(error(format!("cycle: {named}"), marks));
     }
 
@@ -897,56 +893,70 @@ fn resolve_types(
     None
 }
 
-/// The first cycle a depth-first walk meets, as the uuids around it. The
-/// walk starts from each node in definition order and follows edges in edge
-/// order, so the same definition always names the same cycle.
+/// The first cycle the graph's edges form, as the uuids around it: the
+/// shared walk ([`first_cycle`]) over the compiled instances' adjacency,
+/// starting from each node in definition order and following edges in
+/// edge order.
 fn find_cycle(
     nodes: &[NodeInstance],
     edges: &[Edge],
     instances: &BTreeMap<Uuid, (&NodeInstance, Option<&'static NodeType>)>,
 ) -> Option<Vec<Uuid>> {
-    let mut adjacency = BTreeMap::<Uuid, Vec<Uuid>>::new();
+    let mut adjacency = HashMap::<Uuid, Vec<Uuid>>::new();
     for edge in edges {
         if instances.contains_key(&edge.from) && instances.contains_key(&edge.to) {
             adjacency.entry(edge.from).or_default().push(edge.to);
         }
     }
+    let roots = nodes.iter().map(|node| node.uuid).collect::<Vec<_>>();
+    first_cycle(&roots, &adjacency)
+}
+
+/// The first cycle a depth-first walk meets, as the keys around it, or
+/// none. The walk starts from each root in the order given and follows
+/// each key's neighbours in the order stored, so the same graph always
+/// names the same cycle. The graph cycle and the group-reference cycle
+/// walk this one function — two adjacency maps, one determinism contract.
+fn first_cycle<K>(roots: &[K], adjacency: &HashMap<K, Vec<K>>) -> Option<Vec<K>>
+where
+    K: Copy + Eq + std::hash::Hash,
+{
     let mut done = HashSet::new();
     let mut active = HashSet::new();
-    let mut stack = Vec::<(Uuid, usize)>::new();
-    for node in nodes {
-        if done.contains(&node.uuid) {
+    let mut stack = Vec::<(K, usize)>::new();
+    for root in roots {
+        if done.contains(root) {
             continue;
         }
-        active.insert(node.uuid);
-        stack.push((node.uuid, 0));
+        active.insert(*root);
+        stack.push((*root, 0));
         while let Some(&(current, visited)) = stack.last() {
             let neighbor = adjacency
                 .get(&current)
                 .and_then(|neighbors| neighbors.get(visited))
                 .copied();
             match neighbor {
-                Some(uuid) => {
+                Some(next) => {
                     stack.last_mut().expect("just read").1 += 1;
-                    if active.contains(&uuid) {
+                    if active.contains(&next) {
                         let position = stack
                             .iter()
-                            .position(|(candidate, _)| *candidate == uuid)
-                            .expect("an active node is on the path");
-                        let mut cycle: Vec<Uuid> =
-                            stack[position..].iter().map(|(uuid, _)| *uuid).collect();
-                        cycle.push(uuid);
+                            .position(|(candidate, _)| *candidate == next)
+                            .expect("an active key is on the path");
+                        let mut cycle: Vec<K> =
+                            stack[position..].iter().map(|(key, _)| *key).collect();
+                        cycle.push(next);
                         return Some(cycle);
                     }
-                    if !done.contains(&uuid) {
-                        active.insert(uuid);
-                        stack.push((uuid, 0));
+                    if !done.contains(&next) {
+                        active.insert(next);
+                        stack.push((next, 0));
                     }
                 }
                 None => {
-                    let (uuid, _) = stack.pop().expect("just read");
-                    active.remove(&uuid);
-                    done.insert(uuid);
+                    let (key, _) = stack.pop().expect("just read");
+                    active.remove(&key);
+                    done.insert(key);
                 }
             }
         }

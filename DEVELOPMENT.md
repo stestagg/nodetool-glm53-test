@@ -18,12 +18,9 @@ scalar data types.
 - `crates/nodetool` — the core library: the node type model, the data type
   model with the base scalars, the `node_type!` and `data_type!` declaration
   macros, the versioned YAML graph file format (`nodetool::graph`; its
-  rustdoc is the format's spec — schema versions 1 and 2, written as 2,
-  with an optional `groups` section defining named, reusable node types
-  whose instances are ordinary nodes), the compiler that turns a graph
-  definition into a compiled, executable graph (`nodetool::compile`;
-  a group instance compiles to its group's inner graph, flattened, so the
-  engine runs one shape), the node
+  rustdoc is the format's spec, groups included), the compiler that turns a
+  graph definition into a compiled, executable graph (`nodetool::compile`;
+  groups compile away, so the engine runs one flat shape), the node
   authoring API and the stream semantics behaviour programs against
   (`nodetool::behaviour`; its rustdoc is the semantics' spec), the engine
   that runs a compiled graph as live, streaming execution and tells an

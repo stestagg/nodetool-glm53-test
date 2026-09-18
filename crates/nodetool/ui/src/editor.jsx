@@ -149,9 +149,9 @@ export function Editor() {
   // emission handler lives across renders, and the wires it pulses are
   // the ones the last resync carried.
   const graphRef = useRef(null)
-  // The held definition's groups, as the event path reads them: which
-  // inner emissions cross a boundary, which stay inside, which statuses
-  // aggregate — composed once per definition arrival.
+  // The held definition's groups, as the event path and the render read
+  // them: which inner emissions cross a boundary, which stay inside,
+  // which statuses aggregate — composed once per definition arrival.
   const factsRef = useRef(null)
   // The coalescer owns the canvas's view of the run's values and pulses,
   // applying each animation frame's truth to the state above; the status
@@ -308,7 +308,7 @@ export function Editor() {
     setNodes((current) => {
       const before = new Map(current.map((node) => [node.id, node]))
       return withDraggablePlaceholders(
-        toNodes(graph, listing, marks, statuses, values).map((node) =>
+        toNodes(graph, listing, marks, statuses, values, factsRef.current).map((node) =>
           carriedNode(node, before.get(node.id)),
         ),
         editable,
@@ -653,16 +653,14 @@ export function Editor() {
   const selectedWiredInputs = (graph?.edges ?? [])
     .filter((edge) => edge.to === selectedUuid)
     .map((edge) => edge.to_port)
-  // The held definition's groups, as the render reads them: a group
-  // instance's type reference resolves against these before the listing's.
-  const facts = groupFacts(graph)
-  // The selected node's type view, the document's groups resolved before
-  // the listing's — the same resolution the canvas draws by.
+  // The held definition's group facts, composed once per definition
+  // arrival (factsRef): a group instance's type reference resolves
+  // against these before the listing's — the same resolution the canvas
+  // draws by.
+  const facts = factsRef.current
   const selectedType =
     facts?.types.get(selected?.type_ref) ??
     listing?.types.find((type) => type.type_ref === selected?.type_ref)
-  // The multi-selection's common fields read each node's type view off the
-  // same index, groups resolved before the listing's.
   const selectionTypes = new Map()
   for (const node of graph?.nodes ?? []) {
     const group = facts?.types.get(node.type_ref)
@@ -734,7 +732,7 @@ export function Editor() {
                 >
                   <ReactFlow
                     nodes={nodes}
-                    edges={graph === null ? [] : toEdges(graph, pulsing, listing)}
+                    edges={graph === null ? [] : toEdges(graph, pulsing, listing, facts)}
                     nodeTypes={nodeTypes}
                     edgeTypes={edgeTypes}
                     onNodesChange={onNodesChange}
