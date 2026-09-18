@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use nodetool::graph;
-use nodetool::server::{greeting, Editor};
+use nodetool::server::{greeting, Editor, DEFAULT_ADDRESS};
 use serde_json::{json, Value};
 
 fn editor() -> Editor {
@@ -23,6 +23,17 @@ fn greeting_names_both_versions() {
     assert_eq!(greeting["type"], "greeting");
     assert_eq!(greeting["protocol_version"], 1);
     assert_eq!(greeting["schema_version"], graph::SCHEMA_VERSION);
+}
+
+#[test]
+fn the_default_address_is_a_loopback_bind() {
+    let address: std::net::SocketAddr = DEFAULT_ADDRESS
+        .parse()
+        .expect("the default address parses as a bindable address");
+    assert!(
+        address.ip().is_loopback(),
+        "the server binds loopback by default: {address}"
+    );
 }
 
 #[test]
