@@ -8,10 +8,10 @@
 //! act that causes the run; every ending arrives through the engine's own
 //! event stream — [`RunWatcher`] hears run finished and carries its
 //! outcome back — so the endings are the run's own, told on the engine's
-//! event stream, with no second tracker beside it. A failure's node
-//! arrives the same way: the node-failed event the ending rode is heard
-//! on the same stream, its uuid carried beside the outcome, so what the
-//! failure names is what the engine named, not a parsing of the message.
+//! event stream, with no second tracker beside it. A failure's node rides
+//! the outcome itself, named where the failing task knew it, so what the
+//! failure names is what the engine named, not a parsing of the message
+//! and not a hearing beside it.
 
 use std::sync::{Arc, Mutex};
 
@@ -63,47 +63,34 @@ impl RunState {
 /// The engine observer one run is watched by: it carries the run's
 /// finished outcome back into the run state and pushes the change to every
 /// connection. The running state is the start operation's own doing, so
-/// run-finished is all this watcher answers to; the node-failed event
-/// beside it only records which instance the ending rode.
+/// run-finished is all this watcher answers to.
 struct RunWatcher {
     session: Arc<Mutex<super::Session>>,
     pushes: tokio::sync::broadcast::Sender<String>,
-    failed_node: Mutex<Option<Uuid>>,
 }
 
 #[async_trait]
 impl Observer for RunWatcher {
     async fn observe(&self, event: Event) {
-        match event {
-            Event::NodeFailed { node, .. } => {
-                *self
-                    .failed_node
-                    .lock()
-                    .expect("the failed-node slot is never poisoned") = Some(node.uuid);
-            }
-            Event::RunFinished { outcome } => {
-                let outcome = match outcome {
-                    RunOutcome::Complete => Outcome::Completed,
-                    RunOutcome::Failed(error) => Outcome::Failed {
-                        error,
-                        node: self
-                            .failed_node
-                            .lock()
-                            .expect("the failed-node slot is never poisoned")
-                            .take(),
-                    },
-                    RunOutcome::Stopped => Outcome::Stopped,
-                };
-                let mut session = self
-                    .session
-                    .lock()
-                    .expect("the session lock is never poisoned");
-                session.run = RunState::Idle {
-                    outcome: Some(outcome),
-                };
-                let _ = self.pushes.send(protocol::run_message(&session.run));
-            }
-            _ => {}
+        // The running state is the start operation's own doing, so
+        // run-finished is all this watcher answers to.
+        if let Event::RunFinished { outcome } = event {
+            let outcome = match outcome {
+                RunOutcome::Complete => Outcome::Completed,
+                RunOutcome::Failed { error, node } => Outcome::Failed {
+                    error,
+                    node: node.map(|node| node.uuid),
+                },
+                RunOutcome::Stopped => Outcome::Stopped,
+            };
+            let mut session = self
+                .session
+                .lock()
+                .expect("the session lock is never poisoned");
+            session.run = RunState::Idle {
+                outcome: Some(outcome),
+            };
+            let _ = self.pushes.send(protocol::run_message(&session.run));
         }
     }
 }
@@ -118,11 +105,7 @@ pub(super) fn spawn(
     compiled: crate::compile::CompiledGraph,
     stop_requested: watch::Receiver<bool>,
 ) {
-    let watcher = Arc::new(RunWatcher {
-        session,
-        pushes,
-        failed_node: Mutex::new(None),
-    });
+    let watcher = Arc::new(RunWatcher { session, pushes });
     tokio::spawn(async move {
         let mut run = crate::engine::Run::new(&compiled);
         run.stop_on(stop_requested);

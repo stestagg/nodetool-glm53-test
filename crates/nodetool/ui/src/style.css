@@ -211,9 +211,10 @@ body {
   box-shadow: var(--ring);
 }
 
-/* The problem mark: a dot at the node's corner, the messages that name
-   the node readable at it — compile's words, not a paraphrase. It
-   advises; it disables nothing. */
+/* The problem mark: a dot at the node's corner, the glanceable flag that
+   a problem names the node — readable at any zoom, where the messages
+   printed on the node are not. The messages themselves live in the
+   node's own .node-problem block. It advises; it disables nothing. */
 
 .node-mark {
   position: absolute;
@@ -224,10 +225,13 @@ body {
   border-radius: 50%;
   background: var(--danger);
   border: 2px solid var(--canvas);
-  cursor: help;
 }
 
 .node-problem {
+  /* A compile message is one long line; left uncapped it would stretch
+     the node to its full length, so it wraps within a reading width
+     instead. */
+  max-width: 280px;
   padding: 2px 10px 8px;
   color: var(--danger);
   font-size: 11px;

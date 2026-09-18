@@ -26,7 +26,7 @@ import {
   applyNodeChanges,
   useReactFlow,
 } from '@xyflow/react'
-import { NODE_TYPE, connect } from './protocol.js'
+import { NODE_TYPE, connect, connectionLost } from './protocol.js'
 import { EditContext, LockContext, scalarPossible } from './fields.jsx'
 import { SelfLoopEdge } from './edges.jsx'
 import { PlaceholderNode, TypeNode } from './nodes.jsx'
@@ -147,7 +147,7 @@ export function saveAsksForPath(file, elsewhere) {
 // The chrome's one run control: it flips with the run state — Start when
 // idle, Stop while running, no separate mode — and a start needs
 // something to run, an empty definition leaving it disabled. Both acts
-// reach the server, so a connection that cannot delivers them is the
+// reach the server, so a connection that cannot deliver them is the
 // same as no control.
 export function runControl(run, graph, connected = true) {
   const running = run?.running === true
@@ -176,10 +176,10 @@ export function nodeMarks(problems, run) {
   return marks
 }
 
-// The banner a connection state names, or none: the loss with the trying
-// it is owed, the version mismatch with the reload that is the advice —
-// never a self-dismissing toast. A connected or not-yet-lost editor has
-// no banner.
+// The banner a connection state names, or none: the loss names itself and
+// the reconnection the client is already making; the mismatch names itself
+// and the reload that is the advice — never a self-dismissing toast. A
+// connected or not-yet-lost editor has no banner.
 export function bannerText(connection, mismatch) {
   if (connection === 'lost') return 'connection lost — trying to reconnect…'
   if (connection === 'incompatible') return `${mismatch} — reload the page`
@@ -246,10 +246,17 @@ export function Editor() {
   const dismissToast = useCallback((id) => {
     setToasts((current) => current.filter((toast) => toast.id !== id))
   }, [])
+  // A toast is the one surface a transient report arrives through:
+  // dismissed on click, and on its own — a happening, never the durable
+  // truth, which lives in the marks and the chrome state. A connection
+  // loss is chrome state of its own, the banner's: a request the loss
+  // settles arrives marked `connectionLost` and is not toasted beside
+  // the banner saying the same thing.
   const showToast = useCallback(
-    (text) => {
+    (report) => {
+      if (report === connectionLost) return
       const id = toastId.current += 1
-      setToasts((current) => [...current, { id, text }])
+      setToasts((current) => [...current, { id, text: report }])
       setTimeout(() => dismissToast(id), TOAST_MS)
     },
     [dismissToast],

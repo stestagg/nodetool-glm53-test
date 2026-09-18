@@ -301,15 +301,8 @@ describe('nodeMarks', () => {
   it('a clean graph and a run that did not fail carry nothing', () => {
     expect(nodeMarks([], { outcome: 'completed' }).size).toBe(0)
     expect(nodeMarks([], { outcome: 'failed', node: null }).size).toBe(0)
+    expect(nodeMarks([], { running: true }).size).toBe(0)
     expect(nodeMarks(undefined, null).size).toBe(0)
-  })
-
-  it('a new run resets the canvas: the failed mark is gone', () => {
-    const marks = nodeMarks(
-      [],
-      { running: true },
-    )
-    expect(marks.size).toBe(0)
   })
 })
 

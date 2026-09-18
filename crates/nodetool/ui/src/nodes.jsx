@@ -15,6 +15,8 @@
 // Both renderings wear the marks the compile's problems name: one mark
 // per node, every message that names the node readable at it — a
 // warning's or an error's, and a failed run's explanation the same way.
+// The mark is the dot at the corner, the glanceable flag; the messages
+// print on the node itself, where they can be read, not only hovered.
 // Marks advise: they disable nothing.
 
 import { Handle, Position } from '@xyflow/react'
@@ -60,13 +62,7 @@ export function TypeNode({ data, selected }) {
   const title = node.label ?? type.label
   return (
     <div className={`node${selected ? ' selected' : ''}`}>
-      {marks?.length > 0 && (
-        <div
-          className="node-mark"
-          title={marks.join('\n')}
-          aria-label={`${title}: ${marks.join('; ')}`}
-        />
-      )}
+      {marks?.length > 0 && <div className="node-mark" />}
       <div className="node-title">{title}</div>
       <div className="node-ports">
         <div className="node-inputs">
@@ -87,6 +83,11 @@ export function TypeNode({ data, selected }) {
           ))}
         </div>
       </div>
+      {marks?.length > 0 && (
+        <div className="node-problem" title={marks.join('\n')}>
+          {marks.join('\n')}
+        </div>
+      )}
     </div>
   )
 }

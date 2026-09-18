@@ -295,7 +295,7 @@ async fn natural_completion_and_fail_fast_each_return_to_idle_with_their_outcome
     assert_eq!(
         failed["node"],
         json!("00000000-0000-0000-0000-0000000000d5"),
-        "the failure carries the node its mark lands on, heard off the same event stream"
+        "the failure carries the node its mark lands on, riding the outcome itself"
     );
     assert_eq!(held_run(&editor)["running"], json!(false));
 }

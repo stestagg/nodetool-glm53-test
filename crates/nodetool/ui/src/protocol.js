@@ -20,6 +20,12 @@ export const SCHEMA_VERSION = 1
 // How long after a loss the trying resumes.
 const RETRY_MS = 1000
 
+// What a request the connection died under is settled with. It is not an
+// error: the loss is chrome state the banner already names, and this
+// marker is how the chrome knows to answer it there, not with a toast
+// per request. Exported for the filter that reads it.
+export const connectionLost = { connectionLost: true }
+
 // The drag-and-drop marker the palette stamps and the canvas reads.
 export const NODE_TYPE = 'application/x-nodetool-node-type'
 
@@ -128,8 +134,10 @@ export function connect({
     }
     socket.onclose = () => {
       // Requests still in flight will never see their replies; settling
-      // them here lets the empty states draw instead of waiting forever.
-      for (const waiting of pending.values()) waiting.reject('connection lost')
+      // them with the loss lets the empty states draw instead of waiting
+      // forever, while the banner — not a toast per request — carries the
+      // news.
+      for (const waiting of pending.values()) waiting.reject(connectionLost)
       pending.clear()
       if (stopped) return
       onClosed()
