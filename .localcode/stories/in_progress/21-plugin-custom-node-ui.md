@@ -1,6 +1,7 @@
 ---
 title: Plugin custom node UI
 date: 2026-09-16
+pr_id: 58
 ---
 
 ## Description
