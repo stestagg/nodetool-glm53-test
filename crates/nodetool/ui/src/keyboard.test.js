@@ -191,28 +191,20 @@ describe('escapeCancel', () => {
   const nodes = [drawn('u1', true), drawn('u2', true), drawn('u3', false)]
   const inField = { target: { closest: () => ['input'] } }
   const press = (target = {}) => ({ key: 'Escape', target })
-  const running = { node: 'u1', port: 'sum', type: 'source' }
 
-  it('Escape clears the selection and stands the wire down', () => {
-    expect(escapeCancel(press(), running, nodes)).toEqual({
-      wire: null,
-      nodes: [drawn('u1', false), drawn('u2', false), drawn('u3', false)],
-    })
-  })
-
-  it('a quiet cancel with no wire running still clears the selection', () => {
-    expect(escapeCancel(press(), null, nodes)).toEqual({
+  it('Escape stands the wire down — whatever ran — and clears the selection', () => {
+    expect(escapeCancel(press(), nodes)).toEqual({
       wire: null,
       nodes: [drawn('u1', false), drawn('u2', false), drawn('u3', false)],
     })
   })
 
   it('any other key is no cancel', () => {
-    expect(escapeCancel({ key: 'Enter', target: {} }, running, nodes)).toBeNull()
+    expect(escapeCancel({ key: 'Enter', target: {} }, nodes)).toBeNull()
   })
 
   it('a text field keeps the Escape it already had', () => {
-    expect(escapeCancel(press(inField.target), running, nodes)).toBeNull()
+    expect(escapeCancel(press(inField.target), nodes)).toBeNull()
   })
 })
 

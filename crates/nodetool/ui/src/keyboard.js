@@ -74,7 +74,7 @@ export function toggleKey(event) {
 // in-progress keyboard wire stood down, the selection cleared, the
 // sidebar closing by its rule — or null when the key keeps the meaning
 // it already had: a text field discards its own uncommitted draft.
-export function escapeCancel(event, wire, nodes) {
+export function escapeCancel(event, nodes) {
   if (event.key !== 'Escape' || inTextField(event.target)) return null
   return {
     wire: null,

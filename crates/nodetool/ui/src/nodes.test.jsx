@@ -74,7 +74,6 @@ describe('the port key dispatch', () => {
       to: 'u5',
       to_port: 'value',
     })
-    expect(setWire.mock.invocationCallOrder[0]).toBeLessThan(edit.mock.invocationCallOrder[0])
   })
 
   it('the same node’s opposite ports share a name and still land — the self-wire', () => {

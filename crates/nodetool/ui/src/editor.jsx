@@ -298,10 +298,7 @@ export function Editor() {
     if (graph === null) return
     // Selection, a drag in flight, and the measurement the canvas took
     // are view state: the definition push replaces what is drawn, never
-    // what the user has picked or holds — and a rebuilt node that
-    // forgets its measurement is measured afresh, the canvas holding it
-    // invisible meanwhile, which would drop a mid-run focus off the
-    // canvas (carriedNode).
+    // what the user has picked or holds (carriedNode).
     setNodes((current) => {
       const before = new Map(current.map((node) => [node.id, node]))
       return withDraggablePlaceholders(
@@ -451,37 +448,35 @@ export function Editor() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [editable, showToast])
 
-  // The shift-activation's twin of the shift-click: toggling the focused
-  // node in the selection, taken capture-side so the canvas's own
-  // selection keys — the plain click's twins — stay out of it. Selection
-  // is view state: it stays live through the lock, exactly as clicking.
+  // The two selection keys the shell takes before the canvas's own see
+  // them, capture-side: the shift-activation, the shift-click's twin,
+  // and Escape, the quiet cancel — the selection clears, the sidebar
+  // closing by its rule, an in-progress keyboard wire standing down. A
+  // decided cancel stops the key as the toggle does, the canvas's own
+  // Escape handler on a selected node scheduling a blur of the wrapper —
+  // a cancel must leave the user where they stood. Selection is view
+  // state: it stays live through the lock, exactly as clicking.
   useEffect(() => {
     const onKeyDown = (event) => {
       const uuid = toggleKey(event)
-      if (uuid === null) return
+      if (uuid !== null) {
+        event.preventDefault()
+        event.stopPropagation()
+        setNodes((current) =>
+          withDraggablePlaceholders(toggledSelection(current, uuid), editable),
+        )
+        return
+      }
+      const cancel = escapeCancel(event, nodesRef.current)
+      if (cancel === null) return
       event.preventDefault()
       event.stopPropagation()
-      setNodes((current) =>
-        withDraggablePlaceholders(toggledSelection(current, uuid), editable),
-      )
+      setWire(cancel.wire)
+      setNodes(withDraggablePlaceholders(cancel.nodes, editable))
     }
     document.addEventListener('keydown', onKeyDown, true)
     return () => document.removeEventListener('keydown', onKeyDown, true)
   }, [editable])
-
-  // Escape, the keyboard's quiet cancel: the decision is escapeCancel's —
-  // the selection clears, the sidebar closing by its rule, and an
-  // in-progress keyboard wire stands down.
-  useEffect(() => {
-    const onKeyDown = (event) => {
-      const cancel = escapeCancel(event, wire, nodesRef.current)
-      if (cancel === null) return
-      setWire(cancel.wire)
-      setNodes(withDraggablePlaceholders(cancel.nodes, editable))
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [editable, wire])
 
   // The lock takes an in-flight keyboard wire away with the edits.
   useEffect(() => {
