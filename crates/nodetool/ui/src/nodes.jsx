@@ -50,7 +50,8 @@
 
 import { useContext } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { commitParameter, Field, useEdit, useLocked } from './fields.jsx'
+import { commitParameter, Field, useEdit, useLocked, WireContext } from './fields.jsx'
+import { portKey } from './keyboard.js'
 import { PluginUiContext, UiBoundary } from './pluginui.jsx'
 import { portAppearance } from './types.js'
 
@@ -70,8 +71,40 @@ export function TypeIcon({ icon }) {
   return <span className="type-icon" dangerouslySetInnerHTML={{ __html: icon }} />
 }
 
+// The port's keys, turned into the operation each pointer gesture sends:
+// Delete on a connected input unhooks, Enter or Space starts or lands a
+// keyboard wire. The decision is keyboard.js's; the lock holds here the
+// way it holds every port's pointer gesture.
+function usePortKeys() {
+  const edit = useEdit()
+  const locked = useLocked()
+  const { wire, setWire } = useContext(WireContext)
+  return (event, port) => {
+    const act = portKey(event, port, wire, !locked)
+    if (act === null) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (act.kind === 'unhook') edit('unhook', act.fields)
+    else if (act.kind === 'start') setWire({ node: port.node, port: port.port, type: port.type })
+    else {
+      setWire(null)
+      if (act.fields) edit('wire', act.fields)
+    }
+  }
+}
+
+// The handle a keyboard wire runs from: the wire's visible origin, held
+// while the candidate focus moves.
+function useWireFrom() {
+  const { wire } = useContext(WireContext)
+  return (nodeUuid, portName, type) =>
+    wire?.node === nodeUuid && wire?.port === portName && wire?.type === type
+}
+
 function InputPort({ port, node, wired, scalar, appearance, title }) {
   const edit = useEdit()
+  const onPortKey = usePortKeys()
+  const wireFrom = useWireFrom()
   return (
     <div
       className={`port in${wired ? ' connected' : ''}`}
@@ -81,8 +114,13 @@ function InputPort({ port, node, wired, scalar, appearance, title }) {
         type="target"
         position={Position.Left}
         id={port.name}
-        className={appearance.shape}
+        className={`${appearance.shape}${wireFrom(node.uuid, port.name, 'target') ? ' wire-from' : ''}`}
         style={{ background: appearance.color, borderColor: appearance.color }}
+        tabIndex={0}
+        aria-label={`${title} ${port.name} input`}
+        onKeyDown={(event) =>
+          onPortKey(event, { node: node.uuid, port: port.name, type: 'target', wired })
+        }
       />
       <span className="port-name">{port.name}</span>
       {scalar &&
@@ -129,15 +167,22 @@ function PortValue({ port, dataTypes, value }) {
   )
 }
 
-function OutputPort({ port, appearance, value, dataTypes }) {
+function OutputPort({ port, appearance, value, dataTypes, nodeUuid, title }) {
+  const onPortKey = usePortKeys()
+  const wireFrom = useWireFrom()
   return (
     <div className="port out" title={port.type_refs.join(', ')}>
       <Handle
         type="source"
         position={Position.Right}
         id={port.name}
-        className={appearance.shape}
+        className={`${appearance.shape}${wireFrom(nodeUuid, port.name, 'source') ? ' wire-from' : ''}`}
         style={{ background: appearance.color, borderColor: appearance.color }}
+        tabIndex={0}
+        aria-label={`${title} ${port.name} output`}
+        onKeyDown={(event) =>
+          onPortKey(event, { node: nodeUuid, port: port.name, type: 'source', wired: false })
+        }
       />
       <span className="port-name">{port.name}</span>
       <PortValue port={port} dataTypes={dataTypes} value={value} />
@@ -206,6 +251,8 @@ export function TypeNode({ data, selected }) {
               appearance={portAppearance(port, dataTypes)}
               value={portValues?.[port.name]}
               dataTypes={dataTypes}
+              nodeUuid={node.uuid}
+              title={title}
             />
           ))}
         </div>

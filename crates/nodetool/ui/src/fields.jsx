@@ -27,6 +27,12 @@ export function useLocked() {
   return useContext(LockContext)
 }
 
+// The keyboard wire in progress: the port it runs from — node, port, and
+// the handle's side — or null. The shell holds it and lands or stands it
+// down; the ports read it to mark their own origin handle. Outside the
+// editor — a component rendered on its own — no wire runs and none starts.
+export const WireContext = createContext({ wire: null, setWire: () => {} })
+
 // The rule for which inputs get an editable field: a declared type that
 // is a core base scalar makes the port scalar-possible. A type reference
 // the listing does not classify reads as not-a-base-scalar; so does a

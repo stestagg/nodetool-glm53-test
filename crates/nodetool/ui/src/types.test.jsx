@@ -7,7 +7,7 @@ import { NEUTRAL, portAppearance } from './types.js'
 
 describe('NEUTRAL', () => {
   it('is the pair the server composes, pinned as a literal against drift', () => {
-    expect(NEUTRAL).toEqual({ color: '#8f99a8', shape: 'circle' })
+    expect(NEUTRAL).toEqual({ color: '#6b7d8f', shape: 'circle' })
   })
 })
 

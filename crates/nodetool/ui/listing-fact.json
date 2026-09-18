@@ -1,0 +1,66 @@
+{
+  "String": {
+    "color": "#238551",
+    "shape": "circle"
+  },
+  "alpha/ratio": {
+    "color": "#6b7d8f",
+    "shape": "circle"
+  },
+  "beta/ghost-type": {
+    "color": "#6b7d8f",
+    "shape": "circle"
+  },
+  "beta/hued": {
+    "color": "#6b7d8f",
+    "shape": "circle"
+  },
+  "beta/tinted": {
+    "color": "#0e9488",
+    "shape": "square"
+  },
+  "bool": {
+    "color": "#a15f00",
+    "shape": "circle"
+  },
+  "f32": {
+    "color": "#9d3f9d",
+    "shape": "square"
+  },
+  "f64": {
+    "color": "#9d3f9d",
+    "shape": "square"
+  },
+  "i16": {
+    "color": "#2d72d2",
+    "shape": "square"
+  },
+  "i32": {
+    "color": "#2d72d2",
+    "shape": "square"
+  },
+  "i64": {
+    "color": "#2d72d2",
+    "shape": "square"
+  },
+  "i8": {
+    "color": "#2d72d2",
+    "shape": "square"
+  },
+  "u16": {
+    "color": "#2d72d2",
+    "shape": "square"
+  },
+  "u32": {
+    "color": "#2d72d2",
+    "shape": "square"
+  },
+  "u64": {
+    "color": "#2d72d2",
+    "shape": "square"
+  },
+  "u8": {
+    "color": "#2d72d2",
+    "shape": "square"
+  }
+}

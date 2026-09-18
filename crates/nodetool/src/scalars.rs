@@ -58,9 +58,13 @@ pub fn scalar_text(value: &Value) -> Option<String> {
 // The appearance declarations: a hue per family from the editor's
 // Blueprint-adjacent palette, the numeric families square and the rest
 // round — the shape carrying the family, the colour the member within it.
+// Each colour clears the editor's 3:1 edge floor against both surfaces it
+// renders on — the wire against the canvas, the port dot against the
+// node's white panel — so a declaration change is what moves it, never a
+// browser-side override.
 const NUMERIC_COLOR: &str = "#2d72d2";
 const FLOAT_COLOR: &str = "#9d3f9d";
-const FLAG_COLOR: &str = "#d1820c";
+const FLAG_COLOR: &str = "#a15f00";
 const TEXT_COLOR: &str = "#238551";
 const SQUARE: &str = "square";
 const ROUND: &str = "circle";

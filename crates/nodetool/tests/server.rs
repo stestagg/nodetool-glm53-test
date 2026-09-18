@@ -532,17 +532,17 @@ fn the_listing_carries_the_colour_and_shape_fact() {
     // the pair is declared whole or not at all.
     assert_eq!(
         facts["alpha/ratio"],
-        json!({ "color": "#8f99a8", "shape": "circle" })
+        json!({ "color": "#6b7d8f", "shape": "circle" })
     );
     assert_eq!(
         facts["beta/hued"],
-        json!({ "color": "#8f99a8", "shape": "circle" })
+        json!({ "color": "#6b7d8f", "shape": "circle" })
     );
     // So does a reference the registry does not know — one a listed node
     // type's port declares.
     assert_eq!(
         facts["beta/ghost-type"],
-        json!({ "color": "#8f99a8", "shape": "circle" })
+        json!({ "color": "#6b7d8f", "shape": "circle" })
     );
 }
 
