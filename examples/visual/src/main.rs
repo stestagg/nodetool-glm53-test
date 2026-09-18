@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use nodetool::graph;
-use nodetool::server::{read_definition, Editor};
+use nodetool::server::{read_definition, Editor, DEFAULT_ADDRESS};
 use nodetool_utility as _;
 use plugin_shapes as _;
 use plugin_text as _;
@@ -32,10 +32,12 @@ async fn main() -> ExitCode {
         }
         None => graph::GraphDefinition::empty(),
     };
-    let listener = match tokio::net::TcpListener::bind(nodetool::server::DEFAULT_ADDRESS).await {
+    let listener = match tokio::net::TcpListener::bind(DEFAULT_ADDRESS).await {
         Ok(listener) => listener,
         Err(error) => {
-            eprintln!("{error}");
+            eprintln!(
+                "cannot bind {DEFAULT_ADDRESS}: {error}; another visual editor is probably already running"
+            );
             return ExitCode::FAILURE;
         }
     };
