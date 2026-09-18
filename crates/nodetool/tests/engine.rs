@@ -74,6 +74,7 @@ fn definition(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> GraphDefinition {
 fn compiled(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> &'static CompiledGraph {
     Box::leak(Box::new(
         compile::compile(&definition(nodes, edges), &Registry::collect())
+            .graph
             .expect("the definition compiles"),
     ))
 }
@@ -451,7 +452,9 @@ async fn a_second_run_of_the_same_compiled_graph_and_of_a_recompiled_definition_
         vec![edge(COUNTER, "out", DOUBLER_1, "value")],
     );
     let registry = Registry::collect();
-    let compiled = compile::compile(&definition, &registry).expect("the definition compiles");
+    let compiled = compile::compile(&definition, &registry)
+        .graph
+        .expect("the definition compiles");
 
     assert_eq!(
         full_stream(&compiled, DOUBLER_1, "value").await,
@@ -463,7 +466,9 @@ async fn a_second_run_of_the_same_compiled_graph_and_of_a_recompiled_definition_
         "a second run of the same compiled graph starts clean"
     );
 
-    let recompiled = compile::compile(&definition, &registry).expect("the definition compiles");
+    let recompiled = compile::compile(&definition, &registry)
+        .graph
+        .expect("the definition compiles");
     assert_eq!(
         full_stream(&recompiled, DOUBLER_1, "value").await,
         doubled_values(),

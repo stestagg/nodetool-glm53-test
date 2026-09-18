@@ -77,7 +77,7 @@ async fn the_run_state_rides_the_resync_and_is_pushed_to_every_connection() {
     let resync = send(&editor, r#"{"id": 1, "type": "get_definition"}"#);
     assert_eq!(
         resync["run"],
-        json!({ "running": false, "outcome": null, "error": null }),
+        json!({ "running": false, "outcome": null, "error": null, "node": null }),
         "an editor that has not run carries no outcome"
     );
 
@@ -291,6 +291,11 @@ async fn natural_completion_and_fail_fast_each_return_to_idle_with_their_outcome
         failure.contains("00000000-0000-0000-0000-0000000000d5")
             && failure.contains("the failer ran"),
         "the failure names the node instance and what failed: {failure}"
+    );
+    assert_eq!(
+        failed["node"],
+        json!("00000000-0000-0000-0000-0000000000d5"),
+        "the failure carries the node its mark lands on, riding the outcome itself"
     );
     assert_eq!(held_run(&editor)["running"], json!(false));
 }

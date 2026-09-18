@@ -37,10 +37,11 @@
 //! observer ([`Observer`]) the engine tells each [`Event`] to as the run
 //! unfolds — the run started, each node's start, each value emitted (the
 //! node, its port, and the value), each node's completion or failure with
-//! what went wrong, and the run finished with its outcome. The observer is
-//! diagnostics beside the data path, never a second path for the run's
-//! product. The engine hands an event over and moves on: events queue
-//! unboundedly and one task delivers them at the observer's own pace, so a
+//! what went wrong, and the run finished with its outcome, the failure's
+//! node carried in the outcome itself. The observer is diagnostics beside
+//! the data path, never a second path for the run's product. The engine
+//! hands an event over and moves on: events queue unboundedly and one task
+//! delivers them at the observer's own pace, so a
 //! slow, stalled, absent, or dead observer trades queue growth or silence,
 //! never the run's values, timing, or completion — a callback cannot fail
 //! into the engine, it is a sink. One node's status is derivable from the
@@ -213,7 +214,16 @@ impl<'g> Run<'g> {
                     node.label, node.node_type.type_ref
                 )
                 .into();
-                run_finished(&events, RunOutcome::Failed(error.to_string()));
+                run_finished(
+                    &events,
+                    RunOutcome::Failed {
+                        error: error.to_string(),
+                        node: Some(Node {
+                            uuid: *uuid,
+                            label: node.label.clone(),
+                        }),
+                    },
+                );
                 return Err(error);
             }
         }
@@ -327,16 +337,23 @@ impl<'g> Run<'g> {
             tokio::select! {
                 joined = set.join_next() => match joined {
                     Some(Ok(Ok(()))) => {}
-                    Some(Ok(Err(error))) => {
+                    Some(Ok(Err(failure))) => {
                         set.abort_all();
+                        let TaskFailure { error, node } = failure;
                         let report = error.to_string();
-                        run_finished(&events, RunOutcome::Failed(report));
+                        run_finished(&events, RunOutcome::Failed { error: report, node });
                         return Err(error);
                     }
                     Some(Err(join_error)) => {
                         set.abort_all();
                         let lost = lost_run_task(join_error);
-                        run_finished(&events, RunOutcome::Failed(lost.to_string()));
+                        run_finished(
+                            &events,
+                            RunOutcome::Failed {
+                                error: lost.to_string(),
+                                node: None,
+                            },
+                        );
                         return Err(lost);
                     }
                     None => {
@@ -373,7 +390,8 @@ async fn wait_stop(stop: &mut Option<watch::Receiver<bool>>) {
 /// One node's execution: its behaviour driven over its live ports, per the
 /// stream semantics. Every error it can end on — a behaviour's or a panic
 /// caught here, where the node is known — is told the same way: naming the
-/// node instance, its label and uuid, and what went wrong.
+/// node instance, its label and uuid, and what went wrong, the node riding
+/// the returned failure beside the report.
 async fn run_node(
     uuid: Uuid,
     label: String,
@@ -381,7 +399,7 @@ async fn run_node(
     mut inputs: Vec<Input>,
     mut outputs: Vec<Output>,
     events: Option<UnboundedSender<Event>>,
-) -> Result<(), behaviour::Error> {
+) -> Result<(), TaskFailure> {
     if let Some(events) = &events {
         let _ = events.send(Event::NodeStarted {
             node: Node {
@@ -405,21 +423,24 @@ async fn run_node(
             Ok(())
         }
         Err(error) => {
-            let report = format!("node {label} ({uuid}): {error}");
+            let node = Node { uuid, label };
             if let Some(events) = &events {
                 let _ = events.send(Event::NodeFailed {
-                    node: Node { uuid, label },
+                    node: node.clone(),
                     error: error.to_string(),
                 });
             }
-            Err(report.into())
+            Err(TaskFailure {
+                error: format!("node {} ({}): {error}", node.label, node.uuid).into(),
+                node: Some(node),
+            })
         }
     }
 }
 
 /// One parameter literal's stream: yields its value once, then ends. A
 /// receiving node gone is that stream ending, not an error.
-async fn parameter_stream(value: Value, sender: Sender<Value>) -> Result<(), behaviour::Error> {
+async fn parameter_stream(value: Value, sender: Sender<Value>) -> Result<(), TaskFailure> {
     let _ = sender.send(value).await;
     Ok(())
 }
@@ -441,6 +462,15 @@ fn run_finished(events: &Option<UnboundedSender<Event>>, outcome: RunOutcome) {
     }
 }
 
+/// A run task's failure: the report it ends the run with, and the node
+/// the failure belongs to — known where the task was built. The run's
+/// end reads both off the task's own return, in one piece, never off
+/// the event stream racing beside it.
+struct TaskFailure {
+    error: behaviour::Error,
+    node: Option<Node>,
+}
+
 /// One consumer's stream, run to its end. Every error it can end on — its
 /// own or a panic caught here — is told naming the attachment it failed on.
 async fn consume_stream(
@@ -449,13 +479,16 @@ async fn consume_stream(
     port: &'static str,
     with: Consumer,
     receiver: Receiver<Value>,
-) -> Result<(), behaviour::Error> {
+) -> Result<(), TaskFailure> {
     let outcome = catch_panic(with(receiver)).await;
     let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(payload) => Err(panicked(payload)),
     };
-    outcome.map_err(|error| format!("a consumer of node {label} ({uuid}) `{port}`: {error}").into())
+    outcome.map_err(|error| TaskFailure {
+        error: format!("a consumer of node {label} ({uuid}) `{port}`: {error}").into(),
+        node: Some(Node { uuid, label }),
+    })
 }
 
 /// The error a caught panic becomes, in the task's own words.
@@ -534,8 +567,11 @@ pub enum RunOutcome {
     /// Every node completed; every consumed stream ended.
     Complete,
     /// The first error ended the run — the same report [`Run::start`]
-    /// returns.
-    Failed(String),
+    /// returns — with the node instance the failure belongs to, named
+    /// where the failing task knew it, so what happened and where travel
+    /// in one piece. The one failure naming no node is a run task lost
+    /// without reporting, where no node is known.
+    Failed { error: String, node: Option<Node> },
     /// A stop asked on the attached channel ended the run: the remaining
     /// work stopped where it stands, whatever was in flight abandoned.
     Stopped,
@@ -618,7 +654,7 @@ impl Observer for PrintingObserver {
             }
             Event::RunFinished { outcome } => match outcome {
                 RunOutcome::Complete => "run completed".to_owned(),
-                RunOutcome::Failed(error) => format!("run failed: {error}"),
+                RunOutcome::Failed { error, .. } => format!("run failed: {error}"),
                 RunOutcome::Stopped => "run stopped".to_owned(),
             },
         };

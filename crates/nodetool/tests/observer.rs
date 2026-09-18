@@ -1,10 +1,11 @@
 //! The engine's events observer: one event model told as the run unfolds,
 //! beside the data path. What each event carries, the order they tell a
 //! small run in, the failing run's error and its closure of the abandoned
-//! work as stopped, the refused run's stream opening and closing with the
-//! refusal as its failed end, and runs that never notice their observer —
-//! stalled, stopped mid-run, panicking, or absent: the run's values and
-//! completion are untouched, identical to a run with no observer.
+//! work as stopped, the failed outcome carrying the node its own error
+//! names, the refused run's stream opening and closing with the refusal as
+//! its failed end, and runs that never notice their observer — stalled,
+//! stopped mid-run, panicking, or absent: the run's values and completion
+//! are untouched, identical to a run with no observer.
 
 use std::collections::BTreeMap;
 use std::future::pending;
@@ -24,6 +25,7 @@ use uuid::Uuid;
 const COUNTER: &str = "00000000-0000-0000-0000-0000000000d1";
 const DOUBLER_1: &str = "00000000-0000-0000-0000-0000000000d3";
 const FAILER: &str = "00000000-0000-0000-0000-0000000000d5";
+const FAILER_2: &str = "00000000-0000-0000-0000-0000000000d6";
 const NO_BEHAVIOUR: &str = "00000000-0000-0000-0000-0000000000d9";
 
 fn node(uuid: &str, type_ref: &str) -> NodeInstance {
@@ -63,6 +65,7 @@ fn compiled(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> &'static CompiledGrap
             },
             &Registry::collect(),
         )
+        .graph
         .expect("the definition compiles"),
     ))
 }
@@ -209,7 +212,7 @@ fn derived_statuses(events: &[Event]) -> BTreeMap<Uuid, Status> {
                 statuses.insert(node.uuid, Status::Failed(error.clone()));
             }
             Event::RunFinished {
-                outcome: RunOutcome::Failed(_),
+                outcome: RunOutcome::Failed { .. },
             } => {
                 for status in statuses.values_mut() {
                     if *status == Status::Running {
@@ -355,7 +358,7 @@ async fn a_failing_run_tells_the_error_and_closes_the_abandoned_work_as_stopped(
         "the failed transition carries what went wrong: {events:?}"
     );
     let Some(Event::RunFinished {
-        outcome: RunOutcome::Failed(report),
+        outcome: RunOutcome::Failed { error: report, .. },
     }) = events.last()
     else {
         panic!("the run's last event is its failed end: {events:?}");
@@ -391,6 +394,52 @@ async fn a_failing_run_tells_the_error_and_closes_the_abandoned_work_as_stopped(
 }
 
 #[tokio::test]
+async fn a_failed_outcome_carries_the_node_its_error_names() {
+    // Two nodes whose behaviour errors mid-run, both fed: the first task
+    // to complete ends the run, so which one wins is the scheduler's —
+    // but the outcome is one piece, its error and its node naming the
+    // same instance however the race between tasks falls.
+    let compiled = compiled(
+        vec![
+            node(COUNTER, "delta/counter"),
+            node(FAILER, "delta/failer"),
+            node(FAILER_2, "delta/failer"),
+        ],
+        vec![
+            edge(COUNTER, "out", FAILER, "value"),
+            edge(COUNTER, "out", FAILER_2, "value"),
+        ],
+    );
+    let (forward, timeline) = mpsc::unbounded_channel();
+    let mut run = Run::new(compiled);
+    run.observe(Arc::new(Forwarding(forward)));
+    run.start()
+        .await
+        .expect_err("a failing node ends the run fail-fast");
+
+    let events = until_finished(timeline).await;
+    let Some(Event::RunFinished {
+        outcome: RunOutcome::Failed { error, node },
+    }) = events.last()
+    else {
+        panic!("the run's last event is its failed end: {events:?}");
+    };
+    let failer: Uuid = FAILER.parse().unwrap();
+    let other: Uuid = FAILER_2.parse().unwrap();
+    let node = node
+        .as_ref()
+        .expect("the failure names the node it belongs to");
+    assert!(
+        node.uuid == failer || node.uuid == other,
+        "the node named is one of the two that failed: {node:?}"
+    );
+    assert!(
+        error.contains(&node.uuid.to_string()),
+        "the outcome's error and node name the same instance: {error} / {node:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_run_refused_before_it_starts_still_opens_and_closes_the_stream() {
     let (forward, timeline) = mpsc::unbounded_channel();
     let compiled = compiled(vec![node(NO_BEHAVIOUR, "gamma/passthrough")], vec![]);
@@ -407,7 +456,7 @@ async fn a_run_refused_before_it_starts_still_opens_and_closes_the_stream() {
         "the stream opens with the run's start: {events:?}"
     );
     let Some(Event::RunFinished {
-        outcome: RunOutcome::Failed(report),
+        outcome: RunOutcome::Failed { error: report, .. },
     }) = events.last()
     else {
         panic!("the refused run's stream closes with its failed end: {events:?}");

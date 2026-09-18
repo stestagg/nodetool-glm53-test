@@ -42,11 +42,15 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let compiled = match compile::compile(&definition, &Registry::collect()) {
-        Ok(compiled) => compiled,
-        Err(errors) => {
-            for error in errors {
-                eprintln!("compile error: {error}");
+    let result = compile::compile(&definition, &Registry::collect());
+    for warning in &result.warnings {
+        eprintln!("compile warning: {}", warning.message);
+    }
+    let compiled = match result.graph {
+        Some(compiled) => compiled,
+        None => {
+            for error in &result.errors {
+                eprintln!("compile error: {}", error.message);
             }
             return ExitCode::FAILURE;
         }

@@ -12,7 +12,13 @@
 //! the definition wherever the definition travels, and is pushed alone
 //! when a save changes it without touching the definition. The run state
 //! — whether a run is on and how the last one ended — travels beside them
-//! the same way. One graph state, not two; edits land last-write-wins,
+//! the same way. So do the problems: after every change to the held
+//! definition, and when a file is opened, the same compile a start runs
+//! recomputes the graph's problems — errors and non-fatal warnings, each
+//! naming the nodes it speaks of — and they are held as state like the
+//! definition, travelling with it wherever it travels, the editor's early
+//! warning that advises but never polices, enforcement staying compile's
+//! at start. One graph state, not two; edits land last-write-wins,
 //! with no locking, presence, or merge ceremony, for a local single-user
 //! tool. While a run is on, the definition is held still: the UI quiets
 //! its editing controls and the server refuses any edit operation that
@@ -64,8 +70,9 @@ enum Outbound {
 
 /// The editing session: the held definition, the file it belongs to —
 /// none while the graph is untitled — whether the definition has
-/// changed since that file was last opened or saved, and the run of the
-/// graph. One lock over the four, so a file operation cannot interleave
+/// changed since that file was last opened or saved, the run of the
+/// graph, and the problems the compiler finds in the held definition.
+/// One lock over the five, so a file operation cannot interleave
 /// with an edit, and a run cannot start between an edit's check and its
 /// application.
 struct Session {
@@ -73,6 +80,7 @@ struct Session {
     file: Option<String>,
     dirty: bool,
     run: RunState,
+    problems: Vec<compile::Problem>,
 }
 
 /// The editing server: the held session, the palette listing of every
@@ -108,18 +116,23 @@ impl Editor {
     /// An editor holding `definition` and the file it came from, if any —
     /// `None` for a fresh, untitled graph. Launching on a graph file hands
     /// the loader's definition and the file's path here; the definition is
-    /// clean until an edit lands, and no run is on.
+    /// clean until an edit lands, no run is on, and the definition's
+    /// problems are the compile's, computed before the first connection
+    /// asks.
     pub fn new(definition: GraphDefinition, file: Option<String>) -> Editor {
         let (pushes, _) = broadcast::channel(64);
+        let registry = Registry::collect();
+        let problems = problems_of(&definition, &registry);
         Editor {
             session: Arc::new(Mutex::new(Session {
                 graph: definition,
                 file,
                 dirty: false,
                 run: RunState::Idle { outcome: None },
+                problems,
             })),
             listing: protocol::node_type_listing(),
-            registry: Registry::collect(),
+            registry,
             base_scalars: protocol::base_scalars(),
             pushes,
         }
@@ -245,6 +258,7 @@ impl Editor {
             "graph": graph,
             "file": protocol::file_state(session.file.as_deref(), session.dirty),
             "run": protocol::run_state(&session.run),
+            "problems": protocol::problems_state(&session.problems),
         }))
     }
 
@@ -549,8 +563,18 @@ impl Editor {
         if session.graph.nodes.is_empty() {
             return Err("the held definition has no nodes: there is nothing to run".to_owned());
         }
-        let compiled = compile::compile(&session.graph, &self.registry)
-            .map_err(|errors| format!("the definition does not compile:\n{}", errors.join("\n")))?;
+        let result = compile::compile(&session.graph, &self.registry);
+        let Some(compiled) = result.graph else {
+            return Err(format!(
+                "the definition does not compile:\n{}",
+                result
+                    .errors
+                    .iter()
+                    .map(|problem| problem.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        };
         let (stop, stop_requested) = watch::channel(false);
         session.run = RunState::Running { stop };
         self.push_run(session);
@@ -582,19 +606,24 @@ impl Editor {
         Ok(json!({ "type": "run_stopped" }))
     }
 
-    /// Push the whole updated definition, with the file state and the run
-    /// state beside it, to every connection — never the operation. The
+    /// Push the whole updated definition, with the file state, the run
+    /// state, and the problems beside it, to every connection — never the
+    /// operation. Every definition change lands here, so the problems the
+    /// compile finds are recomputed beside it: held as state like the
+    /// definition itself, travelling with it wherever it travels. The
     /// browser holds no graph state of its own, so a push it can render
     /// without applying or merging anything is the one shape that can
     /// never diverge from what the server holds. Called with the session
     /// still locked, so the pushes leave in the order the operations
     /// applied and an older snapshot can never arrive after a newer one.
-    fn push_definition(&self, session: &Session) {
+    fn push_definition(&self, session: &mut Session) {
+        session.problems = problems_of(&session.graph, &self.registry);
         let message = match protocol::definition_message(
             &session.graph,
             session.file.as_deref(),
             session.dirty,
             &session.run,
+            &session.problems,
         ) {
             Ok(message) => message,
             Err(error) => protocol::error_reply(
@@ -741,6 +770,15 @@ impl Editor {
         pump.abort();
         Ok(())
     }
+}
+
+/// The problems the compile finds in `graph`, errors and warnings both:
+/// the same compile a start runs, cheap enough to ride every edit, so
+/// the held problems are current by construction. No second validator,
+/// no check the browser performs.
+fn problems_of(graph: &GraphDefinition, registry: &Registry) -> Vec<compile::Problem> {
+    let result = compile::compile(graph, registry);
+    result.errors.into_iter().chain(result.warnings).collect()
 }
 
 /// Read a graph file the way every editor door does — the launch seed

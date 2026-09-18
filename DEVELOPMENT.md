@@ -144,9 +144,22 @@ takes at most one upstream, so a wire dropped on an already-wired input
 replaces the old wire, and a wire released anywhere it cannot land cancels
 quietly. Dragging a wired input's end off and letting go unhooks it.
 Delete (or Backspace) removes the selected node together with its wires.
-Nothing is checked while editing — types, ports, and cycles are judged
-when a run is started. The server holds the graph: a reload or a second
-tab shows the same graph, and an edit in one appears in the other.
+
+Nothing is policed while editing — a graph with problems edits, saves,
+and starts exactly as freely as a clean one — but the problems are shown
+before any run is spent on them: after every change to the held graph,
+and when a file is opened, the server recomputes the graph through the
+same compile a start runs and pushes the problems it finds — errors and
+warnings, each naming the nodes it speaks of — beside the definition. A
+node a problem names carries a mark on the canvas, the message readable
+at the mark; an unknown-typed node's placeholder carries its unknown-type
+error, explaining its inertness. The one warning compile currently makes
+is the hang gate: an input neither connected nor parameterised while
+another of the node's inputs is — the node will never fire, and a run of
+it hangs until stopped. Fix the problem and the mark is gone on the next
+edit; a clean graph carries nothing. The server holds the graph: a
+reload or a second tab shows the same graph and the same marks, and an
+edit in one appears in the other.
 
 The chrome carries the run beside the file controls: one control that
 reads Start when the editor is idle and Stop while a run is on — the
@@ -155,21 +168,25 @@ switch on. Start hands the definition the server holds to the compiler —
 every start compiles afresh, so whatever was edited last is exactly what
 runs — and on a clean compile the run begins: the control flips to Stop
 and every connection is pushed the new run state. A compile failure is
-reported in the status line, the errors naming what and where; the run
-never starts, the state stays idle, and editing stays exactly as free as
-it was — the editor never polices, compile decides. While a run is on
-the definition is held still: palette drops, node moves, wires and
+reported as a toast in the chrome, the errors naming what and where, the
+same errors already sitting as marks on their nodes; the run never
+starts, the state stays idle, and editing stays exactly as free as it
+was — the editor never polices, compile decides. While a run is on the
+definition is held still: palette drops, node moves, wires and
 unhooking, deletion, label and parameter edits, and the file controls
 are inert, and a second tab's edit is refused server-side — selection,
 panning, and zoom stay live, looking not being editing. The run ends by
 itself when every node completes — idle returns, the outcome shows
 completed, and editing re-enables without anyone pressing Stop; a node's
-error ends it fail-fast with the failure naming the node instance and
-what went wrong; and Stop ends it promptly, the outcome showing stopped
-— including a run making no progress because a node's input never fires
-(a `Format` whose `template` is neither connected nor parameterised
-while its `value` is, is one way to build that). Run state — idle
-or running, and the last run's outcome — is server state like the file:
+error ends it fail-fast with the failure reported as a toast, naming the
+node instance and what went wrong, and the failed node's mark carries
+the explanation after the toast is gone, both gone when the next start
+resets the canvas; and Stop ends it promptly, the outcome showing
+stopped — including a run making no progress because a node's input
+never fires (a `Format` whose `template` is neither connected nor
+parameterised while its `value` is, is one way to build that — the
+canvas warned about it before the run began). Run state — idle or
+running, and the last run's outcome — is server state like the file:
 a second tab and a reload show it, and a start or stop made in one tab
 is visible in the others. The editor's outputs no node consumes are
 discarded; attaching a console printer to what a run produces is not the
@@ -197,14 +214,29 @@ another file or the current one — or starting fresh, over unsaved changes
 asks before discarding them. Files are read and written server-side
 through the one graph file format (`nodetool::graph`), so a file the
 editor saves is a file `run-graph` runs. A load or save failure is
-reported in
-the status line naming the path and the fault, leaving the held graph and
-file untouched. Launched on a path (`cargo run -p visual -- <file>`) the
+reported as a toast naming the path and the fault, leaving the held graph
+and file untouched. Launched on a path (`cargo run -p visual -- <file>`) the
 editor opens already showing that graph; the sample ships in
 `examples/visual/graphs/` and exercises the three node placements — a node
 at its recorded position, a node with no position on the deterministic
 fallback, and a node whose type the binary never linked rendered as an
-inert placeholder.
+inert placeholder carrying the unknown-type error that explains it.
+
+The connection is the editor's lifeline, and its loss is chrome state,
+not silence: when the websocket closes — server stopped, network gone —
+a banner names the loss and says the editor is trying again, over a
+canvas that keeps its last-known view. While disconnected every
+server-acting gesture — editing, file open and save, start and stop — is
+inert, the browser holding no state that could back an undeliverable
+edit, while panning, zooming, and selecting stay live. The editor keeps
+trying, and when the server returns the tab rejoins by itself through
+the connect-time resync — definition, file, run state, problems — the
+banner clears, and a reconnect mid-run reattaches to the live state the
+server holds. A first open that cannot reach the server shows the same
+banner rather than the empty-canvas invitation. A greeting whose
+protocol or schema versions mismatch the page's stops the trying
+instead: the banner names the mismatch and reloading the page is the
+advice, until that reload.
 
 The run-graph samples beyond the default select the demonstration:
 
@@ -216,7 +248,7 @@ cargo run -p run-graph if-true      # the utility If steers to `then`, the Forma
 cargo run -p run-graph if-false     # the same graph steered to `else`, the Format's plain string form
 ```
 
-Two things to expect from the `if` samples. The first routed value prints
+Three things to expect from the `if` samples. The first routed value prints
 more than once — the condition literal's arrival re-runs the held value and
 the template literal's arrival fires its own run, so the first value prints
 three times before later values print once; that is the stream semantics'
@@ -224,6 +256,10 @@ pairing, not a duplication. And a Format's `template` input must be fed for
 the node to fire, `template: ""` being how a graph asks for the plain form,
 while a Format on an unselected branch never fires and must carry no
 template: a fed template there hangs the run instead of completing it.
+So each sample prints one compile warning before it runs — the
+unselected Format's `template` is neither connected nor parameterised
+beside its fed `value` — and the run still completes: a warning advises,
+it changes no outcome.
 
 Adding the `observe` flag subscribes the printing observer, so the
 engine's event timeline prints beside whatever the sample shows — the run

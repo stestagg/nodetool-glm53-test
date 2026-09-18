@@ -8,22 +8,27 @@
 //! act that causes the run; every ending arrives through the engine's own
 //! event stream — [`RunWatcher`] hears run finished and carries its
 //! outcome back — so the endings are the run's own, told on the engine's
-//! event stream, with no second tracker beside it.
+//! event stream, with no second tracker beside it. A failure's node rides
+//! the outcome itself, named where the failing task knew it, so what the
+//! failure names is what the engine named, not a parsing of the message
+//! and not a hearing beside it.
 
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::watch;
+use uuid::Uuid;
 
 use super::protocol;
 use crate::async_trait;
 use crate::engine::{Event, Observer, RunOutcome};
 
 /// How the last run ended: every node complete, a stop asked from the
-/// chrome, or the first error, named. An idle run with no outcome has not
-/// run yet.
+/// chrome, or the first error, named — with the node instance whose
+/// failure ended the run, when the run ended on one. An idle run with no
+/// outcome has not run yet.
 pub enum Outcome {
     Completed,
-    Failed(String),
+    Failed { error: String, node: Option<Uuid> },
     Stopped,
 }
 
@@ -34,7 +39,7 @@ impl Outcome {
         match self {
             Outcome::Completed => "completed",
             Outcome::Stopped => "stopped",
-            Outcome::Failed(_) => "failed",
+            Outcome::Failed { .. } => "failed",
         }
     }
 }
@@ -58,7 +63,7 @@ impl RunState {
 /// The engine observer one run is watched by: it carries the run's
 /// finished outcome back into the run state and pushes the change to every
 /// connection. The running state is the start operation's own doing, so
-/// run-finished is all this watcher hears.
+/// run-finished is all this watcher answers to.
 struct RunWatcher {
     session: Arc<Mutex<super::Session>>,
     pushes: tokio::sync::broadcast::Sender<String>,
@@ -67,23 +72,26 @@ struct RunWatcher {
 #[async_trait]
 impl Observer for RunWatcher {
     async fn observe(&self, event: Event) {
-        let outcome = match event {
-            Event::RunFinished { outcome } => outcome,
-            _ => return,
-        };
-        let outcome = match outcome {
-            RunOutcome::Complete => Outcome::Completed,
-            RunOutcome::Failed(error) => Outcome::Failed(error),
-            RunOutcome::Stopped => Outcome::Stopped,
-        };
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
-        session.run = RunState::Idle {
-            outcome: Some(outcome),
-        };
-        let _ = self.pushes.send(protocol::run_message(&session.run));
+        // The running state is the start operation's own doing, so
+        // run-finished is all this watcher answers to.
+        if let Event::RunFinished { outcome } = event {
+            let outcome = match outcome {
+                RunOutcome::Complete => Outcome::Completed,
+                RunOutcome::Failed { error, node } => Outcome::Failed {
+                    error,
+                    node: node.map(|node| node.uuid),
+                },
+                RunOutcome::Stopped => Outcome::Stopped,
+            };
+            let mut session = self
+                .session
+                .lock()
+                .expect("the session lock is never poisoned");
+            session.run = RunState::Idle {
+                outcome: Some(outcome),
+            };
+            let _ = self.pushes.send(protocol::run_message(&session.run));
+        }
     }
 }
 

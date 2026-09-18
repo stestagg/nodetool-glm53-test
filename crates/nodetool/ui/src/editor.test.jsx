@@ -6,12 +6,16 @@
 // produces (no linked binary carries an unknown type reference, nothing
 // yet writes a placeless node), the scalar-input classification off the
 // listing's base-scalar fact, the wire-drag partition, whose
-// release-on-a-port ending must never unhook, and the file chrome's two
+// release-on-a-port ending must never unhook, the file chrome's two
 // destructive-if-wrong decisions — when a save asks for its path, and
-// when a replacement asks about discarding.
+// when a replacement asks about discarding — the marks the compile's
+// problems and the failed run place at their nodes, and the banner a
+// lost connection raises.
 import { describe, expect, it } from 'vitest'
 import {
+  bannerText,
   hasUnsavedChanges,
+  nodeMarks,
   offPortUnhook,
   runControl,
   runStatusText,
@@ -257,6 +261,92 @@ describe('runControl', () => {
       label: 'Start',
       enabled: true,
     })
+  })
+
+  it('both acts reach the server: no connection, no control', () => {
+    expect(runControl({ running: true }, { nodes: [{}] }, false)).toEqual({
+      running: true,
+      label: 'Stop',
+      enabled: false,
+    })
+    expect(runControl({ running: false, outcome: null }, { nodes: [{}] }, false).enabled).toBe(
+      false,
+    )
+  })
+})
+
+describe('nodeMarks', () => {
+  it('places each problem\'s message at the nodes it names, one mark carrying all of them', () => {
+    const marks = nodeMarks(
+      [
+        { message: 'no port `nope`', nodes: ['u1'] },
+        { message: 'no exact match', nodes: ['u1', 'u2'] },
+      ],
+      null,
+    )
+    expect(marks.get('u1')).toEqual(['no port `nope`', 'no exact match'])
+    expect(marks.get('u2')).toEqual(['no exact match'])
+    expect(marks.size).toBe(2)
+  })
+
+  it('the failed run\'s error sits at the node whose failure ended it', () => {
+    const marks = nodeMarks(
+      [{ message: 'a compile problem', nodes: ['u1'] }],
+      { outcome: 'failed', node: 'u2', error: 'node Failer (u2): the failer ran' },
+    )
+    expect(marks.get('u1')).toEqual(['a compile problem'])
+    expect(marks.get('u2')).toEqual(['node Failer (u2): the failer ran'])
+  })
+
+  it('a clean graph and a run that did not fail carry nothing', () => {
+    expect(nodeMarks([], { outcome: 'completed' }).size).toBe(0)
+    expect(nodeMarks([], { outcome: 'failed', node: null }).size).toBe(0)
+    expect(nodeMarks([], { running: true }).size).toBe(0)
+    expect(nodeMarks(undefined, null).size).toBe(0)
+  })
+})
+
+describe('toNodes marks', () => {
+  it('carries the node\'s marks in its data, placeholder included', () => {
+    const graph = {
+      edges: [],
+      nodes: [
+        { uuid: 'u1', type_ref: 'alpha/add', metadata: {} },
+        { uuid: 'u2', type_ref: 'shapes/circle', metadata: {} },
+      ],
+    }
+    const marks = new Map([
+      ['u1', ['a problem']],
+      ['u2', ['the unknown-type error']],
+    ])
+    const nodes = toNodes(graph, [{ type_ref: 'alpha/add', inputs: [] }], {}, marks)
+    expect(nodes[0].data.marks).toEqual(['a problem'])
+    expect(nodes[1].data.marks).toEqual(['the unknown-type error'])
+  })
+
+  it('a node nothing names carries no marks', () => {
+    const nodes = toNodes(
+      { edges: [], nodes: [{ uuid: 'u1', type_ref: 'alpha/add', metadata: {} }] },
+      [{ type_ref: 'alpha/add', inputs: [] }],
+    )
+    expect(nodes[0].data.marks).toEqual([])
+  })
+})
+
+describe('bannerText', () => {
+  it('names the loss and the trying the client is already doing', () => {
+    expect(bannerText('lost', null)).toBe('connection lost — trying to reconnect…')
+  })
+
+  it('names the version mismatch, reloading the page as the advice', () => {
+    expect(bannerText('incompatible', 'the server speaks protocol 2')).toBe(
+      'the server speaks protocol 2 — reload the page',
+    )
+  })
+
+  it('a connected or still-trying editor has no banner', () => {
+    expect(bannerText('open', null)).toBeNull()
+    expect(bannerText('connecting', null)).toBeNull()
   })
 })
 

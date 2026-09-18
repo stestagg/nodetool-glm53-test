@@ -12,6 +12,11 @@ use nodetool::scalars;
 use test_plugin_alpha as _;
 use test_plugin_beta as _;
 use test_plugin_gamma as _;
+use uuid::Uuid;
+
+fn parse(uuid: &str) -> Uuid {
+    uuid.parse().expect("the test carries a valid uuid")
+}
 
 const SOURCE: &str = "00000000-0000-0000-0000-0000000000a1";
 const SOURCE_16: &str = "00000000-0000-0000-0000-0000000000a2";
@@ -66,11 +71,28 @@ fn definition(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> GraphDefinition {
 }
 
 fn compile_ok(definition: &GraphDefinition) -> CompiledGraph {
-    compile::compile(definition, &registry()).expect("the definition compiles")
+    compile::compile(definition, &registry())
+        .graph
+        .expect("the definition compiles")
 }
 
 fn compile_errors(definition: &GraphDefinition) -> Vec<String> {
-    compile::compile(definition, &registry()).unwrap_err()
+    let result = compile::compile(definition, &registry());
+    assert!(result.graph.is_none(), "the definition compiles");
+    result
+        .errors
+        .iter()
+        .map(|problem| problem.message.clone())
+        .collect()
+}
+
+fn compile_warnings(definition: &GraphDefinition) -> Vec<String> {
+    let result = compile::compile(definition, &registry());
+    result
+        .warnings
+        .iter()
+        .map(|problem| problem.message.clone())
+        .collect()
 }
 
 fn single_error(messages: Vec<String>) -> String {
@@ -605,6 +627,139 @@ fn an_input_left_unconnected_and_unparameterised_compiles() {
 
     assert!(compiled.nodes[&SINK.parse().unwrap()].parameters.is_empty());
     assert!(compiled.connections.is_empty());
+}
+
+/// A node with an input left starving beside one that is fed or
+/// parameterised: the hang gate, compile's first non-fatal warning. The
+/// adder's two inputs make the trap trivial to build.
+fn hung_adder() -> GraphDefinition {
+    definition(
+        vec![
+            with_parameter(node(ADD, "alpha/add"), "a", ParameterValue::Int(1)),
+            node(SOURCE, "gamma/int_source"),
+        ],
+        vec![],
+    )
+}
+
+const ADD: &str = "00000000-0000-0000-0000-0000000000d9";
+
+#[test]
+fn a_starving_input_beside_a_fed_one_warns_naming_the_node_the_input_and_the_consequence() {
+    let messages = compile_warnings(&hung_adder());
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(
+        messages[0].contains("Add") && messages[0].contains(ADD) && messages[0].contains("`b`"),
+        "{}",
+        messages[0]
+    );
+    assert!(messages[0].contains("hang"), "{}", messages[0]);
+}
+
+#[test]
+fn the_hang_gate_is_exactly_a_starving_input_beside_one_that_arrives() {
+    // Both inputs parameterised: nothing hangs.
+    let add = with_parameter(
+        with_parameter(node(ADD, "alpha/add"), "a", ParameterValue::Int(1)),
+        "b",
+        ParameterValue::Int(2),
+    );
+    let fed = definition(
+        vec![
+            with_parameter(node(ADD, "alpha/add"), "a", ParameterValue::Int(1)),
+            node(SOURCE, "gamma/int_source"),
+        ],
+        vec![edge(SOURCE, "value", ADD, "b")],
+    );
+    assert!(
+        compile_warnings(&definition(vec![add], vec![])).is_empty(),
+        "no starving input, no warning"
+    );
+    assert!(
+        compile_warnings(&fed).is_empty(),
+        "every input arrives, no warning"
+    );
+
+    // Both inputs starving: nothing suggests the node should fire at all,
+    // and nothing warns.
+    let both = definition(vec![node(ADD, "alpha/add")], vec![]);
+    assert!(
+        compile_warnings(&both).is_empty(),
+        "{:?}",
+        compile_warnings(&both)
+    );
+    // A one-input node left unconnected compiles unwarned, as before.
+    let single = definition(vec![node(SINK, "gamma/int_sink")], vec![]);
+    assert!(compile_warnings(&single).is_empty());
+}
+
+#[test]
+fn the_hang_gate_changes_no_outcome_and_its_warning_names_its_node() {
+    let result = compile::compile(&hung_adder(), &registry());
+
+    // Advisory: the graph compiles as freely as a clean one.
+    let compiled = result.graph.expect("a warning refuses nothing");
+    assert!(compiled.nodes.contains_key(&parse(ADD)));
+
+    let warning = &result.warnings[0];
+    assert_eq!(warning.nodes, vec![parse(ADD)]);
+}
+
+#[test]
+fn warnings_travel_beside_errors_in_one_result() {
+    let result = compile::compile(
+        &definition(
+            vec![
+                node(SOURCE, "gamma/int_source"),
+                node(SINK_TEXT, "gamma/string_sink"),
+                with_parameter(node(ADD, "alpha/add"), "a", ParameterValue::Int(1)),
+            ],
+            vec![edge(SOURCE, "value", SINK_TEXT, "text")],
+        ),
+        &registry(),
+    );
+
+    assert!(
+        result.graph.is_none(),
+        "the unresolvable connection is an error"
+    );
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(result.warnings.len(), 1, "{:?}", result.warnings);
+    assert!(
+        result.warnings[0].message.contains("Add"),
+        "{:?}",
+        result.warnings
+    );
+}
+
+#[test]
+fn every_problem_names_the_nodes_it_speaks_of() {
+    let result = compile::compile(
+        &definition(
+            vec![
+                node(PASS_1, "gamma/passthrough"),
+                node(SOURCE, "gamma/int_source"),
+                node(SINK_TEXT, "gamma/string_sink"),
+                node(MISSING, "gamma/missing"),
+            ],
+            vec![edge(SOURCE, "value", SINK_TEXT, "text")],
+        ),
+        &registry(),
+    );
+
+    let unknown = result
+        .errors
+        .iter()
+        .find(|problem| problem.message.contains("no linked plugin declares"))
+        .expect("the unknown type is an error");
+    assert_eq!(unknown.nodes, vec![parse(MISSING)]);
+
+    let unresolvable = result
+        .errors
+        .iter()
+        .find(|problem| problem.message.contains("no exact match"))
+        .expect("the unresolvable connection is an error");
+    assert_eq!(unresolvable.nodes, vec![parse(SOURCE), parse(SINK_TEXT)]);
 }
 
 #[test]

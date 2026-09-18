@@ -36,21 +36,6 @@ nodes:
       color: \"#4a90d9\"
 edges: []";
 
-/// Set or clear an input's parameter value. The value is the typed text,
-/// carried as a JSON string and read server-side as the file format
-/// reads it; `None` commits the empty field, meaning unset.
-fn edit_parameter(editor: &Editor, id: u64, uuid: &str, input: &str, value: Option<&str>) -> Value {
-    let value = value
-        .map(|text| format!(r#", "value": {}"#, serde_json::to_string(text).unwrap()))
-        .unwrap_or_default();
-    send(
-        editor,
-        &format!(
-            r#"{{"id": {id}, "type": "set_parameter", "uuid": "{uuid}", "input": "{input}"{value}}}"#
-        ),
-    )
-}
-
 #[test]
 fn the_definition_reply_carries_the_held_definition_verbatim() {
     let editor = editor_holding(SEEDED);
