@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use nodetool::graph;
 use nodetool::server::{read_definition, Editor, DEFAULT_ADDRESS};
+use nodetool_fizzbuzz as _;
 use nodetool_utility as _;
 use plugin_shapes as _;
 use plugin_text as _;

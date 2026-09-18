@@ -32,7 +32,10 @@ export const NODE_TYPE = 'application/x-nodetool-node-type'
 // Open the editor's connection, retrying it until it holds. `onOpen(request)`
 // receives the request function once the socket is live; `onGreeting` fires
 // when the server's greeting push arrives; the others receive pushes and
-// connection events. `onVersionMismatch` carries the mismatch the greeting
+// connection events — `onDefinition` the whole resync, `onRunDisplay` the
+// per-node statuses and latest values a connecting tab joins with,
+// `onRunEvent` a forwarded engine event, `onNodeStatus` a derived status
+// pushed as state. `onVersionMismatch` carries the mismatch the greeting
 // named, and is the one ending the retrying. `onClosed` fires on every
 // loss that follows — never on a mismatch or a deliberate close. Returns a
 // function that closes the connection for good.
@@ -41,8 +44,11 @@ export function connect({
   onGreeting,
   onVersionMismatch,
   onDefinition,
+  onRunDisplay,
   onFile,
   onRun,
+  onRunEvent,
+  onNodeStatus,
   onError,
   onClosed,
 }) {
@@ -90,11 +96,20 @@ export function connect({
                 problems: message.problems,
               }))
           break
+        case 'run_display':
+          onRunDisplay(message)
+          break
         case 'file':
           onFile(message)
           break
         case 'run':
           onRun(message)
+          break
+        case 'run_event':
+          onRunEvent(message)
+          break
+        case 'node_status':
+          onNodeStatus(message)
           break
         case 'node_types':
           // The listing and its base-scalar fact ride one reply.

@@ -127,7 +127,9 @@ cargo run -p visual -- examples/visual/graphs/sample.yml  # the editor on a grap
 
 `visual` starts the editor server: open the printed address in a browser
 and find the palette of every node type the linked plugins contribute on
-the left and the canvas beside it. Dragging a type onto the canvas creates
+the left and the canvas beside it — the example links the fizzbuzz
+plugin crate beside the utility and example plugins, so its palette is
+the headless binary's. Dragging a type onto the canvas creates
 a node where it dropped; dragging a node moves it; a click selects,
 opening the editing sidebar on the right — the node's label editable to
 any name, an empty field returning the type's default, the type reference
@@ -192,16 +194,42 @@ is visible in the others. The editor's outputs no node consumes are
 discarded; attaching a console printer to what a run produces is not the
 editor's business.
 
+While the run is on, the canvas animates with it. Each node carries its
+derived status in its title bar — running from its start, completed or
+failed from its own ending, stopped when a failed or stopped run
+abandons it — and every value an output emits travels its wires as a
+pulse, a fan-out pulsing each downstream wire, and shows as small text
+at the emitting output port, replaced by each new emission. Values of
+the base scalars display as their plain text; a plugin's custom type
+animates the wire but carries no invented content, its rendering being
+plugin territory. Statuses and values persist after the run ends — the
+failed node stays findable, the counter's last ticked value stays
+evidence of what the run did — until the next start resets the canvas.
+The browser coalesces the animation, keeping only the latest value per
+port and letting a fast graph drop frames rather than queue a backlog,
+and honours the platform's reduced-motion preference. A tab that
+connects at any time — first open, reload, second tab, or a reconnect —
+is given the current statuses and values beside the run state and then
+joins the live stream, so every open tab animates the same run.
+
 ```sh
-cargo run -p visual -- examples/visual/graphs/ticker.yml  # the long-running sample
+cargo run -p visual -- examples/visual/graphs/ticker.yml  # the streaming sample
 ```
 
-The ticker sample runs a `Ticker` to a large count — 100000 values, one
-every 100ms — so the run lasts while the run control is exercised: drop
-and wire nodes against it and watch every editing gesture do nothing,
-then press Stop and see editing return. Without it, every node the
-shipped plugins build completes in microseconds and no run lasts long
-enough to observe or interrupt.
+The ticker sample is the one to watch. A `Ticker` counts to 100000 at
+one value every 100ms and fans out to two condition nodes; a `Counter`
+counts to a hundred and completes at once; and a `Drip` feeds a `Split`
+into a `Check` whose `forbidden` parameter reads `never` by default. On
+Start the nodes mark running, the pulses travel the wires, and the
+value at the ticker's output ticks upward; a second tab opened mid-run
+joins with the same statuses and values. Editing the guard's
+`forbidden` parameter to `one` — a value the drip's second line
+carries — arms it: the next run fails there, the guard marks failed,
+and the drip and the splitter it abandons mark stopped; the marks
+remain after idle returns and through a reload. Stop on a later run
+leaves stopped marks; starting again resets the canvas and animates
+afresh. The sample also keeps its editing-lock duty: while it runs,
+every editing gesture is inert, until the run ends or Stop is pressed.
 
 The editor's graph lives in a graph file. The chrome names the file being
 edited — untitled until a first save — with an unsaved-changes marker an

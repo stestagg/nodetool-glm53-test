@@ -9,6 +9,16 @@
 // commit holds — the sidebar and the node's inline fields both committing
 // through the same seam, both views of one stored value.
 //
+// While a run is on, the canvas animates from the server's pushes: node
+// statuses arrive already derived — pushed as state, never recomputed
+// here — and each forwarded emission animates the wires it travels and
+// replaces the text at its emitting port. Emissions coalesce through one
+// animation frame (the coalescer, coalesce.js): a fast graph updates once
+// per frame, dropping frames, never queueing a backlog, and only the
+// latest value per port is kept — what the canvas shows is always the
+// events' own. A new run resets the canvas; the last run's statuses and
+// values persist after it ends, until the next start.
+//
 // Every report arrives through one surface: a toast in the chrome,
 // dismissed on click and on its own. What toasts deliberately do not
 // carry is the durable truth — a problem a compile found sits as a mark
@@ -27,6 +37,7 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { NODE_TYPE, connect, connectionLost } from './protocol.js'
+import { RunCoalescer } from './coalesce.js'
 import { EditContext, LockContext, scalarPossible } from './fields.jsx'
 import { SelfLoopEdge } from './edges.jsx'
 import { PlaceholderNode, TypeNode } from './nodes.jsx'
@@ -48,7 +59,7 @@ function recordedPosition(node) {
   return undefined
 }
 
-export function toNodes(graph, types, baseScalars, marks) {
+export function toNodes(graph, types, baseScalars, marks, statuses, values) {
   const byRef = new Map((types ?? []).map((type) => [type.type_ref, type]))
   const placeless = graph.nodes
     .filter((node) => recordedPosition(node) === undefined)
@@ -68,6 +79,8 @@ export function toNodes(graph, types, baseScalars, marks) {
     wiredInputs.set(edge.to, ports)
   }
   const at = (uuid) => marks?.get(uuid) ?? []
+  const status = (uuid) => statuses?.[uuid]
+  const value = (uuid, port) => values?.[`${uuid}/${port}`]
   return graph.nodes.map((node) => {
     const position = recordedPosition(node) ?? fallback.get(node.uuid)
     const type = byRef.get(node.type_ref)
@@ -76,13 +89,18 @@ export function toNodes(graph, types, baseScalars, marks) {
         id: node.uuid,
         position,
         type: 'placeholder',
-        data: { label: node.label ?? node.type_ref, marks: at(node.uuid) },
+        data: { label: node.label ?? node.type_ref, marks: at(node.uuid), status: status(node.uuid) },
         // Ports unknown, so no dragging or deletion — but the label is
         // the one attribute its sidebar can edit, so selection stays.
         draggable: false,
         selectable: true,
         deletable: false,
       }
+    }
+    const portValues = {}
+    for (const port of type.outputs) {
+      const text = value(node.uuid, port.name)
+      if (text !== undefined) portValues[port.name] = text
     }
     return {
       id: node.uuid,
@@ -96,6 +114,8 @@ export function toNodes(graph, types, baseScalars, marks) {
           .filter((port) => scalarPossible(port, baseScalars))
           .map((port) => port.name),
         marks: at(node.uuid),
+        status: status(node.uuid),
+        portValues,
       },
     }
   })
@@ -103,17 +123,29 @@ export function toNodes(graph, types, baseScalars, marks) {
 
 // The definition's edges as canvas wires. Not selectable: drag-off is the
 // one way a wire comes off, so there is no second, selected-then-deleted
-// path.
-export function toEdges(graph) {
-  return graph.edges.map((edge) => ({
-    id: `${edge.from}/${edge.from_port}->${edge.to}/${edge.to_port}`,
-    source: edge.from,
-    sourceHandle: edge.from_port,
-    target: edge.to,
-    targetHandle: edge.to_port,
-    selectable: false,
-    type: edge.from === edge.to ? 'selfloop' : undefined,
-  }))
+// path. A wire in `pulsing` animates — the path a value is travelling.
+export function toEdges(graph, pulsing) {
+  return graph.edges.map((edge) => {
+    const id = `${edge.from}/${edge.from_port}->${edge.to}/${edge.to_port}`
+    return {
+      id,
+      source: edge.from,
+      sourceHandle: edge.from_port,
+      target: edge.to,
+      targetHandle: edge.to_port,
+      selectable: false,
+      animated: pulsing?.has(id) === true,
+      type: edge.from === edge.to ? 'selfloop' : undefined,
+    }
+  })
+}
+
+// The wires one emission animates: every downstream wire of the emitting
+// port — a fan-out pulses each path the value actually takes.
+export function emittedTargets(edges, node, port) {
+  return edges
+    .filter((edge) => edge.from === node && edge.from_port === port)
+    .map((edge) => `${edge.from}/${edge.from_port}->${edge.to}/${edge.to_port}`)
 }
 
 // What a wire drag's ending means when no connection landed: a release on
@@ -204,6 +236,13 @@ export function Editor() {
   const [file, setFile] = useState(null)
   const [run, setRun] = useState(null)
   const [problems, setProblems] = useState([])
+  // The canvas's view of the run, exactly what the bridge holds: the
+  // derived status per node and the latest value per emitting port,
+  // rendered as pushed — statuses via node_status state, values via the
+  // forwarded emissions and the connect-time snapshot.
+  const [statuses, setStatuses] = useState({})
+  const [values, setValues] = useState({})
+  const [pulsing, setPulsing] = useState(() => new Set())
   const [nodes, setNodes] = useState([])
   const [status, setStatus] = useState({ text: 'connecting…', error: false })
   // The connection: connecting until the first greeting, open while it
@@ -222,6 +261,20 @@ export function Editor() {
   const protocol = useRef(null)
   const canvasRef = useRef(null)
   const toastId = useRef(0)
+  // The held definition's edges, as the event path reads them: the
+  // emission handler lives across renders, and the wires it pulses are
+  // the ones the last resync carried.
+  const graphRef = useRef(null)
+  // The coalescer owns the canvas's view of the run's values and pulses,
+  // applying each animation frame's truth to the state above; the status
+  // per node needs no coalescing and stays state alone.
+  const coalescer = useRef(null)
+  if (coalescer.current === null) {
+    coalescer.current = new RunCoalescer(({ values, pulsing }) => {
+      setValues(values)
+      setPulsing(pulsing)
+    })
+  }
   // Armed by a replacement gesture — open, new — and consumed by the
   // next definition arrival, which brings the view to the graph; a
   // failed gesture disarms it.
@@ -266,8 +319,11 @@ export function Editor() {
   // what is drawn, and the run state it carries narrates itself the way a
   // run push does. An idle state with no outcome — what a compile failure
   // leaves — reads as '', leaving the status line, the refused start's
-  // error report, as it is.
+  // error report, as it is. The run display is not part of it: the
+  // statuses and values arrive as their own push, on the ordered stream
+  // the live changes ride.
   const resync = useCallback((graph, file, run, problems) => {
+    graphRef.current = graph
     setGraph(graph)
     setFile(file)
     setRun(run)
@@ -285,7 +341,14 @@ export function Editor() {
     // replaces what is drawn, never what the user has picked or holds.
     setNodes((current) => {
       const before = new Map(current.map((node) => [node.id, node]))
-      return toNodes(graph, listing?.types, listing?.baseScalars, marks).map((node) => {
+      return toNodes(
+        graph,
+        listing?.types,
+        listing?.baseScalars,
+        marks,
+        statuses,
+        values,
+      ).map((node) => {
         const held = before.get(node.id)
         return {
           ...node,
@@ -301,7 +364,9 @@ export function Editor() {
       pendingRefit.current = false
       fitView({ maxZoom: 1 })
     }
-  }, [graph, listing, marks, fitView])
+  }, [graph, listing, marks, statuses, values, fitView])
+
+  useEffect(() => () => coalescer.current.dispose(), [])
 
   useEffect(
     () =>
@@ -325,15 +390,42 @@ export function Editor() {
         },
         onDefinition: resync,
         onFile: ({ path, dirty }) => setFile({ path, dirty }),
+        // The run display arrives as its own push — the connect-time
+        // resync's snapshot and nothing else; the live changes that keep
+        // it true ride the same ordered stream behind it.
+        onRunDisplay: ({ statuses, values }) => {
+          setStatuses(statuses ?? {})
+          coalescer.current.replace(values ?? {})
+        },
         onRun: (state) => {
           setRun(state)
           setActing(false)
+          // A new run resets the canvas: the last run's statuses and
+          // values give way as this run's own events arrive.
+          if (state.running) {
+            setStatuses({})
+            coalescer.current.replace({})
+          }
           setStatus({ text: runStatusText(state), error: state.outcome === 'failed' })
           // A failure is a happening: the toast carries it, and the
           // failed node's mark carries the explanation after the toast
           // is gone.
           if (state.outcome === 'failed') showToast(state.error ?? 'the run failed')
         },
+        onRunEvent: (message) => {
+          // The statuses and the outcome ride their own state pushes;
+          // the emissions are what the canvas animates: the value at the
+          // emitting port, the wires the value travels.
+          if (message.event !== 'emitted') return
+          coalescer.current.emitted(
+            message.node,
+            message.port,
+            message.value,
+            emittedTargets(graphRef.current?.edges ?? [], message.node, message.port),
+          )
+        },
+        onNodeStatus: ({ node, status: derived }) =>
+          setStatuses((current) => ({ ...current, [node]: derived })),
         onError: showToast,
         onClosed: () => {
           protocol.current = null
@@ -575,7 +667,7 @@ export function Editor() {
             <main className="canvas" ref={canvasRef}>
               <ReactFlow
                 nodes={nodes}
-                edges={graph === null ? [] : toEdges(graph)}
+                edges={graph === null ? [] : toEdges(graph, pulsing)}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 onNodesChange={onNodesChange}

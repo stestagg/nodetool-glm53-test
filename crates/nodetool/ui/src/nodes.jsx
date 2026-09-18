@@ -12,6 +12,13 @@
 // unknown, so no fields, but the label is the one attribute its sidebar
 // can still edit, and the unknown-type problem it carries explains why.
 //
+// While a run touches a node, the title bar carries its derived status —
+// the bridge's one transition table, rendered by name, never recomputed
+// here — and an output port with a latest value shows it as small text
+// beside the port name, replaced by each new emission. Both persist
+// after the run ends, until the next start resets them; the statuses are
+// states on the node, not decoration.
+//
 // Both renderings wear the marks the compile's problems name: one mark
 // per node, every message that names the node readable at it — a
 // warning's or an error's, and a failed run's explanation the same way.
@@ -21,6 +28,13 @@
 
 import { Handle, Position } from '@xyflow/react'
 import { commitParameter, Field, useEdit } from './fields.jsx'
+
+// The status state in the title bar, right of the label: one word, the
+// bridge's own vocabulary.
+export function NodeStatus({ status }) {
+  if (status === undefined) return null
+  return <span className={`node-status ${status}`}>{status}</span>
+}
 
 function InputPort({ port, node, wired, scalar, title }) {
   const edit = useEdit()
@@ -48,22 +62,30 @@ function InputPort({ port, node, wired, scalar, title }) {
   )
 }
 
-function OutputPort({ port }) {
+function OutputPort({ port, value }) {
   return (
     <div className="port out" title={port.type_refs.join(', ')}>
       <Handle type="source" position={Position.Right} id={port.name} />
       <span className="port-name">{port.name}</span>
+      {value !== undefined && (
+        <span className="port-value" title={value}>
+          {value}
+        </span>
+      )}
     </div>
   )
 }
 
 export function TypeNode({ data, selected }) {
-  const { node, type, wiredInputs, scalarInputs, marks } = data
+  const { node, type, wiredInputs, scalarInputs, marks, status, portValues } = data
   const title = node.label ?? type.label
   return (
     <div className={`node${selected ? ' selected' : ''}`}>
       {marks?.length > 0 && <div className="node-mark" />}
-      <div className="node-title">{title}</div>
+      <div className="node-title">
+        {title}
+        <NodeStatus status={status} />
+      </div>
       <div className="node-ports">
         <div className="node-inputs">
           {type.inputs.map((port) => (
@@ -79,7 +101,7 @@ export function TypeNode({ data, selected }) {
         </div>
         <div className="node-outputs">
           {type.outputs.map((port) => (
-            <OutputPort key={port.name} port={port} />
+            <OutputPort key={port.name} port={port} value={portValues?.[port.name]} />
           ))}
         </div>
       </div>
@@ -96,7 +118,10 @@ export function PlaceholderNode({ data }) {
   const marks = data.marks ?? []
   return (
     <div className="node placeholder">
-      <div className="node-title">{data.label}</div>
+      <div className="node-title">
+        {data.label}
+        <NodeStatus status={data.status} />
+      </div>
       <div className="node-unknown">unknown type — ports unknown</div>
       {marks.length > 0 && (
         <div className="node-problem" title={marks.join('\n')}>

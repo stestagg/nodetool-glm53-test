@@ -10,7 +10,9 @@
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
+use super::bridge::RunDisplay;
 use super::run::{Outcome, RunState};
+use crate::engine::{Event, RunOutcome};
 use crate::graph::{GraphDefinition, Mapping, ParameterValue, SCHEMA_VERSION};
 use crate::registry;
 use crate::{NodeType, Port};
@@ -116,11 +118,13 @@ pub fn run_state(run: &RunState) -> Value {
 
 /// The whole definition with the file state, the run state, and the
 /// problems beside it — the message every connection renders the editor
-/// from. The graph is serialized first and the message composed from
-/// that value, so the failure the `Result` declares — the definition
-/// carrying something JSON cannot, which the caller reports instead of
-/// papering over — happens here rather than as a panic inside the
-/// composition.
+/// from. The graph is serialized first and the message composed from that
+/// value, so the failure the `Result` declares — the definition carrying
+/// something JSON cannot, which the caller reports instead of papering
+/// over — happens here rather than as a panic inside the composition. The
+/// run display is not beside them: it travels as its own push, so a tab
+/// joining mid-run receives it in the same ordered stream every later
+/// status change and emission rides.
 pub fn definition_message(
     graph: &GraphDefinition,
     file: Option<&str>,
@@ -169,6 +173,73 @@ pub fn run_message(run: &RunState) -> String {
     let mut message = run_state(run);
     message["type"] = json!("run");
     serde_json::to_string(&message).expect("the run state always serialises")
+}
+
+/// A derived node status pushed alone: the bridge's one transition table,
+/// spoken as state the canvas renders without deriving anything of its
+/// own.
+pub fn node_status_message(node: Uuid, status: &str) -> String {
+    serde_json::to_string(&json!({
+        "type": "node_status",
+        "node": node,
+        "status": status,
+    }))
+    .expect("a node status always serialises")
+}
+
+/// The run display pushed alone: the per-node statuses and latest values a
+/// connecting tab is given, riding the one ordered channel every later
+/// status change and emission rides. Pushes are sent under the session
+/// lock, so a change the bridge derives later can never overtake the
+/// snapshot a tab joins with — the stale-canvas-overwritten-by-a-push race
+/// a reply-carried snapshot could not rule out.
+pub fn run_display_message(display: &RunDisplay) -> String {
+    let mut message = display.snapshot();
+    message["type"] = json!("run_display");
+    serde_json::to_string(&message).expect("the run display always serialises")
+}
+
+/// An engine event forwarded as it occurred — every event, values
+/// included, no sampling or thinning; one event model crosses the bridge
+/// untouched. A node event names the instance uuid, an emission names its
+/// port and carries the value's browser-renderable text when core can
+/// render one (a plugin custom type crosses with no invented content),
+/// and run finished names its outcome. Pushed with no id, like every push.
+pub fn run_event_message(event: &Event, value: Option<&str>) -> String {
+    let mut message = json!({ "type": "run_event" });
+    match event {
+        Event::RunStarted => message["event"] = json!("run_started"),
+        Event::NodeStarted { node } => {
+            message["event"] = json!("node_started");
+            message["node"] = json!(node.uuid);
+        }
+        Event::Emitted { node, port, .. } => {
+            message["event"] = json!("emitted");
+            message["node"] = json!(node.uuid);
+            message["port"] = json!(port);
+            if let Some(text) = value {
+                message["value"] = json!(text);
+            }
+        }
+        Event::NodeCompleted { node } => {
+            message["event"] = json!("node_completed");
+            message["node"] = json!(node.uuid);
+        }
+        Event::NodeFailed { node, error } => {
+            message["event"] = json!("node_failed");
+            message["node"] = json!(node.uuid);
+            message["error"] = json!(error);
+        }
+        Event::RunFinished { outcome } => {
+            message["event"] = json!("run_finished");
+            message["outcome"] = json!(match outcome {
+                RunOutcome::Complete => "completed",
+                RunOutcome::Stopped => "stopped",
+                RunOutcome::Failed { .. } => "failed",
+            });
+        }
+    }
+    serde_json::to_string(&message).expect("a forwarded event always serialises")
 }
 
 /// An error reply, echoing the id of the request it answers when it can.

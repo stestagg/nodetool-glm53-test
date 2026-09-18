@@ -673,14 +673,9 @@ fn rendered(value: &Value) -> String {
     if let Some(text) = value.get::<String>() {
         return format!("{text:?}");
     }
-    macro_rules! scalars {
-        ($($ty:ty),* $(,)?) => {$(
-            if let Some(rendered) = value.get::<$ty>().map(|v| v.to_string()) {
-                return rendered;
-            }
-        )*};
+    if let Some(text) = crate::scalars::scalar_text(value) {
+        return text;
     }
-    scalars!(bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64);
     match crate::registry::data_type_by_id(value.type_id()) {
         Some(data_type) => format!("a {} value", data_type.name),
         None => format!("a value of id {}", value.type_id()),
