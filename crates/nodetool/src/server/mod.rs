@@ -12,7 +12,13 @@
 //! the definition wherever the definition travels, and is pushed alone
 //! when a save changes it without touching the definition. The run state
 //! — whether a run is on and how the last one ended — travels beside them
-//! the same way. So do the problems: after every change to the held
+//! the same way, and with it the run display: the per-node status and the
+//! latest value per output port the bridge ([`bridge`]) derives from the
+//! run's own events and holds beside the rest, so a browser connecting at
+//! any time is given the canvas as it stands. The run's events themselves
+//! cross to every connection as they occur, forwarded by the bridge, the
+//! one observer the editor subscribes to the engine with. So do the
+//! problems: after every change to the held
 //! definition, and when a file is opened, the same compile a start runs
 //! recomputes the graph's problems — errors and non-fatal warnings, each
 //! naming the nodes it speaks of — and they are held as state like the
@@ -40,6 +46,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::{json, Value};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -50,6 +57,7 @@ use crate::NodeType;
 use uuid::Uuid;
 
 mod assets;
+mod bridge;
 mod http;
 mod protocol;
 mod run;
@@ -71,16 +79,18 @@ enum Outbound {
 /// The editing session: the held definition, the file it belongs to —
 /// none while the graph is untitled — whether the definition has
 /// changed since that file was last opened or saved, the run of the
-/// graph, and the problems the compiler finds in the held definition.
-/// One lock over the five, so a file operation cannot interleave
-/// with an edit, and a run cannot start between an edit's check and its
-/// application.
+/// graph, the problems the compiler finds in the held definition, and
+/// the run display the bridge derives from the run's events. One lock
+/// over the six, so a file operation cannot interleave with an edit, a
+/// run cannot start between an edit's check and its application, and
+/// every push leaves in the order it became true.
 struct Session {
     graph: GraphDefinition,
     file: Option<String>,
     dirty: bool,
     run: RunState,
     problems: Vec<compile::Problem>,
+    display: bridge::RunDisplay,
 }
 
 /// The editing server: the held session, the palette listing of every
@@ -130,6 +140,7 @@ impl Editor {
                 dirty: false,
                 run: RunState::Idle { outcome: None },
                 problems,
+                display: bridge::RunDisplay::default(),
             })),
             listing: protocol::node_type_listing(),
             registry,
@@ -258,6 +269,7 @@ impl Editor {
             "graph": graph,
             "file": protocol::file_state(session.file.as_deref(), session.dirty),
             "run": protocol::run_state(&session.run),
+            "run_display": session.display.snapshot(),
             "problems": protocol::problems_state(&session.problems),
         }))
     }
@@ -577,6 +589,10 @@ impl Editor {
         };
         let (stop, stop_requested) = watch::channel(false);
         session.run = RunState::Running { stop };
+        // The next start resets the canvas: the last run's statuses and
+        // values give way as this run's own events arrive through the
+        // bridge.
+        session.display.reset();
         self.push_run(session);
         run::spawn(
             Arc::clone(&self.session),
@@ -624,6 +640,7 @@ impl Editor {
             session.dirty,
             &session.run,
             &session.problems,
+            &session.display,
         ) {
             Ok(message) => message,
             Err(error) => protocol::error_reply(
@@ -728,8 +745,9 @@ impl Editor {
                             }
                         }
                         // A connection that cannot keep up with the pushes
-                        // can no longer trust what it missed; it ends, and
-                        // a reload resyncs from the held definition.
+                        // can no longer trust what it missed; it is dropped,
+                        // and a reload or the client's own retry resyncs it
+                        // from the held state.
                         Err(broadcast::error::RecvError::Lagged(_)) => break,
                         Err(broadcast::error::RecvError::Closed) => break,
                     },
@@ -748,6 +766,12 @@ impl Editor {
                     },
                 }
             }
+            // However the pump ends — dropped past its bound, the channel
+            // closed, a write failed — the connection ends with it: the
+            // socket is shut down rather than left open and silent, so the
+            // browser sees the loss and rejoins through the connect-time
+            // resync.
+            let _ = writer.shutdown().await;
         });
         let mut messages = ws::Reader::new();
         while let Some(message) = messages.read(&mut reader).await.unwrap_or(None) {

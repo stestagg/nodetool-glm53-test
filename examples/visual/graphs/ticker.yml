@@ -1,13 +1,94 @@
 schema_version: 1
 name: ticker
 nodes:
-- uuid: 6a1d4f2e-3b58-4c97-a2d1-8f5e0c7b9a30
-  type_ref: text/ticker
-  label: The ticker
-  parameters:
-    count: 100000
-  metadata:
-    position:
-      x: 320
-      y: 120
-edges: []
+  - uuid: 6a1d4f2e-3b58-4c97-a2d1-8f5e0c7b9a30
+    type_ref: text/ticker
+    label: The ticker
+    parameters:
+      count: 100000
+    metadata:
+      position:
+        x: 320
+        y: 120
+  - uuid: 2f7c1a94-5d30-4e8b-9c26-7a1e4f0b3d58
+    type_ref: fizzbuzz/eq
+    label: Hits seven
+    parameters:
+      b: 7
+    metadata:
+      position:
+        x: 640
+        y: 40
+  - uuid: 8b3e5c71-9a24-4d6f-b1c8-0e5a7f2d4c93
+    type_ref: fizzbuzz/gt
+    label: Past hundred
+    parameters:
+      b: 100
+    metadata:
+      position:
+        x: 640
+        y: 200
+  - uuid: 3b9e5d24-7c18-4a6b-b0f3-1d8a5e2c9f46
+    type_ref: fizzbuzz/counter
+    label: To a hundred
+    parameters:
+      start: 1
+      stop: 100
+      step: 1
+    metadata:
+      position:
+        x: 80
+        y: 40
+  - uuid: 1c4a7e2b-8f35-49d0-a6b7-3e9c5d1f8a24
+    type_ref: text/drip
+    label: Lines
+    metadata:
+      position:
+        x: 80
+        y: 320
+  - uuid: 5e8b1c94-2a67-4f30-9d5a-7c1e3b6f0d48
+    type_ref: text/split
+    label: Splitter
+    parameters:
+      separator: ", "
+    metadata:
+      position:
+        x: 320
+        y: 320
+  - uuid: 9d2f6a13-4c58-4b7e-80a1-6e3b9c5d2f47
+    type_ref: text/check
+    label: The guard
+    parameters:
+      forbidden: never
+    metadata:
+      position:
+        x: 560
+        y: 320
+  - uuid: 4a7c0e29-1b53-4d8f-92b6-8c5e1a3f6d70
+    type_ref: text/uppercase
+    label: Shout
+    metadata:
+      position:
+        x: 800
+        y: 320
+edges:
+  - from: 6a1d4f2e-3b58-4c97-a2d1-8f5e0c7b9a30
+    from_port: value
+    to: 2f7c1a94-5d30-4e8b-9c26-7a1e4f0b3d58
+    to_port: a
+  - from: 6a1d4f2e-3b58-4c97-a2d1-8f5e0c7b9a30
+    from_port: value
+    to: 8b3e5c71-9a24-4d6f-b1c8-0e5a7f2d4c93
+    to_port: a
+  - from: 1c4a7e2b-8f35-49d0-a6b7-3e9c5d1f8a24
+    from_port: out
+    to: 5e8b1c94-2a67-4f30-9d5a-7c1e3b6f0d48
+    to_port: text
+  - from: 5e8b1c94-2a67-4f30-9d5a-7c1e3b6f0d48
+    from_port: parts
+    to: 9d2f6a13-4c58-4b7e-80a1-6e3b9c5d2f47
+    to_port: text
+  - from: 9d2f6a13-4c58-4b7e-80a1-6e3b9c5d2f47
+    from_port: text
+    to: 4a7c0e29-1b53-4d8f-92b6-8c5e1a3f6d70
+    to_port: text

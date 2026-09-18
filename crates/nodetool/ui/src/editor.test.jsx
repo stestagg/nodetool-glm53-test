@@ -14,12 +14,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   bannerText,
+  emittedTargets,
   hasUnsavedChanges,
   nodeMarks,
   offPortUnhook,
   runControl,
   runStatusText,
   saveAsksForPath,
+  snapshotValues,
   toEdges,
   toNodes,
 } from './editor.jsx'
@@ -58,7 +60,7 @@ describe('toNodes', () => {
         { uuid: '7c9e6679-7425-40de-944b-e07fc1f90ae7', type_ref: 'alpha/add', metadata: {} },
       ],
     }
-    const types = [{ type_ref: 'alpha/add', inputs: [] }]
+    const types = [{ type_ref: 'alpha/add', inputs: [], outputs: [] }]
     const nodes = toNodes(graph, types)
     expect(nodes[0].position).not.toEqual(nodes[1].position)
     expect(toNodes(graph, types)).toEqual(nodes)
@@ -76,8 +78,8 @@ describe('toNodes', () => {
       ],
     }
     const types = [
-      { type_ref: 'alpha/add', inputs: [] },
-      { type_ref: 'beta/identity', inputs: [] },
+      { type_ref: 'alpha/add', inputs: [], outputs: [] },
+      { type_ref: 'beta/identity', inputs: [], outputs: [] },
     ]
     const nodes = toNodes(graph, types)
     expect(nodes[0].data.wiredInputs).toEqual([])
@@ -95,13 +97,14 @@ describe('toNodes', () => {
     const types = [
       {
         type_ref: 'alpha/mix',
+        outputs: [],
         inputs: [
           { name: 'text', type_refs: ['String'] },
           { name: 'ratio', type_refs: ['alpha/ratio'] },
           { name: 'either', type_refs: ['alpha/ratio', 'f64'] },
         ],
       },
-      { type_ref: 'beta/custom', inputs: [{ name: 'only', type_refs: ['alpha/ratio'] }] },
+      { type_ref: 'beta/custom', inputs: [{ name: 'only', type_refs: ['alpha/ratio'] }], outputs: [] },
     ]
     const baseScalars = { String: true, 'alpha/ratio': false, f64: true }
     const nodes = toNodes(graph, types, baseScalars)
@@ -124,6 +127,7 @@ describe('toEdges', () => {
         target: 'u2',
         targetHandle: 'value',
         selectable: false,
+        animated: false,
       },
     ])
   })
@@ -141,6 +145,7 @@ describe('toEdges', () => {
         target: 'u1',
         targetHandle: 'value',
         selectable: false,
+        animated: false,
         type: 'selfloop',
       },
     ])
@@ -319,7 +324,7 @@ describe('toNodes marks', () => {
       ['u1', ['a problem']],
       ['u2', ['the unknown-type error']],
     ])
-    const nodes = toNodes(graph, [{ type_ref: 'alpha/add', inputs: [] }], {}, marks)
+    const nodes = toNodes(graph, [{ type_ref: 'alpha/add', inputs: [], outputs: [] }], {}, marks)
     expect(nodes[0].data.marks).toEqual(['a problem'])
     expect(nodes[1].data.marks).toEqual(['the unknown-type error'])
   })
@@ -327,7 +332,7 @@ describe('toNodes marks', () => {
   it('a node nothing names carries no marks', () => {
     const nodes = toNodes(
       { edges: [], nodes: [{ uuid: 'u1', type_ref: 'alpha/add', metadata: {} }] },
-      [{ type_ref: 'alpha/add', inputs: [] }],
+      [{ type_ref: 'alpha/add', inputs: [], outputs: [] }],
     )
     expect(nodes[0].data.marks).toEqual([])
   })
@@ -366,5 +371,79 @@ describe('runStatusText', () => {
   it('an idle run with no outcome says nothing', () => {
     expect(runStatusText({ running: false, outcome: null })).toBe('')
     expect(runStatusText(null)).toBe('')
+  })
+})
+
+describe('toNodes run display', () => {
+  const type = {
+    type_ref: 'delta/counter',
+    inputs: [],
+    outputs: [{ name: 'out', type_refs: ['i32'] }],
+  }
+  const graph = { edges: [], nodes: [{ uuid: 'u1', type_ref: 'delta/counter', metadata: {} }] }
+
+  it('carries the derived status and the latest value per output port in its data', () => {
+    const nodes = toNodes(graph, [type], {}, new Map(), { u1: 'running' }, { 'u1/out': '17' })
+    expect(nodes[0].data.status).toBe('running')
+    expect(nodes[0].data.portValues).toEqual({ out: '17' })
+  })
+
+  it('a port without a value and a node without a status carry neither', () => {
+    const nodes = toNodes(graph, [type], {}, new Map(), {}, {})
+    expect(nodes[0].data.status).toBeUndefined()
+    expect(nodes[0].data.portValues).toEqual({})
+  })
+
+  it('a placeholder carries the status too, its ports unknown', () => {
+    const unknown = { edges: [], nodes: [{ uuid: 'u2', type_ref: 'gone/missing', metadata: {} }] }
+    const nodes = toNodes(unknown, [type], {}, new Map(), { u2: 'stopped' }, {})
+    expect(nodes[0].data.status).toBe('stopped')
+  })
+})
+
+describe('toEdges pulsing', () => {
+  const graph = {
+    edges: [{ from: 'a', from_port: 'out', to: 'b', to_port: 'in' }],
+    nodes: [],
+  }
+
+  it('a wire in the pulse set animates, the rest stay still', () => {
+    const id = 'a/out->b/in'
+    expect(toEdges(graph, new Set([id]))[0].animated).toBe(true)
+    expect(toEdges(graph, new Set())[0].animated).toBe(false)
+    expect(toEdges(graph)[0].animated).toBe(false)
+  })
+})
+
+describe('emittedTargets', () => {
+  const edges = [
+    { from: 'src', from_port: 'out', to: 'x', to_port: 'a' },
+    { from: 'src', from_port: 'out', to: 'y', to_port: 'value' },
+    { from: 'other', from_port: 'out', to: 'z', to_port: 'in' },
+  ]
+
+  it('a fan-out pulses every downstream wire of the emitting port', () => {
+    expect(emittedTargets(edges, 'src', 'out')).toEqual(['src/out->x/a', 'src/out->y/value'])
+  })
+
+  it('a port with no wires pulses nothing, and neither does another node\'s emission', () => {
+    expect(emittedTargets(edges, 'src', 'spare')).toEqual([])
+    expect(emittedTargets(edges, 'other', 'out')).toEqual(['other/out->z/in'])
+  })
+})
+
+describe('snapshotValues', () => {
+  it('flattens the resync display into the per-port keys the canvas reads', () => {
+    expect(
+      snapshotValues({
+        statuses: { u1: 'completed' },
+        values: [{ node: 'u1', port: 'out', value: '50' }],
+      }),
+    ).toEqual({ 'u1/out': '50' })
+  })
+
+  it('an empty or missing display reads as no values', () => {
+    expect(snapshotValues({ statuses: {}, values: [] })).toEqual({})
+    expect(snapshotValues(undefined)).toEqual({})
   })
 })

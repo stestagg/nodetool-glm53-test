@@ -11,6 +11,9 @@ use nodetool::graph;
 use nodetool::server::Editor;
 use serde_json::Value;
 
+/// An editor on an empty, untitled definition. Unused by the bridge tests,
+/// which seed graphs from text.
+#[allow(dead_code)]
 pub fn editor() -> Editor {
     Editor::new(graph::GraphDefinition::empty(), None)
 }
@@ -35,7 +38,9 @@ pub fn held_definition(editor: &Editor) -> Value {
 
 /// Create one node at a fixed spot, answering its uuid: the setup step
 /// the wire, label, parameter, unhook, delete, and run tests build
-/// graphs from, positions being incidental to them.
+/// graphs from, positions being incidental to them. Unused by the bridge
+/// tests, which seed whole graphs from text.
+#[allow(dead_code)]
 pub fn create(editor: &Editor, id: u64, type_ref: &str) -> String {
     send(
         editor,
@@ -82,18 +87,25 @@ pub fn edit_parameter(
 }
 
 /// A unique path under the system temp directory, so test runs never
-/// collide; the file itself the test writes and removes.
+/// collide; the file itself the test writes and removes. Unused by the
+/// bridge tests, which touch no files.
+#[allow(dead_code)]
 pub fn temp_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("nodetool-{name}-{}.yml", uuid::Uuid::new_v4()))
 }
 
-/// A graph file on disk carrying `text`: what open and save need.
+/// A graph file on disk carrying `text`: what open and save need. Unused
+/// by the bridge tests, which touch no files.
+#[allow(dead_code)]
 pub fn written_graph(name: &str, text: &str) -> PathBuf {
     let path = temp_path(name);
     fs::write(&path, text).expect("the test writes its graph file");
     path
 }
 
+/// A graph file path as the JSON string an open or save carries. Unused by
+/// the bridge tests, which touch no files.
+#[allow(dead_code)]
 pub fn path_field(path: &Path) -> String {
     serde_json::to_string(&path.to_string_lossy().into_owned()).unwrap()
 }

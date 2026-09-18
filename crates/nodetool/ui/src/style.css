@@ -239,12 +239,65 @@ body {
 }
 
 .node-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
   padding: 4px 8px;
   background: var(--titlebar);
   border-bottom: 1px solid var(--border);
   border-radius: 2px 2px 0 0;
   font-weight: 600;
   cursor: grab;
+}
+
+/* The run's status on the node: one word in the bridge's vocabulary, a
+   state not a decoration. Distinct hues, contrast on the title bar; the
+   running one carries a beat, honoured only while the platform allows
+   motion. */
+
+.node-status {
+  font-size: 10px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.node-status.running {
+  color: var(--accent);
+}
+
+.node-status.completed {
+  color: #238551;
+}
+
+.node-status.failed {
+  color: var(--danger);
+}
+
+.node-status.stopped {
+  color: var(--muted);
+}
+
+.node-status.running::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .node-status.running::before {
+    animation: status-pulse 1s ease-in-out infinite;
+  }
+}
+
+@keyframes status-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .node-ports {
@@ -317,14 +370,37 @@ body {
   border-color: var(--accent);
 }
 
+/* The latest value at an emitting output port: small text beside the
+   port name, replaced by each new emission, persisting after the run
+   until the next start. Long values truncate, never stretching the
+   node — the canvas answers what-is-happening-where at a glance, and a
+   log is what the console is for. */
+
+.port-value {
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  color: var(--accent);
+}
+
 /* Wires are the canvas's core artifact: a 2px stroke in the dark grey,
    since the default faint one drowns on the light canvas and vanishes
-   zoomed out. The live line a drag draws reads the same. */
+   zoomed out. The live line a drag draws reads the same. A pulsing wire
+   — one a value is travelling — carries the accent, its dash flow the
+   movement; the platform's reduced-motion preference quiets it, which
+   the pulse logic honours at the source. */
 
 .canvas .react-flow__edge-path,
 .canvas .react-flow__connection-path {
   stroke: var(--muted);
   stroke-width: 2;
+}
+
+.canvas .react-flow__edge.animated .react-flow__edge-path {
+  stroke: var(--accent);
 }
 
 /* An unknown-typed node: visibly inert, saying what it cannot show. */

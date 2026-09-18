@@ -470,6 +470,7 @@ name = "visual"
 version = "0.1.0"
 dependencies = [
  "nodetool",
+ "nodetool-fizzbuzz",
  "nodetool-utility",
  "plugin-shapes",
  "plugin-text",

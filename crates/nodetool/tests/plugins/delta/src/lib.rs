@@ -10,7 +10,7 @@ use nodetool::async_trait;
 use nodetool::behaviour::{Behaviour, Error, Flow, Io, Trigger};
 use nodetool::node_type;
 use nodetool::scalars;
-use nodetool::Value;
+use nodetool::{data_type, uuid, Value};
 
 struct Counter;
 
@@ -111,6 +111,34 @@ fn failer(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
     Box::new(Failer)
 }
 
+/// The value a shaper emits; opaque to core, this plugin's business — the
+/// fixture for an emission core carries with no content of its own.
+pub struct Mark;
+
+data_type! {
+    id: uuid!("d3a5c1e9-4b2d-4f6a-8c0e-9d1b3f5a7c21"),
+    name: "delta/mark",
+}
+
+struct Shaper;
+
+#[async_trait]
+impl Behaviour for Shaper {
+    async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        io.output("mark")
+            .emit(Value::new(
+                uuid!("d3a5c1e9-4b2d-4f6a-8c0e-9d1b3f5a7c21"),
+                Mark,
+            ))
+            .await;
+        Ok(Flow::Complete)
+    }
+}
+
+fn shaper(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
+    Box::new(Shaper)
+}
+
 node_type! {
     type_ref: "delta/counter",
     label: "Counter",
@@ -159,4 +187,14 @@ node_type! {
     behaviour: failer,
     inputs: [ value: "i32" ],
     outputs: [],
+}
+
+node_type! {
+    type_ref: "delta/shaper",
+    label: "Shaper",
+    icon: "<svg/>",
+    plugin: "delta",
+    behaviour: shaper,
+    inputs: [],
+    outputs: [ mark: "delta/mark" ],
 }

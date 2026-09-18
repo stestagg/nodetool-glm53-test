@@ -32,10 +32,12 @@ export const NODE_TYPE = 'application/x-nodetool-node-type'
 // Open the editor's connection, retrying it until it holds. `onOpen(request)`
 // receives the request function once the socket is live; `onGreeting` fires
 // when the server's greeting push arrives; the others receive pushes and
-// connection events. `onVersionMismatch` carries the mismatch the greeting
-// named, and is the one ending the retrying. `onClosed` fires on every
-// loss that follows — never on a mismatch or a deliberate close. Returns a
-// function that closes the connection for good.
+// connection events — `onDefinition` the whole resync with the run display
+// beside it, `onRunEvent` a forwarded engine event, `onNodeStatus` a
+// derived status pushed as state. `onVersionMismatch` carries the mismatch
+// the greeting named, and is the one ending the retrying. `onClosed` fires
+// on every loss that follows — never on a mismatch or a deliberate close.
+// Returns a function that closes the connection for good.
 export function connect({
   onOpen,
   onGreeting,
@@ -43,6 +45,8 @@ export function connect({
   onDefinition,
   onFile,
   onRun,
+  onRunEvent,
+  onNodeStatus,
   onError,
   onClosed,
 }) {
@@ -80,7 +84,13 @@ export function connect({
           break
         case 'definition':
           if (message.id === undefined)
-            onDefinition(message.graph, message.file, message.run, message.problems)
+            onDefinition(
+              message.graph,
+              message.file,
+              message.run,
+              message.problems,
+              message.run_display,
+            )
           else
             settle(pending, onError, message.id, ({ resolve }) =>
               resolve({
@@ -88,6 +98,7 @@ export function connect({
                 file: message.file,
                 run: message.run,
                 problems: message.problems,
+                runDisplay: message.run_display,
               }))
           break
         case 'file':
@@ -95,6 +106,12 @@ export function connect({
           break
         case 'run':
           onRun(message)
+          break
+        case 'run_event':
+          onRunEvent(message)
+          break
+        case 'node_status':
+          onNodeStatus(message)
           break
         case 'node_types':
           // The listing and its base-scalar fact ride one reply.
