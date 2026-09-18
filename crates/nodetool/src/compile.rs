@@ -3,14 +3,20 @@
 //! a compiled graph, the immutable object an engine runs.
 //!
 //! [`compile`] takes the definition and the collected [`Registry`] and
-//! returns either the compiled graph or every compile error it could find,
-//! so one recompile shows all that still stands between the user and a
-//! runnable graph. It is pure: no I/O, no global state, and the same
+//! returns what it found: the compiled graph when the definition is
+//! correct, every compile error when it is not — so one recompile shows
+//! all that still stands between the user and a runnable graph — and
+//! beside either the non-fatal warnings. Every problem, error or warning,
+//! carries the node instances it names, so the editor marks its canvas,
+//! the failed-start report, and a headless printout all read one
+//! structure and none of them parses the messages to find where a
+//! problem lives. It is pure: no I/O, no global state, and the same
 //! definition and registry always yield the same result. The registry is
 //! passed in rather than read from the process, so compiling never rescans
 //! registrations and recompiling an edited graph is a cheap, wholly
 //! in-memory operation — the stop–edit–recompile–restart loop is a
-//! first-class path.
+//! first-class path, and recomputing the problems after every edit rides
+//! it.
 //!
 //! Validation is what correctness requires and nothing more. The graph must
 //! be a DAG — a cycle is an error naming the cycle — every edge must land on
@@ -21,8 +27,13 @@
 //! neither a connection nor a parameter value is *not* of itself an error:
 //! it compiles unconnected, and whether that is a fault only the node type
 //! can say — one whose behaviour gates on the input declares it through
-//! `check_parameters`; flagging such inputs otherwise belongs to the
-//! editor's warn-early set, not to compilation.
+//! `check_parameters`. What compile does flag is the hang gate: an input
+//! neither connected nor parameterised while another of the node's inputs
+//! is connected or parameterised compiles clean and then never fires,
+//! hanging its run until stopped — a trap otherwise discoverable only by
+//! spending a run, so it is compile's first non-fatal warning, advisory in
+//! every consumer, naming the node, the input, and the consequence. The
+//! warning set grows only when another warning earns its place.
 //!
 //! Every connection's type is resolved before the graph is built, across the
 //! unions its ports declare: the first exact match, walking the upstream's
@@ -71,32 +82,38 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use uuid::Uuid;
 
+mod literal;
+
 use crate::graph::{Edge, GraphDefinition, NodeInstance, ParameterValue};
 use crate::registry::Registry;
 use crate::value::Value;
-use crate::{Conversion, ConvertFn, DataType, NodeType, Port};
+use crate::{Conversion, DataType, NodeType, Port};
 
 /// Compile a graph definition into a runnable graph, or report every compile
-/// error found.
-pub fn compile(
-    definition: &GraphDefinition,
-    registry: &Registry,
-) -> Result<CompiledGraph, Vec<String>> {
+/// error found, with the non-fatal warnings beside either.
+pub fn compile(definition: &GraphDefinition, registry: &Registry) -> CompileResult {
     let mut errors = Vec::new();
+    let mut warnings = Vec::new();
 
     let mut instances = BTreeMap::<Uuid, (&NodeInstance, Option<&'static NodeType>)>::new();
     for instance in &definition.nodes {
         let node_type = registry.node_type(&instance.type_ref);
         if node_type.is_none() {
-            errors.push(format!(
-                "node {} instantiates `{}`, which no linked plugin declares",
-                node_name(instance, node_type),
-                instance.type_ref
+            errors.push(error(
+                format!(
+                    "node {} instantiates `{}`, which no linked plugin declares",
+                    node_name(instance, node_type),
+                    instance.type_ref
+                ),
+                vec![instance.uuid],
             ));
         }
         match instances.entry(instance.uuid) {
             std::collections::btree_map::Entry::Occupied(_) => {
-                errors.push(format!("duplicate node uuid {}", instance.uuid));
+                errors.push(error(
+                    format!("duplicate node uuid {}", instance.uuid),
+                    vec![instance.uuid],
+                ));
             }
             std::collections::btree_map::Entry::Vacant(slot) => {
                 slot.insert((instance, node_type));
@@ -113,7 +130,7 @@ pub fn compile(
             })
             .collect::<Vec<_>>()
             .join(" → ");
-        errors.push(format!("cycle: {named}"));
+        errors.push(error(format!("cycle: {named}"), cycle));
     }
 
     let mut connections = Vec::with_capacity(definition.edges.len());
@@ -126,9 +143,12 @@ pub fn compile(
         let to = instances.get(&edge.to).copied();
         for (uuid, role) in [(edge.from, "from"), (edge.to, "to")] {
             if !instances.contains_key(&uuid) {
-                errors.push(format!(
-                    "edge {} `{}` → {} `{}`: the {role} node {uuid} is not defined in the graph",
-                    edge.from, edge.from_port, edge.to, edge.to_port
+                errors.push(error(
+                    format!(
+                        "edge {} `{}` → {} `{}`: the {role} node {uuid} is not defined in the graph",
+                        edge.from, edge.from_port, edge.to, edge.to_port
+                    ),
+                    vec![uuid],
                 ));
             }
         }
@@ -137,10 +157,13 @@ pub fn compile(
         if let Some((instance, Some(node_type))) = from {
             output = port(node_type.outputs, &edge.from_port);
             if output.is_none() {
-                errors.push(format!(
-                    "node {} has no output port `{}`",
-                    node_name(instance, Some(node_type)),
-                    edge.from_port
+                errors.push(error(
+                    format!(
+                        "node {} has no output port `{}`",
+                        node_name(instance, Some(node_type)),
+                        edge.from_port
+                    ),
+                    vec![edge.from],
                 ));
             }
         }
@@ -148,21 +171,27 @@ pub fn compile(
         if let Some((instance, Some(node_type))) = to {
             input = port(node_type.inputs, &edge.to_port);
             if input.is_none() {
-                errors.push(format!(
-                    "node {} has no input port `{}`",
-                    node_name(instance, Some(node_type)),
-                    edge.to_port
+                errors.push(error(
+                    format!(
+                        "node {} has no input port `{}`",
+                        node_name(instance, Some(node_type)),
+                        edge.to_port
+                    ),
+                    vec![edge.to],
                 ));
             }
         }
         if let Some(input) = input {
             if let Some(first) = fed_by.insert((edge.to, input.name), edge.from) {
                 let (instance, node_type) = instances[&edge.to];
-                errors.push(format!(
-                    "input `{}` of node {} receives more than one connection (from {first} and {})",
-                    input.name,
-                    node_name(instance, node_type),
-                    edge.from
+                errors.push(error(
+                    format!(
+                        "input `{}` of node {} receives more than one connection (from {first} and {})",
+                        input.name,
+                        node_name(instance, node_type),
+                        edge.from
+                    ),
+                    vec![edge.to],
                 ));
             }
         }
@@ -186,10 +215,13 @@ pub fn compile(
                 None => {
                     let (from_instance, from_node_type) = instances[&edge.from];
                     let (to_instance, to_node_type) = instances[&edge.to];
-                    errors.push(format!(
-                        "connection {} `{}` ({}) → {} `{}` ({}): no exact match and no declared conversion bridges them",
-                        node_name(from_instance, from_node_type), edge.from_port, output.type_refs.join(", "),
-                        node_name(to_instance, to_node_type), edge.to_port, input.type_refs.join(", ")
+                    errors.push(error(
+                        format!(
+                            "connection {} `{}` ({}) → {} `{}` ({}): no exact match and no declared conversion bridges them",
+                            node_name(from_instance, from_node_type), edge.from_port, output.type_refs.join(", "),
+                            node_name(to_instance, to_node_type), edge.to_port, input.type_refs.join(", ")
+                        ),
+                        vec![edge.from, edge.to],
                     ));
                 }
             }
@@ -205,38 +237,79 @@ pub fn compile(
         let mut parameters = BTreeMap::new();
         for (name, literal) in &instance.parameters {
             let Some(input) = port(node_type.inputs, name) else {
-                errors.push(format!(
-                    "node {}: parameter `{}` does not name an input port",
-                    node_name(instance, Some(node_type)),
-                    name
+                errors.push(error(
+                    format!(
+                        "node {}: parameter `{}` does not name an input port",
+                        node_name(instance, Some(node_type)),
+                        name
+                    ),
+                    vec![*uuid],
                 ));
                 continue;
             };
             if fed_by.contains_key(&(*uuid, input.name)) {
-                errors.push(format!(
-                    "input `{}` of node {} holds a parameter value and receives a connection; an input carries one or the other",
-                    input.name,
-                    node_name(instance, Some(node_type))
+                errors.push(error(
+                    format!(
+                        "input `{}` of node {} holds a parameter value and receives a connection; an input carries one or the other",
+                        input.name,
+                        node_name(instance, Some(node_type))
+                    ),
+                    vec![*uuid],
                 ));
                 continue;
             }
             if input.family.is_some() {
                 literals_of.entry(*uuid).or_default().push((input, literal));
             } else {
-                match resolve_literal(literal, input.type_refs, registry) {
+                match literal::resolve_literal(literal, input.type_refs, registry) {
                     Some((resolved_type, value)) => {
                         parameters.insert(input.name, CompiledParameter { resolved_type, value });
                     }
-                    None => errors.push(format!(
-                        "node {}: input `{}`: literal {literal} does not match declared types {} — no exact match and no declared conversion bridges them",
-                        node_name(instance, Some(node_type)),
-                        input.name,
-                        input.type_refs.join(", ")
+                    None => errors.push(error(
+                        format!(
+                            "node {}: input `{}`: literal {literal} does not match declared types {} — no exact match and no declared conversion bridges them",
+                            node_name(instance, Some(node_type)),
+                            input.name,
+                            input.type_refs.join(", ")
+                        ),
+                        vec![*uuid],
                     )),
                 }
             }
         }
         parameters_of.insert(*uuid, parameters);
+    }
+
+    // The hang gate: an input neither connected nor parameterised beside
+    // one that is. The graph compiles — the model allows the node to wait
+    // — but the starving input never arrives, the node never fires, and
+    // the run hangs until stopped: undiscoverable except by spending a
+    // run, so compile warns, naming the node, the input, and what will
+    // happen. Advisory everywhere: it blocks nothing, here or in any
+    // consumer, and a headless compile shows it the same way.
+    for (uuid, (instance, node_type)) in &instances {
+        let Some(node_type) = node_type else { continue };
+        let starving: Vec<&str> = node_type
+            .inputs
+            .iter()
+            .filter(|input| {
+                !fed_by.contains_key(&(*uuid, input.name))
+                    && !instance.parameters.contains_key(input.name)
+            })
+            .map(|input| input.name)
+            .collect();
+        if starving.is_empty() || starving.len() == node_type.inputs.len() {
+            continue;
+        }
+        for name in starving {
+            warnings.push(Problem {
+                message: format!(
+                    "node {}: input `{name}` is neither connected nor parameterised — the node will never fire, hanging the run until it is stopped",
+                    node_name(instance, Some(node_type))
+                ),
+                nodes: vec![*uuid],
+            });
+        }
     }
 
     // One job per port family on one node instance: the family's ports, the
@@ -255,11 +328,14 @@ pub fn compile(
         for (name, ports) in grouped {
             let members = ports[0].type_refs;
             if ports.iter().any(|port| port.type_refs != members) {
-                errors.push(format!(
-                    "node {}: the ports of its `{}` family declare different member sets ({}); a family resolves across one shared set",
-                    node_name(instance, Some(node_type)),
-                    name,
-                    ports.iter().map(|port| port.type_refs.join(", ")).collect::<Vec<_>>().join(" / ")
+                errors.push(error(
+                    format!(
+                        "node {}: the ports of its `{}` family declare different member sets ({}); a family resolves across one shared set",
+                        node_name(instance, Some(node_type)),
+                        name,
+                        ports.iter().map(|port| port.type_refs.join(", ")).collect::<Vec<_>>().join(" / ")
+                    ),
+                    vec![*uuid],
                 ));
                 continue;
             }
@@ -337,25 +413,31 @@ pub fn compile(
                 FamilyResolution::NoSource => {
                     failed.insert(key);
                     let (instance, node_type) = instances[&job.node];
-                    errors.push(format!(
-                        "node {}: the ports of its `{}` family ({}) carry no connection and no parameter value — the family cannot resolve to a type",
-                        node_name(instance, node_type),
-                        job.name,
-                        job.ports.iter().map(|port| format!("`{}`", port.name)).collect::<Vec<_>>().join(", ")
+                    errors.push(error(
+                        format!(
+                            "node {}: the ports of its `{}` family ({}) carry no connection and no parameter value — the family cannot resolve to a type",
+                            node_name(instance, node_type),
+                            job.name,
+                            job.ports.iter().map(|port| format!("`{}`", port.name)).collect::<Vec<_>>().join(", ")
+                        ),
+                        vec![job.node],
                     ));
                 }
                 FamilyResolution::Conflict => {
                     failed.insert(key);
                     let (instance, node_type) = instances[&job.node];
-                    errors.push(format!(
-                        "node {}: the ports of its `{}` family cannot resolve to one type — {}",
-                        node_name(instance, node_type),
-                        job.name,
-                        job.sources
-                            .iter()
-                            .map(source_describes)
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                    errors.push(error(
+                        format!(
+                            "node {}: the ports of its `{}` family cannot resolve to one type — {}",
+                            node_name(instance, node_type),
+                            job.name,
+                            job.sources
+                                .iter()
+                                .map(source_describes)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        vec![job.node],
                     ));
                 }
             }
@@ -380,7 +462,7 @@ pub fn compile(
             let Some(member) = resolved.get(&(*uuid, input.family.expect("a family port"))) else {
                 continue;
             };
-            match resolve_literal(literal, &[member.name], registry) {
+            match literal::resolve_literal(literal, &[member.name], registry) {
                 Some((resolved_type, value)) => {
                     parameters_of.entry(*uuid).or_default().insert(
                         input.name,
@@ -392,12 +474,15 @@ pub fn compile(
                 }
                 None => {
                     let (instance, node_type) = instances[uuid];
-                    errors.push(format!(
-                        "node {}: input `{}`: literal {literal} does not fit the `{}` family's resolved type {}",
-                        node_name(instance, node_type),
-                        input.name,
-                        input.family.expect("a family port"),
-                        member.name
+                    errors.push(error(
+                        format!(
+                            "node {}: input `{}`: literal {literal} does not fit the `{}` family's resolved type {}",
+                            node_name(instance, node_type),
+                            input.name,
+                            input.family.expect("a family port"),
+                            member.name
+                        ),
+                        vec![*uuid],
                     ));
                 }
             }
@@ -443,12 +528,15 @@ pub fn compile(
             None => {
                 let (from_instance, from_node_type) = instances[&connection.from];
                 let (to_instance, to_node_type) = instances[&connection.to];
-                errors.push(format!(
-                    "connection {} `{}` → {} `{}`: the resolved family type cannot reach the other side",
-                    node_name(from_instance, from_node_type),
-                    connection.from_port,
-                    node_name(to_instance, to_node_type),
-                    connection.to_port
+                errors.push(error(
+                    format!(
+                        "connection {} `{}` → {} `{}`: the resolved family type cannot reach the other side",
+                        node_name(from_instance, from_node_type),
+                        connection.from_port,
+                        node_name(to_instance, to_node_type),
+                        connection.to_port
+                    ),
+                    vec![connection.from, connection.to],
                 ));
             }
         }
@@ -473,9 +561,9 @@ pub fn compile(
         };
         if let Some(check) = node_type.check_parameters {
             for message in check(&compiled) {
-                errors.push(format!(
-                    "node {}: {message}",
-                    node_name(instance, Some(node_type))
+                errors.push(error(
+                    format!("node {}: {message}", node_name(instance, Some(node_type))),
+                    vec![*uuid],
                 ));
             }
         }
@@ -483,14 +571,58 @@ pub fn compile(
     }
 
     if errors.is_empty() {
-        Ok(CompiledGraph {
-            name: definition.name.clone(),
-            nodes,
-            connections,
-        })
+        CompileResult {
+            graph: Some(CompiledGraph {
+                name: definition.name.clone(),
+                nodes,
+                connections,
+            }),
+            errors,
+            warnings,
+        }
     } else {
-        Err(errors)
+        CompileResult {
+            graph: None,
+            errors,
+            warnings,
+        }
     }
+}
+
+/// What a compile found: the compiled graph when the definition is
+/// correct, every compile error when it is not, and the non-fatal
+/// warnings beside either.
+#[derive(Clone, Debug)]
+pub struct CompileResult {
+    /// The compiled graph — present only when `errors` is empty. A
+    /// definition carrying warnings but no errors compiles as freely as a
+    /// clean one: warnings advise, they never refuse.
+    pub graph: Option<CompiledGraph>,
+    /// Every compile error found, each naming the node instances it
+    /// speaks of.
+    pub errors: Vec<Problem>,
+    /// The non-fatal warnings: advisory in every consumer, changing no
+    /// outcome here or anywhere else.
+    pub warnings: Vec<Problem>,
+}
+
+/// One problem a compile found: the message as the compiler writes it,
+/// and the node instances the problem names. The one structure every
+/// view of the problem reads — the editor's canvas marks, the
+/// failed-start report, a headless printout — so none of them finds
+/// where a problem lives by parsing its message.
+#[derive(Clone, Debug)]
+pub struct Problem {
+    pub message: String,
+    /// The node instances the problem names, in the order the message
+    /// names them. A problem whose location no node carries — an edge
+    /// naming an instance the graph never defined — lists that instance
+    /// all the same; a mark simply has nothing to land on.
+    pub nodes: Vec<Uuid>,
+}
+
+fn error(message: String, nodes: Vec<Uuid>) -> Problem {
+    Problem { message, nodes }
 }
 
 /// A compiled graph: immutable once produced, addressed by instance uuid,
@@ -650,7 +782,7 @@ fn resolve_family(
                         .any(|conversion| conversion.target == target.id)
             }
             FamilySource::Literal(_, literal) => {
-                resolve_literal(literal, &[member], registry).is_some()
+                literal::resolve_literal(literal, &[member], registry).is_some()
             }
             FamilySource::Deferred(..) => false,
         });
@@ -706,146 +838,6 @@ fn resolve_types(
         }
     }
     None
-}
-
-/// Resolve a parameter literal against an input port's declared union, under
-/// the connection rules: the literal's YAML scalar kind stands in as the
-/// upstream side. Returns the resolved data type and the runtime value the
-/// engine feeds — converted here, at compile time, where a declared
-/// conversion bridged.
-fn resolve_literal(
-    literal: &ParameterValue,
-    declared: &[&str],
-    registry: &Registry,
-) -> Option<(&'static DataType, Value)> {
-    let kind = literal_kind(literal);
-    for &name in declared {
-        let Some(data_type) = registry.data_type(name) else {
-            continue;
-        };
-        if scalar_kind(data_type.name) == Some(kind) {
-            if let Some(value) = materialize(literal, data_type) {
-                return Some((data_type, value));
-            }
-        }
-    }
-    for &name in declared {
-        let Some(data_type) = registry.data_type(name) else {
-            continue;
-        };
-        for source in kind_names(kind) {
-            let Some(source_type) = registry.data_type(source) else {
-                continue;
-            };
-            for conversion in source_type.conversions {
-                if conversion.target == data_type.id {
-                    if let Some(value) = convert_literal(literal, source_type, conversion.convert) {
-                        return Some((data_type, value));
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-/// The four YAML scalar kinds a parameter literal can carry, and the scalar
-/// names standing in for each kind: the literal's kind is its "upstream
-/// side" under the connection rules, and the lists fix the order conversion
-/// candidates are tried in.
-const KIND_NAMES: &[(ScalarKind, &[&str])] = &[
-    (
-        ScalarKind::Integer,
-        &["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"],
-    ),
-    (ScalarKind::Float, &["f32", "f64"]),
-    (ScalarKind::Bool, &["bool"]),
-    (ScalarKind::Str, &["String"]),
-];
-
-#[derive(Clone, Copy, PartialEq)]
-enum ScalarKind {
-    Integer,
-    Float,
-    Bool,
-    Str,
-}
-
-fn literal_kind(literal: &ParameterValue) -> ScalarKind {
-    match literal {
-        ParameterValue::Bool(_) => ScalarKind::Bool,
-        ParameterValue::Int(_) => ScalarKind::Integer,
-        ParameterValue::Float(_) => ScalarKind::Float,
-        ParameterValue::Str(_) => ScalarKind::Str,
-    }
-}
-
-fn scalar_kind(name: &str) -> Option<ScalarKind> {
-    KIND_NAMES
-        .iter()
-        .find(|(_, names)| names.contains(&name))
-        .map(|(kind, _)| *kind)
-}
-
-fn kind_names(kind: ScalarKind) -> &'static [&'static str] {
-    KIND_NAMES
-        .iter()
-        .find(|(candidate, _)| *candidate == kind)
-        .map(|(_, names)| *names)
-        .expect("every ScalarKind is listed in KIND_NAMES")
-}
-
-/// Present a literal as a runtime value of the data type `source` names, so
-/// exact matches and declared conversion functions read a concrete scalar.
-/// An integer outside the source's range yields None: the candidate simply
-/// does not bridge. A float wider than f32's range yields None too; one that
-/// fits is narrowed.
-fn materialize(literal: &ParameterValue, source: &DataType) -> Option<Value> {
-    match (literal, source.name) {
-        (ParameterValue::Bool(value), "bool") => Some(Value::new(source.id, *value)),
-        (ParameterValue::Int(value), "i64") => Some(Value::new(source.id, *value)),
-        (ParameterValue::Int(value), "i32") => {
-            Some(Value::new(source.id, i32::try_from(*value).ok()?))
-        }
-        (ParameterValue::Int(value), "i16") => {
-            Some(Value::new(source.id, i16::try_from(*value).ok()?))
-        }
-        (ParameterValue::Int(value), "i8") => {
-            Some(Value::new(source.id, i8::try_from(*value).ok()?))
-        }
-        (ParameterValue::Int(value), "u64") => {
-            Some(Value::new(source.id, u64::try_from(*value).ok()?))
-        }
-        (ParameterValue::Int(value), "u32") => {
-            Some(Value::new(source.id, u32::try_from(*value).ok()?))
-        }
-        (ParameterValue::Int(value), "u16") => {
-            Some(Value::new(source.id, u16::try_from(*value).ok()?))
-        }
-        (ParameterValue::Int(value), "u8") => {
-            Some(Value::new(source.id, u8::try_from(*value).ok()?))
-        }
-        (ParameterValue::Float(value), "f64") => Some(Value::new(source.id, *value)),
-        (ParameterValue::Float(value), "f32") => {
-            let narrowed = *value as f32;
-            if !narrowed.is_finite() {
-                return None;
-            }
-            Some(Value::new(source.id, narrowed))
-        }
-        (ParameterValue::Str(value), "String") => Some(Value::new(source.id, value.clone())),
-        _ => None,
-    }
-}
-
-/// Apply a declared conversion to a literal, through the runtime value both
-/// sides are written against.
-fn convert_literal(
-    literal: &ParameterValue,
-    source: &DataType,
-    convert: ConvertFn,
-) -> Option<Value> {
-    convert(&materialize(literal, source)?)
 }
 
 /// The first cycle a depth-first walk meets, as the uuids around it. The

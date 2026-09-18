@@ -10,7 +10,12 @@
 // provides nothing but the definition. A node whose type reference is
 // missing from the listing renders as a placeholder instead — ports
 // unknown, so no fields, but the label is the one attribute its sidebar
-// can still edit.
+// can still edit, and the unknown-type problem it carries explains why.
+//
+// Both renderings wear the marks the compile's problems name: one mark
+// per node, every message that names the node readable at it — a
+// warning's or an error's, and a failed run's explanation the same way.
+// Marks advise: they disable nothing.
 
 import { Handle, Position } from '@xyflow/react'
 import { commitParameter, Field, useEdit } from './fields.jsx'
@@ -51,10 +56,17 @@ function OutputPort({ port }) {
 }
 
 export function TypeNode({ data, selected }) {
-  const { node, type, wiredInputs, scalarInputs } = data
+  const { node, type, wiredInputs, scalarInputs, marks } = data
   const title = node.label ?? type.label
   return (
     <div className={`node${selected ? ' selected' : ''}`}>
+      {marks?.length > 0 && (
+        <div
+          className="node-mark"
+          title={marks.join('\n')}
+          aria-label={`${title}: ${marks.join('; ')}`}
+        />
+      )}
       <div className="node-title">{title}</div>
       <div className="node-ports">
         <div className="node-inputs">
@@ -80,10 +92,16 @@ export function TypeNode({ data, selected }) {
 }
 
 export function PlaceholderNode({ data }) {
+  const marks = data.marks ?? []
   return (
     <div className="node placeholder">
       <div className="node-title">{data.label}</div>
       <div className="node-unknown">unknown type — ports unknown</div>
+      {marks.length > 0 && (
+        <div className="node-problem" title={marks.join('\n')}>
+          {marks.join('\n')}
+        </div>
+      )}
     </div>
   )
 }

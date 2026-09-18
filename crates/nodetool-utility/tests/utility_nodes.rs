@@ -452,6 +452,7 @@ fn an_exact_union_member_match_compiles_without_a_conversion() {
         ),
         &Registry::collect(),
     )
+    .graph
     .expect("the definition compiles");
     assert_eq!(compiled.connections.len(), 2);
     let resolved: Vec<&str> = compiled
@@ -484,6 +485,7 @@ fn a_plugin_custom_type_reaches_format_through_its_declared_conversion() {
         ),
         &Registry::collect(),
     )
+    .graph
     .expect("the word type's own declared conversion bridges it into the union");
     let connection = &compiled.connections[0];
     assert_eq!(
@@ -504,7 +506,7 @@ fn a_plugin_custom_type_reaches_format_through_its_declared_conversion() {
 
 #[test]
 fn a_connection_the_union_and_declared_conversions_cannot_bridge_fails_to_compile() {
-    let errors = compile::compile(
+    let result = compile::compile(
         &definition(
             vec![
                 node(SOURCE, "utility-test/thing_source"),
@@ -513,17 +515,26 @@ fn a_connection_the_union_and_declared_conversions_cannot_bridge_fails_to_compil
             vec![edge(SOURCE, "value", ROUTER, "value")],
         ),
         &Registry::collect(),
-    )
-    .expect_err("the union cannot bridge the custom type");
-    assert_eq!(errors.len(), 1, "expected one error, got: {errors:?}");
-    assert!(
-        errors[0].contains("utility-test/thing") && errors[0].contains("String"),
-        "the error names both ports' types: {}",
-        errors[0]
     );
     assert!(
-        errors[0].contains("no exact match and no declared conversion bridges them"),
+        result.graph.is_none(),
+        "the union cannot bridge the custom type"
+    );
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one error, got: {:?}",
+        result.errors
+    );
+    let message = &result.errors[0].message;
+    assert!(
+        message.contains("utility-test/thing") && message.contains("String"),
+        "the error names both ports' types: {}",
+        message
+    );
+    assert!(
+        message.contains("no exact match and no declared conversion bridges them"),
         "the standard error: {}",
-        errors[0]
+        message
     );
 }

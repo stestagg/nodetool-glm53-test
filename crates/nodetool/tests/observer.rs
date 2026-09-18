@@ -63,6 +63,7 @@ fn compiled(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> &'static CompiledGrap
             },
             &Registry::collect(),
         )
+        .graph
         .expect("the definition compiles"),
     ))
 }

@@ -219,7 +219,14 @@ fn compile_errors_end_the_path_printed_and_non_zero() {
 fn the_if_true_sample_prints_the_then_branchs_formatted_strings_and_completes() {
     let (out, err, code) = run(&["if-true"]);
     assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
-    assert_eq!(err, "", "nothing on the error stream: {err}");
+    // The unselected Format carries no template — its `value` arrives on a
+    // branch never steered to — so the hang gate warns and the run still
+    // completes: the warning advises, it changes no outcome.
+    assert_eq!(
+        err,
+        "compile warning: node else format (00000000-0000-0000-0000-400000000004): input `template` is neither connected nor parameterised — the node will never fire, hanging the run until it is stopped\n",
+        "the unselected branch's starving template warned: {err}"
+    );
     assert_eq!(
         out,
         "consumed: words: alpha, beta, gamma\nconsumed: words: alpha, beta, gamma\nconsumed: words: alpha, beta, gamma\nconsumed: words: one, one, one\nthe run completed\n",
@@ -231,7 +238,11 @@ fn the_if_true_sample_prints_the_then_branchs_formatted_strings_and_completes() 
 fn the_if_false_sample_prints_the_else_branchs_plain_strings_and_completes() {
     let (out, err, code) = run(&["if-false"]);
     assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
-    assert_eq!(err, "", "nothing on the error stream: {err}");
+    assert_eq!(
+        err,
+        "compile warning: node then format (00000000-0000-0000-0000-500000000003): input `template` is neither connected nor parameterised — the node will never fire, hanging the run until it is stopped\n",
+        "the unselected branch's starving template warned: {err}"
+    );
     assert_eq!(
         out,
         "consumed: alpha, beta, gamma\nconsumed: alpha, beta, gamma\nconsumed: alpha, beta, gamma\nconsumed: one, one, one\nthe run completed\n",

@@ -8,22 +8,27 @@
 //! act that causes the run; every ending arrives through the engine's own
 //! event stream — [`RunWatcher`] hears run finished and carries its
 //! outcome back — so the endings are the run's own, told on the engine's
-//! event stream, with no second tracker beside it.
+//! event stream, with no second tracker beside it. A failure's node
+//! arrives the same way: the node-failed event the ending rode is heard
+//! on the same stream, its uuid carried beside the outcome, so what the
+//! failure names is what the engine named, not a parsing of the message.
 
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::watch;
+use uuid::Uuid;
 
 use super::protocol;
 use crate::async_trait;
 use crate::engine::{Event, Observer, RunOutcome};
 
 /// How the last run ended: every node complete, a stop asked from the
-/// chrome, or the first error, named. An idle run with no outcome has not
-/// run yet.
+/// chrome, or the first error, named — with the node instance whose
+/// failure ended the run, when the run ended on one. An idle run with no
+/// outcome has not run yet.
 pub enum Outcome {
     Completed,
-    Failed(String),
+    Failed { error: String, node: Option<Uuid> },
     Stopped,
 }
 
@@ -34,7 +39,7 @@ impl Outcome {
         match self {
             Outcome::Completed => "completed",
             Outcome::Stopped => "stopped",
-            Outcome::Failed(_) => "failed",
+            Outcome::Failed { .. } => "failed",
         }
     }
 }
@@ -58,32 +63,48 @@ impl RunState {
 /// The engine observer one run is watched by: it carries the run's
 /// finished outcome back into the run state and pushes the change to every
 /// connection. The running state is the start operation's own doing, so
-/// run-finished is all this watcher hears.
+/// run-finished is all this watcher answers to; the node-failed event
+/// beside it only records which instance the ending rode.
 struct RunWatcher {
     session: Arc<Mutex<super::Session>>,
     pushes: tokio::sync::broadcast::Sender<String>,
+    failed_node: Mutex<Option<Uuid>>,
 }
 
 #[async_trait]
 impl Observer for RunWatcher {
     async fn observe(&self, event: Event) {
-        let outcome = match event {
-            Event::RunFinished { outcome } => outcome,
-            _ => return,
-        };
-        let outcome = match outcome {
-            RunOutcome::Complete => Outcome::Completed,
-            RunOutcome::Failed(error) => Outcome::Failed(error),
-            RunOutcome::Stopped => Outcome::Stopped,
-        };
-        let mut session = self
-            .session
-            .lock()
-            .expect("the session lock is never poisoned");
-        session.run = RunState::Idle {
-            outcome: Some(outcome),
-        };
-        let _ = self.pushes.send(protocol::run_message(&session.run));
+        match event {
+            Event::NodeFailed { node, .. } => {
+                *self
+                    .failed_node
+                    .lock()
+                    .expect("the failed-node slot is never poisoned") = Some(node.uuid);
+            }
+            Event::RunFinished { outcome } => {
+                let outcome = match outcome {
+                    RunOutcome::Complete => Outcome::Completed,
+                    RunOutcome::Failed(error) => Outcome::Failed {
+                        error,
+                        node: self
+                            .failed_node
+                            .lock()
+                            .expect("the failed-node slot is never poisoned")
+                            .take(),
+                    },
+                    RunOutcome::Stopped => Outcome::Stopped,
+                };
+                let mut session = self
+                    .session
+                    .lock()
+                    .expect("the session lock is never poisoned");
+                session.run = RunState::Idle {
+                    outcome: Some(outcome),
+                };
+                let _ = self.pushes.send(protocol::run_message(&session.run));
+            }
+            _ => {}
+        }
     }
 }
 
@@ -97,7 +118,11 @@ pub(super) fn spawn(
     compiled: crate::compile::CompiledGraph,
     stop_requested: watch::Receiver<bool>,
 ) {
-    let watcher = Arc::new(RunWatcher { session, pushes });
+    let watcher = Arc::new(RunWatcher {
+        session,
+        pushes,
+        failed_node: Mutex::new(None),
+    });
     tokio::spawn(async move {
         let mut run = crate::engine::Run::new(&compiled);
         run.stop_on(stop_requested);

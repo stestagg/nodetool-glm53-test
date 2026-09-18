@@ -94,35 +94,39 @@ pub fn file_state(file: Option<&str>, dirty: bool) -> Value {
 
 /// The run state that travels beside the definition, like the file state:
 /// whether a run is on and, when one is not, how the last one ended —
-/// the outcome, with what failed named. Every connection renders its
-/// run control and the editing lock from here, so no tab keeps run
-/// bookkeeping of its own.
+/// the outcome, with what failed and at which node named. Every
+/// connection renders its run control and the editing lock from here, so
+/// no tab keeps run bookkeeping of its own.
 pub fn run_state(run: &RunState) -> Value {
-    let (running, outcome, error) = match run {
-        RunState::Running { .. } => (true, None, None),
-        RunState::Idle { outcome } => (
-            false,
-            outcome.as_ref().map(Outcome::name),
-            match outcome {
-                Some(Outcome::Failed(error)) => Some(error),
-                _ => None,
-            },
-        ),
+    let (running, outcome) = match run {
+        RunState::Running { .. } => (true, None),
+        RunState::Idle { outcome } => (false, outcome.as_ref()),
     };
-    json!({ "running": running, "outcome": outcome, "error": error })
+    let failure = match outcome {
+        Some(Outcome::Failed { error, node }) => Some((error.as_str(), *node)),
+        _ => None,
+    };
+    json!({
+        "running": running,
+        "outcome": outcome.map(Outcome::name),
+        "error": failure.map(|(error, _)| error),
+        "node": failure.and_then(|(_, node)| node).map(|uuid| uuid.to_string()),
+    })
 }
 
-/// The whole definition with the file state and the run state beside it —
-/// the message every connection renders the editor from. The graph is
-/// serialized first and the message composed from that value, so the
-/// failure the `Result` declares — the definition carrying something JSON
-/// cannot, which the caller reports instead of papering over — happens
-/// here rather than as a panic inside the composition.
+/// The whole definition with the file state, the run state, and the
+/// problems beside it — the message every connection renders the editor
+/// from. The graph is serialized first and the message composed from
+/// that value, so the failure the `Result` declares — the definition
+/// carrying something JSON cannot, which the caller reports instead of
+/// papering over — happens here rather than as a panic inside the
+/// composition.
 pub fn definition_message(
     graph: &GraphDefinition,
     file: Option<&str>,
     dirty: bool,
     run: &RunState,
+    problems: &[crate::compile::Problem],
 ) -> Result<String, serde_json::Error> {
     let graph = serde_json::to_value(graph)?;
     serde_json::to_string(&json!({
@@ -130,7 +134,26 @@ pub fn definition_message(
         "graph": graph,
         "file": file_state(file, dirty),
         "run": run_state(run),
+        "problems": problems_state(problems),
     }))
+}
+
+/// The problems state that travels beside the definition: each problem's
+/// message as compile writes it, and the node instances the problem
+/// names. The canvas marks read this structure — never a parsing of the
+/// messages — so a mark sits where compile says the problem lives.
+pub fn problems_state(problems: &[crate::compile::Problem]) -> Value {
+    Value::Array(
+        problems
+            .iter()
+            .map(|problem| {
+                json!({
+                    "message": problem.message,
+                    "nodes": problem.nodes.iter().map(|uuid| uuid.to_string()).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
 }
 
 /// The file state pushed alone, for a change that leaves the definition

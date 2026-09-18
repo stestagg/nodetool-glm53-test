@@ -111,11 +111,19 @@ fn definition(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> GraphDefinition {
 }
 
 fn compile_ok(definition: &GraphDefinition) -> CompiledGraph {
-    compile::compile(definition, &registry()).expect("the definition compiles")
+    compile::compile(definition, &registry())
+        .graph
+        .expect("the definition compiles")
 }
 
 fn compile_errors(definition: &GraphDefinition) -> Vec<String> {
-    compile::compile(definition, &registry()).unwrap_err()
+    let result = compile::compile(definition, &registry());
+    assert!(result.graph.is_none(), "the definition compiles");
+    result
+        .errors
+        .iter()
+        .map(|problem| problem.message.clone())
+        .collect()
 }
 
 fn single_error(messages: Vec<String>) -> String {

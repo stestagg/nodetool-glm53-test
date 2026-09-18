@@ -197,6 +197,7 @@ body {
    nothing else — compact, Blender-style. */
 
 .node {
+  position: relative;
   min-width: 130px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -208,6 +209,29 @@ body {
 .node.selected {
   border-color: var(--accent);
   box-shadow: var(--ring);
+}
+
+/* The problem mark: a dot at the node's corner, the messages that name
+   the node readable at it — compile's words, not a paraphrase. It
+   advises; it disables nothing. */
+
+.node-mark {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--danger);
+  border: 2px solid var(--canvas);
+  cursor: help;
+}
+
+.node-problem {
+  padding: 2px 10px 8px;
+  color: var(--danger);
+  font-size: 11px;
+  white-space: pre-wrap;
 }
 
 .node-title {
@@ -435,4 +459,44 @@ body {
 
 .status.error {
   color: var(--danger);
+}
+
+/* The banner the lost connection raises: a strip in the chrome, naming
+   the loss over the last-known canvas — never covering it, since
+   looking is not editing. */
+
+.banner {
+  padding: 4px 12px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px;
+}
+
+/* The toasts: the one surface a transient report arrives through, over
+   the canvas's top edge and out of the way of the graph. A toast is a
+   happening — click it away, or wait. */
+
+.toasts {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: 440px;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  padding: 7px 11px;
+  background: var(--danger);
+  color: #fff;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(17, 20, 24, 0.3);
+  font-size: 12px;
+  white-space: pre-wrap;
+  cursor: pointer;
 }

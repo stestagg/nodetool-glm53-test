@@ -29,14 +29,20 @@ fn main() {
     ] {
         println!("{file}:");
         match graph::load(text) {
-            Ok(definition) => match compile::compile(&definition, &registry) {
-                Ok(compiled) => print_compiled(&compiled),
-                Err(errors) => {
-                    for error in errors {
-                        println!("  compile error: {error}");
+            Ok(definition) => {
+                let result = compile::compile(&definition, &registry);
+                for warning in &result.warnings {
+                    println!("  compile warning: {}", warning.message);
+                }
+                match result.graph {
+                    Some(compiled) => print_compiled(&compiled),
+                    None => {
+                        for error in &result.errors {
+                            println!("  compile error: {}", error.message);
+                        }
                     }
                 }
-            },
+            }
             Err(error) => println!("  load error: {error}"),
         }
         println!();

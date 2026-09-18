@@ -1,6 +1,9 @@
 //! The setup the editor server's test files share: editors to test
 //! against, the one-message seam, and the operation and file helpers the
-//! editing and run tests both build from.
+//! editing and run tests both build from. Each test binary includes the
+//! module and uses the slice of it it needs.
+
+#![allow(dead_code)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,6 +52,27 @@ pub fn edit_label(editor: &Editor, id: u64, uuid: &str, label: &str) -> Value {
     send(
         editor,
         &format!(r#"{{"id": {id}, "type": "set_label", "uuid": "{uuid}", "label": "{label}"}}"#),
+    )
+}
+
+/// Set or clear an input's parameter value. The value is the typed text,
+/// carried as a JSON string and read server-side as the file format
+/// reads it; `None` commits the empty field, meaning unset.
+pub fn edit_parameter(
+    editor: &Editor,
+    id: u64,
+    uuid: &str,
+    input: &str,
+    value: Option<&str>,
+) -> Value {
+    let value = value
+        .map(|text| format!(r#", "value": {}"#, serde_json::to_string(text).unwrap()))
+        .unwrap_or_default();
+    send(
+        editor,
+        &format!(
+            r#"{{"id": {id}, "type": "set_parameter", "uuid": "{uuid}", "input": "{input}"{value}}}"#
+        ),
     )
 }
 

@@ -8,8 +8,18 @@
 // where a wire lands, which node a key press deletes, and what a field
 // commit holds — the sidebar and the node's inline fields both committing
 // through the same seam, both views of one stored value.
+//
+// Every report arrives through one surface: a toast in the chrome,
+// dismissed on click and on its own. What toasts deliberately do not
+// carry is the durable truth — a problem a compile found sits as a mark
+// on the node it names, a failed run's explanation sits on the failed
+// node, and both are gone when the problem or the next run is. A lost
+// connection is chrome state of its own: a banner naming the loss over
+// the last-known canvas, every server-acting gesture inert while the
+// looking stays live, the tab rejoining by itself when the server
+// returns.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   ReactFlow,
@@ -38,7 +48,7 @@ function recordedPosition(node) {
   return undefined
 }
 
-export function toNodes(graph, types, baseScalars) {
+export function toNodes(graph, types, baseScalars, marks) {
   const byRef = new Map((types ?? []).map((type) => [type.type_ref, type]))
   const placeless = graph.nodes
     .filter((node) => recordedPosition(node) === undefined)
@@ -57,6 +67,7 @@ export function toNodes(graph, types, baseScalars) {
     ports.push(edge.to_port)
     wiredInputs.set(edge.to, ports)
   }
+  const at = (uuid) => marks?.get(uuid) ?? []
   return graph.nodes.map((node) => {
     const position = recordedPosition(node) ?? fallback.get(node.uuid)
     const type = byRef.get(node.type_ref)
@@ -65,7 +76,7 @@ export function toNodes(graph, types, baseScalars) {
         id: node.uuid,
         position,
         type: 'placeholder',
-        data: { label: node.label ?? node.type_ref },
+        data: { label: node.label ?? node.type_ref, marks: at(node.uuid) },
         // Ports unknown, so no dragging or deletion — but the label is
         // the one attribute its sidebar can edit, so selection stays.
         draggable: false,
@@ -84,6 +95,7 @@ export function toNodes(graph, types, baseScalars) {
         scalarInputs: type.inputs
           .filter((port) => scalarPossible(port, baseScalars))
           .map((port) => port.name),
+        marks: at(node.uuid),
       },
     }
   })
@@ -134,14 +146,44 @@ export function saveAsksForPath(file, elsewhere) {
 
 // The chrome's one run control: it flips with the run state — Start when
 // idle, Stop while running, no separate mode — and a start needs
-// something to run, an empty definition leaving it disabled.
-export function runControl(run, graph) {
+// something to run, an empty definition leaving it disabled. Both acts
+// reach the server, so a connection that cannot delivers them is the
+// same as no control.
+export function runControl(run, graph, connected = true) {
   const running = run?.running === true
   return {
     running,
     label: running ? 'Stop' : 'Start',
-    enabled: running || (graph?.nodes.length ?? 0) > 0,
+    enabled: connected && (running || (graph?.nodes.length ?? 0) > 0),
   }
+}
+
+// Where each problem lives, as the canvas draws it: one mark per node,
+// carrying the messages of every problem that names it — the compile's
+// attribution read as a structure, never parsed from messages — plus the
+// failed run's error at the node whose failure ended it.
+export function nodeMarks(problems, run) {
+  const marks = new Map()
+  const add = (uuid, message) => {
+    const list = marks.get(uuid) ?? []
+    list.push(message)
+    marks.set(uuid, list)
+  }
+  for (const problem of problems ?? []) {
+    for (const uuid of problem.nodes ?? []) add(uuid, problem.message)
+  }
+  if (run?.outcome === 'failed' && run.node) add(run.node, run.error)
+  return marks
+}
+
+// The banner a connection state names, or none: the loss with the trying
+// it is owed, the version mismatch with the reload that is the advice —
+// never a self-dismissing toast. A connected or not-yet-lost editor has
+// no banner.
+export function bannerText(connection, mismatch) {
+  if (connection === 'lost') return 'connection lost — trying to reconnect…'
+  if (connection === 'incompatible') return `${mismatch} — reload the page`
+  return null
 }
 
 // The status line's reading of the run state: the running state itself,
@@ -153,53 +195,82 @@ export function runStatusText(run) {
   return ''
 }
 
+// How long a toast stays when nobody dismisses it.
+const TOAST_MS = 8000
+
 export function Editor() {
   const [listing, setListing] = useState(null)
   const [graph, setGraph] = useState(null)
   const [file, setFile] = useState(null)
   const [run, setRun] = useState(null)
+  const [problems, setProblems] = useState([])
   const [nodes, setNodes] = useState([])
   const [status, setStatus] = useState({ text: 'connecting…', error: false })
+  // The connection: connecting until the first greeting, open while it
+  // holds, lost on every drop the client is retrying, and incompatible
+  // when a greeting named a version mismatch — the one state the client
+  // stops retrying from.
+  const [connection, setConnection] = useState('connecting')
+  const [mismatch, setMismatch] = useState(null)
   // The run control's click guard: armed by a start or stop, settled by
   // the run state landing. The control's flip travels through the
   // server's push, so a second click inside that gap — the second click
   // of a habitual double-click on Start, say — lands before the label
   // has flipped and must be ignored rather than read as the opposite act.
   const [acting, setActing] = useState(false)
+  const [toasts, setToasts] = useState([])
   const protocol = useRef(null)
   const canvasRef = useRef(null)
+  const toastId = useRef(0)
   // Armed by a replacement gesture — open, new — and consumed by the
   // next definition arrival, which brings the view to the graph; a
   // failed gesture disarms it.
   const pendingRefit = useRef(false)
   const { screenToFlowPosition, getViewport, setViewport, fitView } = useReactFlow()
 
-  // While a run is on the definition is held still: every editing gesture
-  // goes quiet — palette drops, moves, wires, deletion, label and
-  // parameter edits, and the file controls — while selection, panning,
-  // and zoom stay live, looking not being editing. The server refuses
-  // whatever slips through.
+  const connected = connection === 'open'
+  // While a run is on the definition is held still, and while the
+  // connection is gone nothing can reach the server: every editing
+  // gesture goes quiet — palette drops, moves, wires, deletion, label
+  // and parameter edits, and the file controls — while selection,
+  // panning, and zoom stay live, looking not being editing. The server
+  // refuses whatever slips through when the lock is the reason; when the
+  // connection is, nothing is sent at all — the browser holds no graph
+  // state that could back an undeliverable edit.
   const locked = run?.running === true
+  const editable = connected && !locked
 
-  // An error is the one message the user must not miss; the status line
-  // paints it red.
-  const showError = useCallback((text) => {
-    setStatus({ text, error: true })
+  // A toast is the one surface a transient report arrives through:
+  // dismissed on click, and on its own — a happening, never the durable
+  // truth, which lives in the marks and the chrome state.
+  const dismissToast = useCallback((id) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id))
   }, [])
+  const showToast = useCallback(
+    (text) => {
+      const id = toastId.current += 1
+      setToasts((current) => [...current, { id, text }])
+      setTimeout(() => dismissToast(id), TOAST_MS)
+    },
+    [dismissToast],
+  )
 
   // A definition arrival — the connect-time resync or a push — replaces
   // what is drawn, and the run state it carries narrates itself the way a
   // run push does. An idle state with no outcome — what a compile failure
   // leaves — reads as '', leaving the status line, the refused start's
   // error report, as it is.
-  const resync = useCallback((graph, file, run) => {
+  const resync = useCallback((graph, file, run, problems) => {
     setGraph(graph)
     setFile(file)
     setRun(run)
+    setProblems(problems ?? [])
     setActing(false)
     const text = runStatusText(run)
     if (text) setStatus({ text, error: run.outcome === 'failed' })
   }, [])
+
+  const marks = useMemo(() => nodeMarks(problems, run), [problems, run])
 
   useEffect(() => {
     if (graph === null) return
@@ -207,7 +278,7 @@ export function Editor() {
     // replaces what is drawn, never what the user has picked or holds.
     setNodes((current) => {
       const before = new Map(current.map((node) => [node.id, node]))
-      return toNodes(graph, listing?.types, listing?.baseScalars).map((node) => {
+      return toNodes(graph, listing?.types, listing?.baseScalars, marks).map((node) => {
         const held = before.get(node.id)
         return {
           ...node,
@@ -223,41 +294,57 @@ export function Editor() {
       pendingRefit.current = false
       fitView({ maxZoom: 1 })
     }
-  }, [graph, listing, fitView])
+  }, [graph, listing, marks, fitView])
 
   useEffect(
     () =>
       connect({
         onOpen: (request) => {
           protocol.current = request
-          request('list_node_types').then(setListing, showError)
+          request('list_node_types').then(setListing, showToast)
           request('get_definition').then(
-            ({ graph, file, run }) => resync(graph, file, run),
-            showError,
+            ({ graph, file, run, problems }) => resync(graph, file, run, problems),
+            showToast,
           )
         },
-        onGreeting: () => setStatus({ text: '' }),
+        onGreeting: () => {
+          setConnection('open')
+          setStatus({ text: '' })
+        },
+        onVersionMismatch: (text) => {
+          protocol.current = null
+          setMismatch(text)
+          setConnection('incompatible')
+        },
         onDefinition: resync,
         onFile: ({ path, dirty }) => setFile({ path, dirty }),
         onRun: (state) => {
           setRun(state)
           setActing(false)
           setStatus({ text: runStatusText(state), error: state.outcome === 'failed' })
+          // A failure is a happening: the toast carries it, and the
+          // failed node's mark carries the explanation after the toast
+          // is gone.
+          if (state.outcome === 'failed') showToast(state.error ?? 'the run failed')
         },
-        onError: showError,
-        onClosed: () =>
-          setStatus({ text: 'connection lost — reload the page', error: true }),
+        onError: showToast,
+        onClosed: () => {
+          protocol.current = null
+          setActing(false)
+          setConnection('lost')
+          setStatus({ text: '', error: false })
+        },
       }),
-    [resync, showError],
+    [resync, showToast],
   )
 
   // The editing seam every field commit rides: one operation out, the
   // definition push re-rendering both views. An error — a commit for a
-  // since-connected input, say — lands in the status line, the definition
-  // untouched.
+  // since-connected input, say — arrives through the toast surface, the
+  // definition untouched.
   const edit = useCallback((type, fields) => {
-    protocol.current?.(type, fields)?.catch(showError)
-  }, [showError])
+    protocol.current?.(type, fields)?.catch(showToast)
+  }, [showToast])
 
   const onNodesChange = useCallback((changes) => {
     // A remove change is the server's to apply: the delete operation goes
@@ -265,7 +352,7 @@ export function Editor() {
     // canvas, and the view never holds a deletion the server refused.
     for (const change of changes) {
       if (change.type === 'remove' && protocol.current !== null) {
-        protocol.current('delete_node', { uuid: change.id }).catch(showError)
+        protocol.current('delete_node', { uuid: change.id }).catch(showToast)
       }
     }
     setNodes((current) =>
@@ -274,15 +361,15 @@ export function Editor() {
         current,
       ),
     )
-  }, [showError])
+  }, [showToast])
 
   const onNodeDragStop = useCallback((_event, node) => {
     if (node.type === 'placeholder' || protocol.current === null) return
     protocol.current('move_node', {
       uuid: node.id,
       position: { x: node.position.x, y: node.position.y },
-    }).catch(showError)
-  }, [showError])
+    }).catch(showToast)
+  }, [showToast])
 
   const onConnect = useCallback((connection) => {
     if (protocol.current === null) return
@@ -291,30 +378,30 @@ export function Editor() {
       from_port: connection.sourceHandle,
       to: connection.target,
       to_port: connection.targetHandle,
-    }).catch(showError)
-  }, [showError])
+    }).catch(showToast)
+  }, [showToast])
 
   const onConnectEnd = useCallback(
     (_event, state) => {
       const unhook = offPortUnhook(graph?.edges ?? [], state)
       if (unhook !== null && protocol.current !== null) {
-        protocol.current('unhook', unhook).catch(showError)
+        protocol.current('unhook', unhook).catch(showToast)
       }
     },
-    [graph, showError],
+    [graph, showToast],
   )
 
   const onDrop = useCallback(
     (event) => {
       event.preventDefault()
       const typeRef = event.dataTransfer.getData(NODE_TYPE)
-      if (typeRef === '' || locked || protocol.current === null) return
+      if (typeRef === '' || !editable || protocol.current === null) return
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
       protocol
         .current('create_node', { type_ref: typeRef, position })
-        .catch(showError)
+        .catch(showToast)
     },
-    [locked, screenToFlowPosition, showError],
+    [editable, screenToFlowPosition, showToast],
   )
 
   const onDragOver = useCallback((event) => {
@@ -335,9 +422,9 @@ export function Editor() {
     pendingRefit.current = true
     protocol.current('new_graph').catch((error) => {
       pendingRefit.current = false
-      showError(error)
+      showToast(error)
     })
-  }, [confirmDiscard, showError])
+  }, [confirmDiscard, showToast])
 
   const openFile = useCallback(() => {
     if (protocol.current === null) return
@@ -359,9 +446,9 @@ export function Editor() {
       )
       .catch((error) => {
         pendingRefit.current = false
-        showError(error)
+        showToast(error)
       })
-  }, [confirmDiscard, file, showError])
+  }, [confirmDiscard, file, showToast])
 
   // One save mechanism under both chrome entries: a save always knows its
   // target — the current file — and asks only for the first save of an
@@ -374,12 +461,12 @@ export function Editor() {
         const path = window.prompt('Save graph to', file?.path ?? '')
         // An empty answer is a stray Enter, not a target.
         if (path === null || path === '') return
-        protocol.current('save_file', { path }).catch(showError)
+        protocol.current('save_file', { path }).catch(showToast)
       } else {
-        protocol.current('save_file').catch(showError)
+        protocol.current('save_file').catch(showToast)
       }
     },
-    [file, showError],
+    [file, showToast],
   )
 
   // The run control's one act: a start hands the held definition to the
@@ -395,9 +482,9 @@ export function Editor() {
       .current(run?.running === true ? 'stop_run' : 'start_run')
       .catch((error) => {
         setActing(false)
-        showError(error)
+        showToast(error)
       })
-  }, [acting, run, showError])
+  }, [acting, run, showToast])
 
   // The sidebar's node: the one the canvas holds selected, read off the
   // same node state the canvas draws, so a definition push swaps its
@@ -427,12 +514,13 @@ export function Editor() {
   const types = listing?.types
   const empty =
     graph !== null && graph.nodes.length === 0 && types !== undefined && types.length > 0
-  const control = runControl(run, graph)
+  const control = runControl(run, graph, connected)
+  const banner = bannerText(connection, mismatch)
 
   return (
     <EditContext.Provider value={edit}>
-      <LockContext.Provider value={locked}>
-        <div className={locked ? 'app locked' : 'app'}>
+      <LockContext.Provider value={!editable}>
+        <div className={editable ? 'app' : 'app locked'}>
           <header className="chrome">
             <span className="file-name">{file?.path ?? 'untitled'}</span>
             {hasUnsavedChanges(file) && (
@@ -442,11 +530,14 @@ export function Editor() {
             <button disabled={!control.enabled} onClick={actOnRun}>
               {control.label}
             </button>
-            <button disabled={locked} onClick={newGraph}>New</button>
-            <button disabled={locked} onClick={openFile}>Open</button>
-            <button disabled={locked} onClick={() => save(false)}>Save</button>
-            <button disabled={locked} onClick={() => save(true)}>Save as</button>
+            <button disabled={!editable} onClick={newGraph}>New</button>
+            <button disabled={!editable} onClick={openFile}>Open</button>
+            <button disabled={!editable} onClick={() => save(false)}>Save</button>
+            <button disabled={!editable} onClick={() => save(true)}>Save as</button>
           </header>
+          {/* The banner names the loss without covering the canvas: the
+              view beneath stays where the user left it, looking live. */}
+          {banner && <div className="banner">{banner}</div>}
           <div className="workspace">
             <aside className="palette">
               <h1 className="palette-title">Nodes</h1>
@@ -461,7 +552,7 @@ export function Editor() {
                     <li
                       key={type.type_ref}
                       className="palette-item"
-                      draggable={!locked}
+                      draggable={editable}
                       onDragStart={(event) => {
                         event.dataTransfer.setData(NODE_TYPE, type.type_ref)
                         event.dataTransfer.effectAllowed = 'move'
@@ -493,12 +584,13 @@ export function Editor() {
                 minZoom={0.25}
                 maxZoom={2.5}
                 // Delete/Backspace is the deletion gesture — the lock takes
-                // it away while a run is on. A wire is a drag from either
-                // end — a click never starts or lands one — and the drag
-                // threshold keeps a port click from reading as a drag-off.
-                deleteKeyCode={locked ? null : ['Delete', 'Backspace']}
-                nodesDraggable={!locked}
-                nodesConnectable={!locked}
+                // it away while a run is on, as while the connection is
+                // gone. A wire is a drag from either end — a click never
+                // starts or lands one — and the drag threshold keeps a
+                // port click from reading as a drag-off.
+                deleteKeyCode={editable ? ['Delete', 'Backspace'] : null}
+                nodesDraggable={editable}
+                nodesConnectable={editable}
                 connectionDragThreshold={4}
                 connectOnClick={false}
               >
@@ -509,6 +601,18 @@ export function Editor() {
                   Drag a node type from the palette onto the canvas.
                 </div>
               )}
+              <div className="toasts">
+                {toasts.map((toast) => (
+                  <div
+                    key={toast.id}
+                    className="toast"
+                    role="status"
+                    onClick={() => dismissToast(toast.id)}
+                  >
+                    {toast.text}
+                  </div>
+                ))}
+              </div>
             </main>
             <Sidebar
               node={selected}

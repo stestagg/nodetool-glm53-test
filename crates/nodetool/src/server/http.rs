@@ -87,6 +87,9 @@ fn parse_request(head: &str) -> io::Result<Request> {
 }
 
 /// Write one complete response: head and body, then the connection closes.
+/// The served assets are embedded and change only with a rebuild, so the
+/// browser is told never to cache: a rebuilt binary and a reload is the
+/// whole update path.
 pub async fn write_response(
     writer: &mut (impl AsyncWrite + Unpin),
     status: &str,
@@ -96,7 +99,7 @@ pub async fn write_response(
     write_head(
         writer,
         &format!(
-            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
             body.len()
         ),
     )
