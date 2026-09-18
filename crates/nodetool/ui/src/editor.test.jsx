@@ -12,12 +12,14 @@
 // problems and the failed run place at their nodes, and the banner a
 // lost connection raises.
 import { describe, expect, it } from 'vitest'
+import { NEUTRAL } from './types.js'
 import {
   bannerText,
   emittedTargets,
   hasUnsavedChanges,
   nodeMarks,
   offPortUnhook,
+  paletteGroups,
   runControl,
   runStatusText,
   saveAsksForPath,
@@ -35,7 +37,7 @@ describe('toNodes', () => {
           { uuid: 'u2', type_ref: 'text/uppercase', metadata: {} },
         ],
       },
-      [],
+      { types: [] },
     )
     expect(nodes[0]).toMatchObject({
       id: 'u1',
@@ -59,10 +61,10 @@ describe('toNodes', () => {
         { uuid: '7c9e6679-7425-40de-944b-e07fc1f90ae7', type_ref: 'alpha/add', metadata: {} },
       ],
     }
-    const types = [{ type_ref: 'alpha/add', inputs: [], outputs: [] }]
-    const nodes = toNodes(graph, types)
+    const listing = { types: [{ type_ref: 'alpha/add', inputs: [], outputs: [] }] }
+    const nodes = toNodes(graph, listing)
     expect(nodes[0].position).not.toEqual(nodes[1].position)
-    expect(toNodes(graph, types)).toEqual(nodes)
+    expect(toNodes(graph, listing)).toEqual(nodes)
   })
 
   it('names the inputs a wire reaches, so the node can show the connected state', () => {
@@ -80,7 +82,7 @@ describe('toNodes', () => {
       { type_ref: 'alpha/add', inputs: [], outputs: [] },
       { type_ref: 'beta/identity', inputs: [], outputs: [] },
     ]
-    const nodes = toNodes(graph, types)
+    const nodes = toNodes(graph, { types })
     expect(nodes[0].data.wiredInputs).toEqual([])
     expect(nodes[1].data.wiredInputs).toEqual(['value', 'other'])
   })
@@ -105,10 +107,81 @@ describe('toNodes', () => {
       },
       { type_ref: 'beta/custom', inputs: [{ name: 'only', type_refs: ['alpha/ratio'] }], outputs: [] },
     ]
-    const baseScalars = { String: true, 'alpha/ratio': false, f64: true }
-    const nodes = toNodes(graph, types, baseScalars)
+    const listing = { types, baseScalars: { String: true, 'alpha/ratio': false, f64: true } }
+    const nodes = toNodes(graph, listing)
     expect(nodes[0].data.scalarInputs).toEqual(['text', 'either'])
     expect(nodes[1].data.scalarInputs).toEqual([])
+  })
+
+  it('carries the listing’s colour-and-shape fact in the node data, for the ports to read', () => {
+    const graph = { edges: [], nodes: [{ uuid: 'u1', type_ref: 'alpha/add', metadata: {} }] }
+    const types = [{ type_ref: 'alpha/add', inputs: [], outputs: [] }]
+    const dataTypes = { i32: { color: '#2d72d2', shape: 'square' } }
+    const nodes = toNodes(graph, { types, dataTypes })
+    expect(nodes[0].data.dataTypes).toEqual(dataTypes)
+  })
+})
+
+describe('paletteGroups', () => {
+  const types = [
+    { type_ref: 'text/split', label: 'Split', plugin: 'text', sub_group: null },
+    { type_ref: 'text/check', label: 'Check', plugin: 'text', sub_group: null },
+    { type_ref: 'shapes/sphere', label: 'Sphere', plugin: 'shapes', sub_group: '3d' },
+    { type_ref: 'shapes/polygon', label: 'Polygon', plugin: 'shapes', sub_group: '2d' },
+    { type_ref: 'shapes/circle', label: 'Circle', plugin: 'shapes', sub_group: '2d' },
+    { type_ref: 'shapes/rectangle', label: 'Rectangle', plugin: 'shapes', sub_group: '2d' },
+    { type_ref: 'alpha/mix', label: 'Mix', plugin: 'alpha', sub_group: null },
+    { type_ref: 'alpha/add', label: 'Add', plugin: 'alpha', sub_group: 'math' },
+    { type_ref: 'alpha/concat', label: 'Concat', plugin: 'alpha', sub_group: 'text' },
+  ]
+
+  it('groups by plugin and sub-group, plugins and sub-groups alphabetical', () => {
+    const groups = paletteGroups(types)
+    expect(groups.map((group) => group.plugin)).toEqual(['alpha', 'shapes', 'text'])
+    expect(groups[0].sections.map((section) => section.subGroup)).toEqual([null, 'math', 'text'])
+    expect(groups[1].sections.map((section) => section.subGroup)).toEqual(['2d', '3d'])
+  })
+
+  it('types order alphabetically within their group', () => {
+    const [, shapes] = paletteGroups(types)
+    const [twoD, threeD] = shapes.sections
+    expect(twoD.types.map((type) => type.label)).toEqual(['Circle', 'Polygon', 'Rectangle'])
+    expect(threeD.types.map((type) => type.label)).toEqual(['Sphere'])
+  })
+
+  it('types without a sub-group sit directly under the plugin header, first', () => {
+    const [alpha] = paletteGroups(types)
+    expect(alpha.sections[0].subGroup).toBeNull()
+    expect(alpha.sections[0].types.map((type) => type.label)).toEqual(['Mix'])
+  })
+
+  it('a flat plugin has no sub-sections', () => {
+    const [, , text] = paletteGroups(types)
+    expect(text.sections).toEqual([
+      {
+        subGroup: null,
+        types: [
+          expect.objectContaining({ label: 'Check' }),
+          expect.objectContaining({ label: 'Split' }),
+        ],
+      },
+    ])
+  })
+
+  it('every reload and tab reads the same sections', () => {
+    expect(paletteGroups(types)).toEqual(paletteGroups([...types].reverse()))
+  })
+
+  it('a label tie orders by type reference, deterministically', () => {
+    const tied = [
+      { type_ref: 'zeta/twin', label: 'Twin', plugin: 'zeta', sub_group: null },
+      { type_ref: 'alpha/twin', label: 'Twin', plugin: 'zeta', sub_group: null },
+    ]
+    expect(paletteGroups(tied)[0].sections[0].types.map((type) => type.type_ref)).toEqual([
+      'alpha/twin',
+      'zeta/twin',
+    ])
+    expect(paletteGroups([...tied].reverse())).toEqual(paletteGroups(tied))
   })
 })
 
@@ -127,6 +200,8 @@ describe('toEdges', () => {
         targetHandle: 'value',
         selectable: false,
         animated: false,
+        type: undefined,
+        style: { stroke: NEUTRAL.color },
       },
     ])
   })
@@ -146,6 +221,7 @@ describe('toEdges', () => {
         selectable: false,
         animated: false,
         type: 'selfloop',
+        style: { stroke: NEUTRAL.color },
       },
     ])
   })
@@ -160,6 +236,66 @@ describe('toEdges', () => {
     }
     const [first, second] = toEdges(graph)
     expect(first.id).not.toEqual(second.id)
+  })
+})
+
+describe('toEdges colours', () => {
+  const types = [
+    {
+      type_ref: 'text/uppercase',
+      inputs: [{ name: 'text', type_refs: ['String'] }],
+      outputs: [{ name: 'text', type_refs: ['String'] }],
+    },
+    {
+      type_ref: 'text/ticker',
+      inputs: [{ name: 'count', type_refs: ['i64'] }],
+      outputs: [{ name: 'value', type_refs: ['i64'] }],
+    },
+    {
+      type_ref: 'shapes/circle',
+      inputs: [{ name: 'radius', type_refs: ['i32', 'f64'] }],
+      outputs: [{ name: 'shape', type_refs: ['shapes/shape'] }],
+    },
+  ]
+  const dataTypes = {
+    String: { color: '#238551', shape: 'circle' },
+    i64: { color: '#2d72d2', shape: 'square' },
+    'shapes/shape': { color: '#8f99a8', shape: 'circle' },
+  }
+  const graph = {
+    edges: [
+      { from: 'u1', from_port: 'text', to: 'u2', to_port: 'text' },
+      { from: 'u3', from_port: 'value', to: 'u4', to_port: 'count' },
+      { from: 'u5', from_port: 'shape', to: 'u6', to_port: 'text' },
+    ],
+    nodes: [
+      { uuid: 'u1', type_ref: 'text/uppercase', metadata: {} },
+      { uuid: 'u2', type_ref: 'text/check', metadata: {} },
+      { uuid: 'u3', type_ref: 'text/ticker', metadata: {} },
+      { uuid: 'u4', type_ref: 'shapes/polygon', metadata: {} },
+      { uuid: 'u5', type_ref: 'shapes/circle', metadata: {} },
+      { uuid: 'u6', type_ref: 'text/uppercase', metadata: {} },
+    ],
+  }
+  const listing = { types, dataTypes }
+
+  it('a wire renders in the colour of the source port’s declared type', () => {
+    const [string, integer] = toEdges(graph, undefined, listing)
+    expect(string.style.stroke).toBe('#238551')
+    expect(integer.style.stroke).toBe('#2d72d2')
+  })
+
+  it('a source port with no single declared type colours its wire the neutral', () => {
+    const [, , union] = toEdges(graph, undefined, listing)
+    expect(union.style.stroke).toBe(NEUTRAL.color)
+  })
+
+  it('a wire whose source node the listing does not know colours the neutral', () => {
+    const unknown = {
+      edges: [{ from: 'gone', from_port: 'out', to: 'u1', to_port: 'text' }],
+      nodes: [{ uuid: 'gone', type_ref: 'gone/missing', metadata: {} }],
+    }
+    expect(toEdges(unknown, undefined, listing)[0].style.stroke).toBe(NEUTRAL.color)
   })
 })
 
@@ -323,7 +459,11 @@ describe('toNodes marks', () => {
       ['u1', ['a problem']],
       ['u2', ['the unknown-type error']],
     ])
-    const nodes = toNodes(graph, [{ type_ref: 'alpha/add', inputs: [], outputs: [] }], {}, marks)
+    const nodes = toNodes(
+      graph,
+      { types: [{ type_ref: 'alpha/add', inputs: [], outputs: [] }] },
+      marks,
+    )
     expect(nodes[0].data.marks).toEqual(['a problem'])
     expect(nodes[1].data.marks).toEqual(['the unknown-type error'])
   })
@@ -331,7 +471,7 @@ describe('toNodes marks', () => {
   it('a node nothing names carries no marks', () => {
     const nodes = toNodes(
       { edges: [], nodes: [{ uuid: 'u1', type_ref: 'alpha/add', metadata: {} }] },
-      [{ type_ref: 'alpha/add', inputs: [], outputs: [] }],
+      { types: [{ type_ref: 'alpha/add', inputs: [], outputs: [] }] },
     )
     expect(nodes[0].data.marks).toEqual([])
   })
@@ -382,20 +522,20 @@ describe('toNodes run display', () => {
   const graph = { edges: [], nodes: [{ uuid: 'u1', type_ref: 'delta/counter', metadata: {} }] }
 
   it('carries the derived status and the latest value per output port in its data', () => {
-    const nodes = toNodes(graph, [type], {}, new Map(), { u1: 'running' }, { 'u1/out': '17' })
+    const nodes = toNodes(graph, { types: [type] }, new Map(), { u1: 'running' }, { 'u1/out': '17' })
     expect(nodes[0].data.status).toBe('running')
     expect(nodes[0].data.portValues).toEqual({ out: '17' })
   })
 
   it('a port without a value and a node without a status carry neither', () => {
-    const nodes = toNodes(graph, [type], {}, new Map(), {}, {})
+    const nodes = toNodes(graph, { types: [type] }, new Map(), {}, {})
     expect(nodes[0].data.status).toBeUndefined()
     expect(nodes[0].data.portValues).toEqual({})
   })
 
   it('a placeholder carries the status too, its ports unknown', () => {
     const unknown = { edges: [], nodes: [{ uuid: 'u2', type_ref: 'gone/missing', metadata: {} }] }
-    const nodes = toNodes(unknown, [type], {}, new Map(), { u2: 'stopped' }, {})
+    const nodes = toNodes(unknown, { types: [type] }, new Map(), { u2: 'stopped' }, {})
     expect(nodes[0].data.status).toBe('stopped')
   })
 })
@@ -406,9 +546,11 @@ describe('toEdges pulsing', () => {
     nodes: [],
   }
 
-  it('a wire in the pulse set animates, the rest stay still', () => {
+  it('a wire in the pulse set animates — the dash flow riding its type colour', () => {
     const id = 'a/out->b/in'
-    expect(toEdges(graph, new Set([id]))[0].animated).toBe(true)
+    const traveling = toEdges(graph, new Set([id]))[0]
+    expect(traveling.animated).toBe(true)
+    expect(traveling.style.stroke).toBe(NEUTRAL.color)
     expect(toEdges(graph, new Set())[0].animated).toBe(false)
     expect(toEdges(graph)[0].animated).toBe(false)
   })

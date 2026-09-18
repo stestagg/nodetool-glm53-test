@@ -99,7 +99,10 @@ inventory::collect! { DataType }
 ///     id: nodetool::uuid!("a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d"),
 ///     name: "shapes/shape",
 ///     conversions: [ nodetool::scalars::F64 => shape_area ],  // optional
-///     meta: [ "color" => nodetool::MetaValue::Str("#4a90d9") ],  // optional
+///     meta: [  // optional
+///         "color" => nodetool::MetaValue::Str("#4a90d9"),
+///         "shape" => nodetool::MetaValue::Str("circle"),
+///     ],
 /// }
 /// ```
 ///
@@ -108,7 +111,12 @@ inventory::collect! { DataType }
 /// type's id with the function performing it ([`ConvertFn`]); it may name a
 /// type that is not registered yet, since targets resolve once every linked
 /// crate has contributed, and a target that never shows up is reported when
-/// the registry is read. Metadata is a map of plain values.
+/// the registry is read. Metadata is a map of plain values; a type whose
+/// metadata carries both a `color` and a `shape` declares the appearance the
+/// editor renders its ports and wires in, the shape one of the editor's
+/// drawn set, `circle` or `square` — the editor composes the pair into the
+/// listing it serves, taking the neutral for a type that does not declare
+/// both.
 #[macro_export]
 macro_rules! data_type {
     (

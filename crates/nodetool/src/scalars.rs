@@ -5,10 +5,15 @@
 //! `i32`→`f64`; widening that set later is an ordinary declaration. No
 //! conversion to `String` is declared anywhere: turning values into strings
 //! is the explicit Format node's job.
+//!
+//! Each scalar also declares its appearance — a colour and a port shape,
+//! the same metadata a plugin's custom types carry. Declaring is all core
+//! does with them: the editor's listing composes them into the fact it
+//! serves the browser, and nothing in core switches on either.
 
 use uuid::Uuid;
 
-use crate::Value;
+use crate::{MetaValue, Value};
 
 /// The base scalars' fixed ids, for conversions that name them as targets.
 pub const I8: Uuid = uuid::uuid!("00000000-0000-0000-0000-000000000001");
@@ -50,18 +55,52 @@ pub fn scalar_text(value: &Value) -> Option<String> {
     None
 }
 
-crate::data_type! { id: I8, name: "i8" }
-crate::data_type! { id: I16, name: "i16", conversions: [ I32 => i16_to_i32 ] }
-crate::data_type! { id: I32, name: "i32", conversions: [ F64 => i32_to_f64 ] }
-crate::data_type! { id: I64, name: "i64" }
-crate::data_type! { id: U8, name: "u8" }
-crate::data_type! { id: U16, name: "u16" }
-crate::data_type! { id: U32, name: "u32" }
-crate::data_type! { id: U64, name: "u64" }
-crate::data_type! { id: F32, name: "f32", conversions: [ F64 => f32_to_f64 ] }
-crate::data_type! { id: F64, name: "f64" }
-crate::data_type! { id: BOOL, name: "bool" }
-crate::data_type! { id: STRING, name: "String" }
+// The appearance declarations: a hue per family from the editor's
+// Blueprint-adjacent palette, the numeric families square and the rest
+// round — the shape carrying the family, the colour the member within it.
+const NUMERIC_COLOR: &str = "#2d72d2";
+const FLOAT_COLOR: &str = "#9d3f9d";
+const FLAG_COLOR: &str = "#d1820c";
+const TEXT_COLOR: &str = "#238551";
+const SQUARE: &str = "square";
+const ROUND: &str = "circle";
+
+/// Declare a base scalar with its appearance: the colour-and-shape meta
+/// pair every scalar carries, stated once here.
+macro_rules! scalar {
+    ($id:expr, $name:literal, $color:expr, $shape:expr) => {
+        crate::data_type! {
+            id: $id,
+            name: $name,
+            meta: [ "color" => MetaValue::Str($color), "shape" => MetaValue::Str($shape) ],
+        }
+    };
+    (
+        $id:expr, $name:literal,
+        conversions: [ $($target:expr => $convert:expr),* $(,)? ],
+        $color:expr, $shape:expr
+    ) => {
+        crate::data_type! {
+            id: $id,
+            name: $name,
+            conversions: [ $($target => $convert),* ],
+            meta: [ "color" => MetaValue::Str($color), "shape" => MetaValue::Str($shape) ],
+        }
+    };
+}
+
+scalar! { I8, "i8", NUMERIC_COLOR, SQUARE }
+scalar! { I16, "i16", conversions: [I32 => i16_to_i32], NUMERIC_COLOR, SQUARE }
+scalar! { I32, "i32", conversions: [F64 => i32_to_f64], NUMERIC_COLOR, SQUARE }
+scalar! { I64, "i64", NUMERIC_COLOR, SQUARE }
+scalar! { U8, "u8", NUMERIC_COLOR, SQUARE }
+scalar! { U16, "u16", NUMERIC_COLOR, SQUARE }
+scalar! { U32, "u32", NUMERIC_COLOR, SQUARE }
+scalar! { U64, "u64", NUMERIC_COLOR, SQUARE }
+scalar! { F32, "f32", conversions: [F64 => f32_to_f64], FLOAT_COLOR, SQUARE }
+scalar! { F64, "f64", FLOAT_COLOR, SQUARE }
+scalar! { BOOL, "bool", FLAG_COLOR, ROUND }
+scalar! { STRING, "String", TEXT_COLOR, ROUND }
 
 fn i16_to_i32(value: &Value) -> Option<Value> {
     Some(Value::new(I32, *value.get::<i16>()? as i32))
