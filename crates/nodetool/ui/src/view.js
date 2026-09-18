@@ -4,6 +4,7 @@
 // visible proof exercises them by hand once and the tests pin them.
 
 import { SelectionMode, applyNodeChanges } from '@xyflow/react'
+import { groupFacts, groupType, instanceStatus } from './groups.js'
 import { scalarPossible } from './fields.jsx'
 import { portAppearance } from './types.js'
 
@@ -21,6 +22,9 @@ function recordedPosition(node) {
 }
 
 export function toNodes(graph, listing, marks, statuses, values) {
+  // A group instance's type reference resolves against the document's
+  // groups before the listing's, so a group never reads as unknown.
+  const facts = groupFacts(graph)
   const byRef = new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))
   const dataTypes = listing?.dataTypes ?? {}
   const placeless = graph.nodes
@@ -45,7 +49,8 @@ export function toNodes(graph, listing, marks, statuses, values) {
   const value = (uuid, port) => values?.[`${uuid}/${port}`]
   return graph.nodes.map((node) => {
     const position = recordedPosition(node) ?? fallback.get(node.uuid)
-    const type = byRef.get(node.type_ref)
+    const group = facts?.types.get(node.type_ref)
+    const type = group !== undefined ? groupType(node, group) : byRef.get(node.type_ref)
     if (type === undefined) {
       return {
         id: node.uuid,
@@ -60,6 +65,12 @@ export function toNodes(graph, listing, marks, statuses, values) {
       const text = value(node.uuid, port.name)
       if (text !== undefined) portValues[port.name] = text
     }
+    // A collapsed group's status is its inside's aggregate; every other
+    // node's status is its own.
+    const derived =
+      group !== undefined
+        ? instanceStatus(statuses, facts.inside.get(node.uuid) ?? [])
+        : status(node.uuid)
     return {
       id: node.uuid,
       position,
@@ -72,7 +83,7 @@ export function toNodes(graph, listing, marks, statuses, values) {
           .filter((port) => scalarPossible(port, listing?.baseScalars))
           .map((port) => port.name),
         marks: at(node.uuid),
-        status: status(node.uuid),
+        status: derived,
         portValues,
         dataTypes,
       },
@@ -86,12 +97,14 @@ export function toNodes(graph, listing, marks, statuses, values) {
 // the neutral where no single type informs the port; a wire in `pulsing`
 // animates, the pulse a value travels riding that colour as a dash flow.
 export function toEdges(graph, pulsing, listing) {
+  const facts = groupFacts(graph)
   const byRef = new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))
   const dataTypes = listing?.dataTypes ?? {}
   const refOf = new Map(graph.nodes.map((node) => [node.uuid, node.type_ref]))
   return graph.edges.map((edge) => {
     const id = `${edge.from}/${edge.from_port}->${edge.to}/${edge.to_port}`
-    const type = byRef.get(refOf.get(edge.from))
+    const ref = refOf.get(edge.from)
+    const type = facts?.types.get(ref) ?? byRef.get(ref)
     const port = type?.outputs.find((output) => output.name === edge.from_port)
     return {
       id,
@@ -256,8 +269,10 @@ export function runControl(run, graph, connected = true) {
 // Where each problem lives, as the canvas draws it: one mark per node,
 // carrying the messages of every problem that names it — the compile's
 // attribution read as a structure, never parsed from messages — plus the
-// failed run's error at the node whose failure ended it.
-export function nodeMarks(problems, run) {
+// failed run's error at the node whose failure ended it. `owner` maps an
+// inner node's compiled identity to the group instance whose collapsed
+// node holds it, so a failure inside a group is marked where it shows.
+export function nodeMarks(problems, run, owner = null) {
   const marks = new Map()
   const add = (uuid, message) => {
     const list = marks.get(uuid) ?? []
@@ -267,7 +282,9 @@ export function nodeMarks(problems, run) {
   for (const problem of problems ?? []) {
     for (const uuid of problem.nodes ?? []) add(uuid, problem.message)
   }
-  if (run?.outcome === 'failed' && run.node) add(run.node, run.error)
+  if (run?.outcome === 'failed' && run.node) {
+    add(owner?.get(run.node) ?? run.node, run.error)
+  }
   return marks
 }
 

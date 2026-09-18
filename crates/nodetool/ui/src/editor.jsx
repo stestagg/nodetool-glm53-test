@@ -70,6 +70,7 @@ import { Sidebar, SelectionSidebar } from './sidebar.jsx'
 import { Banner, Toasts } from './chrome.jsx'
 import { Palette } from './palette.jsx'
 import { escapeCancel, finalMoves, panIntoView, toggleKey, viewportCenter } from './keyboard.js'
+import { canvasValues, groupFacts, groupType } from './groups.js'
 import {
   backgroundDrag,
   bannerText,
@@ -148,6 +149,10 @@ export function Editor() {
   // emission handler lives across renders, and the wires it pulses are
   // the ones the last resync carried.
   const graphRef = useRef(null)
+  // The held definition's groups, as the event path reads them: which
+  // inner emissions cross a boundary, which stay inside, which statuses
+  // aggregate — composed once per definition arrival.
+  const factsRef = useRef(null)
   // The coalescer owns the canvas's view of the run's values and pulses,
   // applying each animation frame's truth to the state above; the status
   // per node needs no coalescing and stays state alone.
@@ -236,6 +241,7 @@ export function Editor() {
   // the live changes ride.
   const resync = useCallback((graph, file, run, problems) => {
     graphRef.current = graph
+    factsRef.current = groupFacts(graph)
     setGraph(graph)
     setFile(file)
     setRun(run)
@@ -245,7 +251,7 @@ export function Editor() {
     if (text) setStatus({ text, error: run.outcome === 'failed' })
   }, [])
 
-  const marks = useMemo(() => nodeMarks(problems, run), [problems, run])
+  const marks = useMemo(() => nodeMarks(problems, run, factsRef.current?.owner), [problems, run])
 
   // A failed bundle is reported through the toast surface naming the type,
   // and its attachment point marked fallen-back: the node renders by the
@@ -343,10 +349,12 @@ export function Editor() {
         onFile: ({ path, dirty }) => setFile({ path, dirty }),
         // The run display arrives as its own push — the connect-time
         // resync's snapshot and nothing else; the live changes that keep
-        // it true ride the same ordered stream behind it.
+        // it true ride the same ordered stream behind it. A group's
+        // boundary values are re-keyed to the instance port that shows
+        // them, and the inside's stay inside.
         onRunDisplay: ({ statuses, values }) => {
           setStatuses(statuses ?? {})
-          coalescer.current.replace(values ?? {})
+          coalescer.current.replace(canvasValues(values, factsRef.current))
         },
         onRun: (state) => {
           setRun(state)
@@ -366,14 +374,28 @@ export function Editor() {
         onRunEvent: (message) => {
           // The statuses and the outcome ride their own state pushes;
           // the emissions are what the canvas animates: the value at the
-          // emitting port, the wires the value travels.
+          // emitting port, the wires the value travels. An inner node's
+          // emission animates the boundary when it is the one an exposed
+          // output binds, and stays inside otherwise — collapsed means
+          // collapsed.
           if (message.event !== 'emitted') return
-          coalescer.current.emitted(
-            message.node,
-            message.port,
-            message.value,
-            emittedTargets(graphRef.current?.edges ?? [], message.node, message.port),
-          )
+          const facts = factsRef.current
+          const boundary = facts?.emissions.get(`${message.node}/${message.port}`)
+          if (boundary !== undefined) {
+            coalescer.current.emitted(
+              boundary.instance,
+              boundary.port,
+              message.value,
+              emittedTargets(graphRef.current?.edges ?? [], boundary.instance, boundary.port),
+            )
+          } else if (!facts?.inner.has(message.node)) {
+            coalescer.current.emitted(
+              message.node,
+              message.port,
+              message.value,
+              emittedTargets(graphRef.current?.edges ?? [], message.node, message.port),
+            )
+          }
         },
         onNodeStatus: ({ node, status: derived }) =>
           setStatuses((current) => ({ ...current, [node]: derived })),
@@ -631,6 +653,26 @@ export function Editor() {
   const selectedWiredInputs = (graph?.edges ?? [])
     .filter((edge) => edge.to === selectedUuid)
     .map((edge) => edge.to_port)
+  // The held definition's groups, as the render reads them: a group
+  // instance's type reference resolves against these before the listing's.
+  const facts = groupFacts(graph)
+  // The selected node's type view, the document's groups resolved before
+  // the listing's — the same resolution the canvas draws by.
+  const selectedType =
+    facts?.types.get(selected?.type_ref) ??
+    listing?.types.find((type) => type.type_ref === selected?.type_ref)
+  // The multi-selection's common fields read each node's type view off the
+  // same index, groups resolved before the listing's.
+  const selectionTypes = new Map()
+  for (const node of graph?.nodes ?? []) {
+    const group = facts?.types.get(node.type_ref)
+    if (group !== undefined && !selectionTypes.has(node.type_ref)) {
+      selectionTypes.set(node.type_ref, groupType(node, group))
+    }
+  }
+  for (const type of listing?.types ?? []) {
+    if (!selectionTypes.has(type.type_ref)) selectionTypes.set(type.type_ref, type)
+  }
 
   // Opening the dock shrinks the canvas beneath it, and a node sitting in
   // the lost width would vanish under the very panel it is being edited
@@ -747,7 +789,7 @@ export function Editor() {
               {selectedNodes.length > 1 && (
                 <SelectionSidebar
                   nodes={selectedNodes}
-                  types={new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))}
+                  types={selectionTypes}
                   baseScalars={listing?.baseScalars ?? {}}
                   edges={graph?.edges ?? []}
                 />

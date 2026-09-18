@@ -15,7 +15,7 @@ let nextId = 1
 // nodetool::graph::SCHEMA_VERSION. A mismatch is told, never misbehaved
 // against.
 export const PROTOCOL_VERSION = 1
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 // How long after a loss the trying resumes.
 const RETRY_MS = 1000

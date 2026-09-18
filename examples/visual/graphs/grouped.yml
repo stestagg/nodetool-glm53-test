@@ -1,0 +1,52 @@
+schema_version: 2
+name: grouped pipeline
+nodes:
+- uuid: 00000000-0000-0000-0000-600000000001
+  type_ref: text/words
+  label: lines
+  metadata:
+    position:
+      x: 80
+      y: 160
+- uuid: 00000000-0000-0000-0000-600000000002
+  type_ref: shout
+  metadata:
+    position:
+      x: 320
+      y: 160
+- uuid: 00000000-0000-0000-0000-600000000003
+  type_ref: text/uppercase
+  label: echo
+  metadata:
+    position:
+      x: 560
+      y: 160
+edges:
+- from: 00000000-0000-0000-0000-600000000001
+  from_port: out
+  to: 00000000-0000-0000-0000-600000000002
+  to_port: text
+- from: 00000000-0000-0000-0000-600000000002
+  from_port: text
+  to: 00000000-0000-0000-0000-600000000003
+  to_port: text
+groups:
+- name: shout
+  inputs:
+  - name: text
+    type_refs: [String]
+    node: 00000000-0000-0000-0000-600000000011
+    port: text
+  outputs:
+  - name: text
+    type_refs: [String]
+    node: 00000000-0000-0000-0000-600000000011
+    port: text
+  nodes:
+  - uuid: 00000000-0000-0000-0000-600000000011
+    type_ref: text/uppercase
+    metadata:
+      position:
+        x: 40
+        y: 20
+  edges: []

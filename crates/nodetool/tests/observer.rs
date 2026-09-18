@@ -62,6 +62,7 @@ fn compiled(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> &'static CompiledGrap
                 name: None,
                 nodes,
                 edges,
+                groups: Vec::new(),
             },
             &Registry::collect(),
         )

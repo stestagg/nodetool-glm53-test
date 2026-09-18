@@ -44,7 +44,7 @@ fn a_request_is_answered_with_the_matching_id() {
     let reply = send(&editor, r#"{"id": 7, "type": "get_definition"}"#);
     assert_eq!(reply["id"], 7);
     assert_eq!(reply["type"], "definition");
-    assert_eq!(reply["graph"]["schema_version"], 1);
+    assert_eq!(reply["graph"]["schema_version"], graph::SCHEMA_VERSION);
     assert_eq!(reply["graph"]["nodes"], json!([]));
     assert_eq!(reply["graph"]["edges"], json!([]));
 }
