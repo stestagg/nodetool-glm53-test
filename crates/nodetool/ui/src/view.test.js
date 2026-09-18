@@ -13,31 +13,33 @@
 // lost connection raises. The selection's gestures are pinned here too:
 // which keystrokes cost nodes (deleteKeys), how the background's two
 // drags differ (backgroundDrag), which nodes a drag or a delete fans out
-// to, the draggable flag a placeholder travels under, and the node
-// changes the view applies — never a removal.
+// to, the draggable flag a placeholder travels under, the toggle the
+// shift-activation lands, what a rebuilt node carries across a push
+// (carriedNode), and the node changes the view applies — never
+// a removal.
 import { describe, expect, it } from 'vitest'
 import { SelectionMode } from '@xyflow/react'
 import { NEUTRAL } from './types.js'
 import {
   backgroundDrag,
   bannerText,
+  carriedNode,
   deleteKeys,
   deleteSelection,
-  dragMoves,
   emittedTargets,
   hasUnsavedChanges,
   inTextField,
   nodeMarks,
   offPortUnhook,
-  paletteGroups,
   runControl,
   runStatusText,
   saveAsksForPath,
   toEdges,
   toNodes,
+  toggledSelection,
   viewNodeChanges,
   withDraggablePlaceholders,
-} from './editor.jsx'
+} from './view.js'
 
 describe('toNodes', () => {
   it('renders an unknown type reference as the placeholder, labelled with the stored override else the type reference, selectable for its label edit', () => {
@@ -133,69 +135,6 @@ describe('toNodes', () => {
   })
 })
 
-describe('paletteGroups', () => {
-  const types = [
-    { type_ref: 'text/split', label: 'Split', plugin: 'text', sub_group: null },
-    { type_ref: 'text/check', label: 'Check', plugin: 'text', sub_group: null },
-    { type_ref: 'shapes/sphere', label: 'Sphere', plugin: 'shapes', sub_group: '3d' },
-    { type_ref: 'shapes/polygon', label: 'Polygon', plugin: 'shapes', sub_group: '2d' },
-    { type_ref: 'shapes/circle', label: 'Circle', plugin: 'shapes', sub_group: '2d' },
-    { type_ref: 'shapes/rectangle', label: 'Rectangle', plugin: 'shapes', sub_group: '2d' },
-    { type_ref: 'alpha/mix', label: 'Mix', plugin: 'alpha', sub_group: null },
-    { type_ref: 'alpha/add', label: 'Add', plugin: 'alpha', sub_group: 'math' },
-    { type_ref: 'alpha/concat', label: 'Concat', plugin: 'alpha', sub_group: 'text' },
-  ]
-
-  it('groups by plugin and sub-group, plugins and sub-groups alphabetical', () => {
-    const groups = paletteGroups(types)
-    expect(groups.map((group) => group.plugin)).toEqual(['alpha', 'shapes', 'text'])
-    expect(groups[0].sections.map((section) => section.subGroup)).toEqual([null, 'math', 'text'])
-    expect(groups[1].sections.map((section) => section.subGroup)).toEqual(['2d', '3d'])
-  })
-
-  it('types order alphabetically within their group', () => {
-    const [, shapes] = paletteGroups(types)
-    const [twoD, threeD] = shapes.sections
-    expect(twoD.types.map((type) => type.label)).toEqual(['Circle', 'Polygon', 'Rectangle'])
-    expect(threeD.types.map((type) => type.label)).toEqual(['Sphere'])
-  })
-
-  it('types without a sub-group sit directly under the plugin header, first', () => {
-    const [alpha] = paletteGroups(types)
-    expect(alpha.sections[0].subGroup).toBeNull()
-    expect(alpha.sections[0].types.map((type) => type.label)).toEqual(['Mix'])
-  })
-
-  it('a flat plugin has no sub-sections', () => {
-    const [, , text] = paletteGroups(types)
-    expect(text.sections).toEqual([
-      {
-        subGroup: null,
-        types: [
-          expect.objectContaining({ label: 'Check' }),
-          expect.objectContaining({ label: 'Split' }),
-        ],
-      },
-    ])
-  })
-
-  it('every reload and tab reads the same sections', () => {
-    expect(paletteGroups(types)).toEqual(paletteGroups([...types].reverse()))
-  })
-
-  it('a label tie orders by type reference, deterministically', () => {
-    const tied = [
-      { type_ref: 'zeta/twin', label: 'Twin', plugin: 'zeta', sub_group: null },
-      { type_ref: 'alpha/twin', label: 'Twin', plugin: 'zeta', sub_group: null },
-    ]
-    expect(paletteGroups(tied)[0].sections[0].types.map((type) => type.type_ref)).toEqual([
-      'alpha/twin',
-      'zeta/twin',
-    ])
-    expect(paletteGroups([...tied].reverse())).toEqual(paletteGroups(tied))
-  })
-})
-
 describe('toEdges', () => {
   it('draws the definition\'s edges as wires between the named ports', () => {
     const graph = {
@@ -263,28 +202,27 @@ describe('toEdges colours', () => {
       outputs: [{ name: 'value', type_refs: ['i64'] }],
     },
     {
-      type_ref: 'shapes/circle',
-      inputs: [{ name: 'radius', type_refs: ['i32', 'f64'] }],
-      outputs: [{ name: 'shape', type_refs: ['shapes/shape'] }],
+      type_ref: 'beta/identity',
+      inputs: [{ name: 'value', type_refs: ['i32', 'f64'] }],
+      outputs: [{ name: 'value', type_refs: ['i32', 'f64'] }],
     },
   ]
   const dataTypes = {
     String: { color: '#238551', shape: 'circle' },
     i64: { color: '#2d72d2', shape: 'square' },
-    'shapes/shape': { color: '#8f99a8', shape: 'circle' },
   }
   const graph = {
     edges: [
       { from: 'u1', from_port: 'text', to: 'u2', to_port: 'text' },
       { from: 'u3', from_port: 'value', to: 'u4', to_port: 'count' },
-      { from: 'u5', from_port: 'shape', to: 'u6', to_port: 'text' },
+      { from: 'u5', from_port: 'value', to: 'u6', to_port: 'text' },
     ],
     nodes: [
       { uuid: 'u1', type_ref: 'text/uppercase', metadata: {} },
       { uuid: 'u2', type_ref: 'text/check', metadata: {} },
       { uuid: 'u3', type_ref: 'text/ticker', metadata: {} },
       { uuid: 'u4', type_ref: 'shapes/polygon', metadata: {} },
-      { uuid: 'u5', type_ref: 'shapes/circle', metadata: {} },
+      { uuid: 'u5', type_ref: 'beta/identity', metadata: {} },
       { uuid: 'u6', type_ref: 'text/uppercase', metadata: {} },
     ],
   }
@@ -584,20 +522,54 @@ describe('emittedTargets', () => {
   })
 })
 
-describe('dragMoves', () => {
-  const typed = (id, x, y) => ({ id, type: 'type', position: { x, y } })
-  const ghost = (id, x, y) => ({ id, type: 'placeholder', position: { x, y } })
+describe('toggledSelection', () => {
+  const drawn = (id, selected) => ({ id, selected })
 
-  it('a lone typed node commits itself where it rests', () => {
-    expect(dragMoves([typed('u1', 30, 40)])).toEqual([{ uuid: 'u1', position: { x: 30, y: 40 } }])
+  it('one node toggles in or out, the others untouched', () => {
+    const nodes = [drawn('u1', false), drawn('u2', true)]
+    expect(toggledSelection(nodes, 'u1')).toEqual([
+      { id: 'u1', selected: true },
+      { id: 'u2', selected: true },
+    ])
+    expect(toggledSelection(nodes, 'u2')).toEqual([
+      { id: 'u1', selected: false },
+      { id: 'u2', selected: false },
+    ])
+  })
+})
+
+describe('carriedNode', () => {
+  const redrawn = (status) => ({
+    id: 'u1',
+    position: { x: 5, y: 6 },
+    type: 'type',
+    data: { status },
+  })
+  const held = (over = {}) => ({
+    id: 'u1',
+    position: { x: 1, y: 2 },
+    type: 'type',
+    data: { status: 'previous' },
+    selected: true,
+    measured: { width: 130, height: 44 },
+    ...over,
   })
 
-  it('a multi-selection commits one move per node that travelled, placeholders included', () => {
-    expect(dragMoves([typed('u1', 10, 10), ghost('u2', 20, 20), typed('u3', 30, 30)])).toEqual([
-      { uuid: 'u1', position: { x: 10, y: 10 } },
-      { uuid: 'u2', position: { x: 20, y: 20 } },
-      { uuid: 'u3', position: { x: 30, y: 30 } },
-    ])
+  it('a rebuilt node keeps the held selection and measurement, takes the pushed truth', () => {
+    const carried = carriedNode(redrawn('running'), held())
+    expect(carried.selected).toBe(true)
+    expect(carried.measured).toEqual({ width: 130, height: 44 })
+    expect(carried.data).toEqual({ status: 'running' })
+    expect(carried.position).toEqual({ x: 5, y: 6 })
+  })
+
+  it('a drag in flight keeps the position it is held at', () => {
+    expect(carriedNode(redrawn(), held({ dragging: true })).position).toEqual({ x: 1, y: 2 })
+  })
+
+  it('a node the canvas has not held starts bare, to be measured', () => {
+    const node = redrawn()
+    expect(carriedNode(node, undefined)).toBe(node)
   })
 })
 

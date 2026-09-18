@@ -1,5 +1,9 @@
 /* The editor shell in the light Blueprint look: cool greys and white
-   panels, one blue accent carrying focus and selection, compact nodes. */
+   panels, one blue accent carrying focus and selection, compact nodes.
+   Every colour here clears the accessibility floor against the surface
+   it renders on — text 4.5:1, the meaningful edges (focus rings, marks,
+   port dots, wires) 3:1 — judged by the contrast test, which reads these
+   declarations as they stand. */
 
 :root {
   --text: #182026;
@@ -10,8 +14,22 @@
   --titlebar: #edf1f5;
   --hover: #f0f4f8;
   --accent: #2d72d2;
-  --ring: 0 0 0 2px rgba(45, 114, 210, 0.35);
   --danger: #cd4246;
+  --report-text: #ffffff;
+  --status-running: #215db0;
+  --status-completed: #1c6e42;
+  --status-failed: #a83a3e;
+}
+
+/* The one focus indicator: a solid accent outline wherever focus lands —
+   chrome controls, palette rows, nodes, fields — visible on every
+   surface it draws over. The ports are the one exception, their ring
+   drawn outside the dot below: inside an 8px dot it would land on the
+   dot's own colour. Nothing hides focus, so nothing traps it unseen. */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
 }
 
 * {
@@ -259,7 +277,7 @@ body {
 
 .node.selected {
   border-color: var(--accent);
-  box-shadow: var(--ring);
+  box-shadow: 0 0 0 2px rgba(45, 114, 210, 0.35);
 }
 
 /* The problem mark: a dot at the node's corner, the glanceable flag that
@@ -332,15 +350,15 @@ body {
 }
 
 .node-status.running {
-  color: #215db0;
+  color: var(--status-running);
 }
 
 .node-status.completed {
-  color: #1c6e42;
+  color: var(--status-completed);
 }
 
 .node-status.failed {
-  color: #a83a3e;
+  color: var(--status-failed);
 }
 
 .node-status.stopped {
@@ -354,7 +372,7 @@ body {
   height: 6px;
   margin-right: 4px;
   border-radius: 50%;
-  background: #215db0;
+  background: var(--status-running);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -420,6 +438,19 @@ body {
 
 .port .react-flow__handle.square {
   border-radius: 1px;
+}
+
+/* The ring outside the dot, panel colour beneath the accent: the handle
+   a keyboard wire runs from — the wire's visible origin, held while the
+   candidate focus moves — and the port's focus indicator. Focus cannot
+   ride the shared outline here: drawn inside the dot it lands on the
+   dot's own declared colour, so the ring stands outside on the panel,
+   the way the wire-from marker always drew it. */
+
+.port .react-flow__handle.wire-from,
+.port .react-flow__handle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
 }
 
 /* The dot stays small; the invisible ring around it meets the 24px
@@ -562,7 +593,8 @@ body {
 
 /* The scalar field both views share: a compact input that commits on
    Enter or blur, `nodrag` keeping a click inside it from dragging the
-   node. */
+   node. Focus shows the same accent outline every focusable element
+   wears, with the border joining it. */
 
 .field {
   min-width: 0;
@@ -576,9 +608,9 @@ body {
 }
 
 .field:focus {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
   border-color: var(--accent);
-  box-shadow: var(--ring);
 }
 
 .field::placeholder {
@@ -623,13 +655,18 @@ body {
 
 /* The banner the lost connection raises: a strip in the chrome, naming
    the loss over the last-known canvas — never covering it, since
-   looking is not editing. */
+   looking is not editing. The strip is the polite live region itself,
+   mounted whenever the editor is and empty while it is connected. */
 
 .banner {
   padding: 4px 12px;
   background: var(--danger);
-  color: #fff;
+  color: var(--report-text);
   font-size: 12px;
+}
+
+.banner:empty {
+  display: none;
 }
 
 /* The toasts: the one surface a transient report arrives through, over
@@ -653,7 +690,7 @@ body {
   pointer-events: auto;
   padding: 7px 11px;
   background: var(--danger);
-  color: #fff;
+  color: var(--report-text);
   border-radius: 3px;
   box-shadow: 0 1px 3px rgba(17, 20, 24, 0.3);
   font-size: 12px;

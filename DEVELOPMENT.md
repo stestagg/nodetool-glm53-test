@@ -147,7 +147,9 @@ sub-group within it, the types without a sub-group directly under the
 header — plugins, sub-groups, and types alphabetical, every tab and
 reload agreeing — and each row carries the type's declared icon beside
 its label. Dragging a type onto the canvas creates
-a node where it dropped; dragging a node moves it; a click selects,
+a node where it dropped; pressing Enter or Space on a focused palette
+row creates one at the centre of the view — the same create operation,
+at a position the view names. Dragging a node moves it; a click selects,
 opening the editing sidebar on the right — the node's label editable to
 any name, an empty field returning the type's default, the type reference
 and uuid read-only beneath, and below them a field per scalar-possible
@@ -183,6 +185,28 @@ parameter everywhere, a field left untouched commits nothing, and where
 nothing is common the sidebar says so plainly. No label editing in a
 multi-selection: a label names one node.
 
+The keyboard reaches every editing gesture the pointer does, through the
+same operations. Tab walks the editor in one order — the chrome controls,
+the palette rows, the canvas's nodes and their ports, the sidebar's
+fields — and every focusable element shows the focus outline; a focused
+node is brought into view, and so is a focused port. Enter or Space on a
+focused node selects it alone, as a click does; Shift with them toggles
+it in the selection, as a shift-click does; Escape is the quiet cancel —
+it clears the selection, stands down an in-progress keyboard wire, and
+discards an uncommitted field edit, as it already did. Arrow keys nudge
+the selected nodes, Shift for the larger step, each nudge committing
+the same move a drag stop commits. A focused port takes Enter or Space to
+start a keyboard wire from it — from either end, a connected input
+included; Tab walks to the next port,
+Enter or Space lands the wire where a pointer drag would — an
+already-wired input replaced — and Escape stands the wire down. Delete
+(or Backspace) on a focused connected input unhooks it, the drag-off's
+operation. Pan and zoom stay pointer-only: focus is the keyboard's way
+around the canvas. While a run is on — or the connection is gone — the
+keyboard's editing paths go quiet exactly with their pointer twins, the
+one lock over both input modes, while focus, selection, and navigation
+stay live.
+
 The declared data types carry the graph's type channel: a port declaring
 exactly one type renders its dot in that type's declared colour and shape,
 a wire renders in the colour of the source port it flows from, and a
@@ -191,7 +215,11 @@ declare both a colour and a shape renders in one shared neutral. Colours
 and shapes live with the type declarations — the base scalars' in core,
 custom types' in the declaring plugin's metadata — composed into the
 listing the server serves, so the browser hardcodes no type's appearance;
-the declared types remain readable in a port's tooltip. A node whose type
+the declared types remain readable in a port's tooltip. Every colour the
+editor renders — its own theme and the neutral pair, and the base
+scalars' declarations against the surfaces they sit on — clears the
+editor's contrast floor: text 4.5:1, meaningful edges 3:1, judged against
+the light theme as the stylesheet declares it. A node whose type
 declares custom UI renders the plugin's own body between the editor's
 title bar and ports — the shell stays editor-rendered, so every gesture
 on it behaves exactly as on a default node — and a value whose type
@@ -319,7 +347,10 @@ inert placeholder carrying the unknown-type error that explains it.
 The connection is the editor's lifeline, and its loss is chrome state,
 not silence: when the websocket closes — server stopped, network gone —
 a banner names the loss and says the editor is trying again, over a
-canvas that keeps its last-known view. While disconnected every
+canvas that keeps its last-known view. The banner and the toasts are
+polite live regions, so the reports the chrome carries are announced to
+assistive technology as they appear, without taking focus. While
+disconnected every
 server-acting gesture — editing, file open and save, start and stop — is
 inert, the browser holding no state that could back an undeliverable
 edit, while panning, zooming, and selecting stay live. The editor keeps

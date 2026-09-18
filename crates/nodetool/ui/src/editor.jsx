@@ -12,11 +12,24 @@
 // The selection is view state over those gestures, the way scroll
 // position is: a shift-click-drag on the background marquees, a
 // shift-click toggles a node in or out, plain clicks keep their one-node
-// meaning. What the selection does fans out to the existing per-node
+// meaning, and the keyboard mirrors each — Enter or Space selects the
+// focused node, Shift with them toggles it in the selection, Escape
+// clears. What the selection does fans out to the existing per-node
 // operations — a multi-select move the existing move once per node, a
 // multi-select delete the existing delete once per node, a common-field
 // commit the existing parameter edit once per node — so the server
 // receives no message it did not already answer.
+//
+// The keyboard reaches every editing gesture the pointer does, through
+// the same operations: a palette row's activation creates where a drop
+// does, at the view's centre; a focused node's arrow keys nudge the
+// selection through the same move a drag stop commits; a focused port
+// starts, lands, and unhooks wires through the same wire and unhook
+// operations, Escape standing the wire down; Delete keeps its
+// canvas-focus scoping. Focus is the keyboard's way around the canvas —
+// pan and zoom stay pointer-only, the view following focus instead.
+// keyboard.js holds the decisions; the canvas gestures sit on React
+// Flow's own interaction primitives, adjusted, not replaced.
 //
 // While a run is on, the canvas animates from the server's pushes: node
 // statuses arrive already derived — pushed as state, never recomputed
@@ -36,19 +49,14 @@
 // connection is chrome state of its own: a banner naming the loss over
 // the last-known canvas, every server-acting gesture inert while the
 // looking stays live, the tab rejoining by itself when the server
-// returns.
+// returns. Both reports reach assistive technology as they appear, the
+// polite live regions they arrive through being chrome.jsx's.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Background,
-  ReactFlow,
-  SelectionMode,
-  applyNodeChanges,
-  useReactFlow,
-} from '@xyflow/react'
+import { Background, ReactFlow, useReactFlow } from '@xyflow/react'
 import { NODE_TYPE, connect, connectionLost } from './protocol.js'
 import { RunCoalescer } from './coalesce.js'
-import { EditContext, LockContext, scalarPossible } from './fields.jsx'
+import { EditContext, LockContext, WireContext } from './fields.jsx'
 import {
   PluginUiContext,
   bodyTypeRefs,
@@ -57,309 +65,32 @@ import {
 } from './pluginui.jsx'
 import { createElement } from 'react'
 import { SelfLoopEdge } from './edges.jsx'
-import { byName, portAppearance } from './types.js'
-import { PlaceholderNode, TypeIcon, TypeNode } from './nodes.jsx'
+import { PlaceholderNode, TypeNode } from './nodes.jsx'
 import { Sidebar, SelectionSidebar } from './sidebar.jsx'
+import { Banner, Toasts } from './chrome.jsx'
+import { Palette } from './palette.jsx'
+import { escapeCancel, finalMoves, panIntoView, toggleKey, viewportCenter } from './keyboard.js'
+import {
+  backgroundDrag,
+  bannerText,
+  carriedNode,
+  deleteKeys,
+  emittedTargets,
+  hasUnsavedChanges,
+  nodeMarks,
+  offPortUnhook,
+  runControl,
+  runStatusText,
+  saveAsksForPath,
+  toEdges,
+  toNodes,
+  toggledSelection,
+  viewNodeChanges,
+  withDraggablePlaceholders,
+} from './view.js'
 
 const nodeTypes = { type: TypeNode, placeholder: PlaceholderNode }
 const edgeTypes = { selfloop: SelfLoopEdge }
-
-// The fixed grid a node without a recorded position lands on, ordered by
-// uuid: a deterministic, view-local fallback every view and reload agrees
-// on, with nothing written into the definition.
-const FALLBACK_PITCH = { x: 180, y: 140 }
-
-// The palette's sections, from the listing's plugin and sub-group facts:
-// one section per plugin, a headed sub-section per declared sub-group
-// within it, the ungrouped types directly under the plugin header.
-// Plugins, sub-groups, and types order alphabetically, a type's label tie
-// broken by its type reference — a deterministic order every tab and
-// reload agrees on.
-export function paletteGroups(types) {
-  const plugins = new Map()
-  for (const type of types) {
-    const subGroup = type.sub_group ?? null
-    const sections = plugins.get(type.plugin) ?? new Map()
-    sections.set(subGroup, [...(sections.get(subGroup) ?? []), type])
-    plugins.set(type.plugin, sections)
-  }
-  return [...plugins.keys()].sort(byName).map((plugin) => {
-    const sections = plugins.get(plugin)
-    return {
-      plugin,
-      sections: [...sections.keys()]
-        .sort((a, b) => (a === null ? -1 : b === null ? 1 : byName(a, b)))
-        .map((subGroup) => ({
-          subGroup,
-          types: sections
-            .get(subGroup)
-            .sort((a, b) => byName(a.label, b.label) || byName(a.type_ref, b.type_ref)),
-        })),
-    }
-  })
-}
-
-function recordedPosition(node) {
-  const position = node.metadata?.position
-  if (typeof position?.x === 'number' && typeof position?.y === 'number') {
-    return { x: position.x, y: position.y }
-  }
-  return undefined
-}
-
-export function toNodes(graph, listing, marks, statuses, values) {
-  const byRef = new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))
-  const dataTypes = listing?.dataTypes ?? {}
-  const placeless = graph.nodes
-    .filter((node) => recordedPosition(node) === undefined)
-    .sort((a, b) => (a.uuid < b.uuid ? -1 : 1))
-    .map((node, index) => [
-      node.uuid,
-      {
-        x: 80 + (index % 5) * FALLBACK_PITCH.x,
-        y: 80 + Math.floor(index / 5) * FALLBACK_PITCH.y,
-      },
-    ])
-  const fallback = new Map(placeless)
-  const wiredInputs = new Map()
-  for (const edge of graph.edges) {
-    const ports = wiredInputs.get(edge.to) ?? []
-    ports.push(edge.to_port)
-    wiredInputs.set(edge.to, ports)
-  }
-  const at = (uuid) => marks?.get(uuid) ?? []
-  const status = (uuid) => statuses?.[uuid]
-  const value = (uuid, port) => values?.[`${uuid}/${port}`]
-  return graph.nodes.map((node) => {
-    const position = recordedPosition(node) ?? fallback.get(node.uuid)
-    const type = byRef.get(node.type_ref)
-    if (type === undefined) {
-      return {
-        id: node.uuid,
-        position,
-        type: 'placeholder',
-        data: { label: node.label ?? node.type_ref, marks: at(node.uuid), status: status(node.uuid) },
-        selectable: true,
-      }
-    }
-    const portValues = {}
-    for (const port of type.outputs) {
-      const text = value(node.uuid, port.name)
-      if (text !== undefined) portValues[port.name] = text
-    }
-    return {
-      id: node.uuid,
-      position,
-      type: 'type',
-      data: {
-        node,
-        type,
-        wiredInputs: wiredInputs.get(node.uuid) ?? [],
-        scalarInputs: type.inputs
-          .filter((port) => scalarPossible(port, listing?.baseScalars))
-          .map((port) => port.name),
-        marks: at(node.uuid),
-        status: status(node.uuid),
-        portValues,
-        dataTypes,
-      },
-    }
-  })
-}
-
-// The definition's edges as canvas wires. Not selectable: drag-off is the
-// one way a wire comes off, so there is no second, selected-then-deleted
-// path. A wire renders in the colour of the source port's declared type —
-// the neutral where no single type informs the port; a wire in `pulsing`
-// animates, the pulse a value travels riding that colour as a dash flow.
-export function toEdges(graph, pulsing, listing) {
-  const byRef = new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))
-  const dataTypes = listing?.dataTypes ?? {}
-  const refOf = new Map(graph.nodes.map((node) => [node.uuid, node.type_ref]))
-  return graph.edges.map((edge) => {
-    const id = `${edge.from}/${edge.from_port}->${edge.to}/${edge.to_port}`
-    const type = byRef.get(refOf.get(edge.from))
-    const port = type?.outputs.find((output) => output.name === edge.from_port)
-    return {
-      id,
-      source: edge.from,
-      sourceHandle: edge.from_port,
-      target: edge.to,
-      targetHandle: edge.to_port,
-      selectable: false,
-      animated: pulsing?.has(id) === true,
-      type: edge.from === edge.to ? 'selfloop' : undefined,
-      style: { stroke: portAppearance(port, dataTypes).color },
-    }
-  })
-}
-
-// The wires one emission animates: every downstream wire of the emitting
-// port — a fan-out pulses each path the value actually takes.
-export function emittedTargets(edges, node, port) {
-  return edges
-    .filter((edge) => edge.from === node && edge.from_port === port)
-    .map((edge) => `${edge.from}/${edge.from_port}->${edge.to}/${edge.to_port}`)
-}
-
-// What a wire drag's ending means when no connection landed: a release on
-// a port — any port, even one the wire cannot land on, the wire's own
-// included — is the wire gesture and cancels quietly; a connected input's
-// end released anywhere that is not a port unhooks it. React Flow reports
-// whatever port sits under the release, valid or not, as `toHandle`.
-// Answers the unhook operation's fields, or null.
-export function offPortUnhook(edges, state) {
-  const from = state.fromHandle
-  if (from === null || from.type !== 'target' || state.toHandle != null) return null
-  const wired = edges.some(
-    (edge) => edge.to === from.nodeId && edge.to_port === from.id,
-  )
-  return wired ? { to: from.nodeId, to_port: from.id } : null
-}
-
-// Whether a keyboard event's target sits in a text field: the keys keep
-// their editing meaning there, so the canvas's own — delete among them —
-// wait for focus to return.
-export function inTextField(target) {
-  return target?.closest?.('input, textarea, select, [contenteditable]') != null
-}
-
-// The moves one drag stop commits — the existing move operation, one per
-// node that travelled. A multi-selection moves whole: every node that
-// travelled, placeholders included, the operation being uuid-addressed.
-// A selection of one keeps story 12's line: a typed node commits itself.
-export function dragMoves(group) {
-  return group.map((node) => ({ uuid: node.id, position: node.position }))
-}
-
-// Which nodes the delete key removes: a multi-selection takes every
-// selected node, placeholders included — uuid-addressed operations need
-// no type knowledge — while a selection of one is story 12's delete, a
-// typed node spared nothing and a lone placeholder spared.
-export function deleteSelection(nodes) {
-  const selected = nodes.filter((node) => node.selected)
-  if (selected.length === 1 && selected[0].type === 'placeholder') return []
-  return selected.map((node) => node.id)
-}
-
-// Which nodes a Delete/Backspace keystroke removes, or none — the whole
-// guard chain in one place. The gesture lives on the canvas in focus: a
-// text field keeps the keys as text editing, and so does focus anywhere
-// else in the chrome, while no focused element at all reads as the
-// canvas's — the canvas takes no focus of its own. The lock takes the
-// gesture away with every other edit, and a held key repeats nothing.
-export function deleteKeys(event, editable, nodes, canvas) {
-  if (!editable || event.repeat) return []
-  if (event.key !== 'Delete' && event.key !== 'Backspace') return []
-  if (inTextField(event.target)) return []
-  if (!canvas?.contains(event.target) && event.target !== canvas?.ownerDocument?.body) {
-    return []
-  }
-  return deleteSelection(nodes)
-}
-
-// A placeholder takes part in the uuid-addressed gestures exactly when it
-// is selected inside a multi-selection and editing is unlocked: story 12
-// keeps a lone placeholder inert, a placeholder outside the selection
-// never travels on another pair's account, and the lock holds it as it
-// holds every node. This is the draggable flag the canvas drags read,
-// set from the selection wherever selection changes.
-export function withDraggablePlaceholders(nodes, editable) {
-  const multi = nodes.filter((node) => node.selected).length > 1
-  return nodes.map((node) =>
-    node.type === 'placeholder'
-      ? { ...node, draggable: multi && editable && node.selected }
-      : node,
-  )
-}
-
-// The background's two drags differ by Shift alone, and so does their
-// catch: a plain drag pans, a shift-drag draws the marquee, and the
-// marquee takes every node the rectangle touches — inside or
-// intersecting, the catch a sweep across a clump expects. The props the
-// canvas reads for all of it.
-export function backgroundDrag(shift) {
-  return {
-    selectionOnDrag: shift,
-    panOnDrag: !shift,
-    selectionMode: SelectionMode.Partial,
-  }
-}
-
-// The node changes the canvas applies, save removal: a remove change
-// would drop nodes the server still holds, with no operation sent and no
-// refusal path — deletion is the shell's own gesture, fanned to the
-// delete operation and applied by the definition push that answers it.
-export function viewNodeChanges(changes, nodes) {
-  return applyNodeChanges(
-    changes.filter((change) => change.type !== 'remove'),
-    nodes,
-  )
-}
-
-// Whether the held graph carries unsaved changes — the one condition the
-// discard guard asks under, silence there being the one way to lose work.
-export function hasUnsavedChanges(file) {
-  return file?.dirty === true
-}
-
-// Whether a save asks for its target: saving elsewhere names a path, and
-// so does the first save of an untitled graph; any other save writes the
-// file being edited without asking.
-export function saveAsksForPath(file, elsewhere) {
-  return elsewhere || file?.path == null
-}
-
-// The chrome's one run control: it flips with the run state — Start when
-// idle, Stop while running, no separate mode — and a start needs
-// something to run, an empty definition leaving it disabled. Both acts
-// reach the server, so a connection that cannot deliver them is the
-// same as no control.
-export function runControl(run, graph, connected = true) {
-  const running = run?.running === true
-  return {
-    running,
-    label: running ? 'Stop' : 'Start',
-    enabled: connected && (running || (graph?.nodes.length ?? 0) > 0),
-  }
-}
-
-// Where each problem lives, as the canvas draws it: one mark per node,
-// carrying the messages of every problem that names it — the compile's
-// attribution read as a structure, never parsed from messages — plus the
-// failed run's error at the node whose failure ended it.
-export function nodeMarks(problems, run) {
-  const marks = new Map()
-  const add = (uuid, message) => {
-    const list = marks.get(uuid) ?? []
-    list.push(message)
-    marks.set(uuid, list)
-  }
-  for (const problem of problems ?? []) {
-    for (const uuid of problem.nodes ?? []) add(uuid, problem.message)
-  }
-  if (run?.outcome === 'failed' && run.node) add(run.node, run.error)
-  return marks
-}
-
-// The banner a connection state names, or none: the loss names itself and
-// the reconnection the client is already making; the mismatch names itself
-// and the reload that is the advice — never a self-dismissing toast. A
-// connected or not-yet-lost editor has no banner.
-export function bannerText(connection, mismatch) {
-  if (connection === 'lost') return 'connection lost — trying to reconnect…'
-  if (connection === 'incompatible') return `${mismatch} — reload the page`
-  return null
-}
-
-// The status line's reading of the run state: the running state itself,
-// or the last run's outcome, a failure naming what failed.
-export function runStatusText(run) {
-  if (run?.running === true) return 'running'
-  if (run?.outcome === 'failed') return `run failed: ${run.error ?? 'unknown failure'}`
-  if (run?.outcome) return `run ${run.outcome}`
-  return ''
-}
 
 // How long a toast stays when nobody dismisses it.
 const TOAST_MS = 8000
@@ -399,11 +130,15 @@ export function Editor() {
   // has flipped and must be ignored rather than read as the opposite act.
   const [acting, setActing] = useState(false)
   const [toasts, setToasts] = useState([])
+  // The keyboard wire in progress: the port it runs from, or null. The
+  // ports read it for their origin handle; Escape and a landing stand it
+  // down, and the lock takes it away as it takes every edit.
+  const [wire, setWire] = useState(null)
   const protocol = useRef(null)
   const canvasRef = useRef(null)
   const toastId = useRef(0)
-  // The canvas's nodes as the delete gesture reads them: the key handler
-  // lives across renders and reads the latest selection without
+  // The canvas's nodes as the gesture handlers read them: the key
+  // handlers live across renders and read the latest selection without
   // re-subscribing for every drag frame.
   const nodesRef = useRef([])
   useEffect(() => {
@@ -462,9 +197,11 @@ export function Editor() {
   const connected = connection === 'open'
   // While a run is on the definition is held still, and while the
   // connection is gone nothing can reach the server: every editing
-  // gesture goes quiet — palette drops, moves, wires, deletion, label
-  // and parameter edits, and the file controls — while selection,
-  // panning, and zoom stay live, looking not being editing. The server
+  // gesture goes quiet — palette drops and activations, moves, wires,
+  // unhooking, deletion, label and parameter edits, and the file
+  // controls — while selection, panning, and zoom stay live, looking not
+  // being editing. The lock is one rule over both input modes: the
+  // pointer gesture and its keyboard twin quiet together. The server
   // refuses whatever slips through when the lock is the reason; when the
   // connection is, nothing is sent at all — the browser holds no graph
   // state that could back an undeliverable edit.
@@ -559,19 +296,15 @@ export function Editor() {
 
   useEffect(() => {
     if (graph === null) return
-    // Selection and a drag in flight are view state: the definition push
-    // replaces what is drawn, never what the user has picked or holds.
+    // Selection, a drag in flight, and the measurement the canvas took
+    // are view state: the definition push replaces what is drawn, never
+    // what the user has picked or holds (carriedNode).
     setNodes((current) => {
       const before = new Map(current.map((node) => [node.id, node]))
       return withDraggablePlaceholders(
-        toNodes(graph, listing, marks, statuses, values).map((node) => {
-          const held = before.get(node.id)
-          return {
-            ...node,
-            selected: held?.selected ?? false,
-            position: held?.dragging ? held.position : node.position,
-          }
-        }),
+        toNodes(graph, listing, marks, statuses, values).map((node) =>
+          carriedNode(node, before.get(node.id)),
+        ),
         editable,
       )
     })
@@ -663,20 +396,22 @@ export function Editor() {
     protocol.current?.(type, fields)?.catch(showToast)
   }, [showToast])
 
-  const onNodesChange = useCallback((changes) => {
-    setNodes((current) =>
-      withDraggablePlaceholders(viewNodeChanges(changes, current), editable),
-    )
-  }, [editable])
-
-  const onNodeDragStop = useCallback((_event, _node, group) => {
-    if (protocol.current === null) return
-    for (const { uuid, position } of dragMoves(group)) {
-      protocol
-        .current('move_node', { uuid, position: { x: position.x, y: position.y } })
-        .catch(showToast)
-    }
-  }, [showToast])
+  // The node changes the canvas applies, and the moves they commit: a
+  // drag's travel frames are view only, the rests — a drag stop, a
+  // keyboard nudge — each committing the move operation its gesture
+  // lands on, one per node, the way the drag stop always did.
+  const onNodesChange = useCallback(
+    (changes) => {
+      setNodes((current) =>
+        withDraggablePlaceholders(viewNodeChanges(changes, current), editable),
+      )
+      const known = new Set(nodesRef.current.map((node) => node.id))
+      for (const move of finalMoves(changes)) {
+        if (known.has(move.uuid)) edit('move_node', move)
+      }
+    },
+    [edit, editable],
+  )
 
   const onConnect = useCallback((connection) => {
     if (protocol.current === null) return
@@ -713,6 +448,60 @@ export function Editor() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [editable, showToast])
 
+  // The two selection keys the shell takes before the canvas's own see
+  // them, capture-side: the shift-activation, the shift-click's twin,
+  // and Escape, the quiet cancel — the selection clears, the sidebar
+  // closing by its rule, an in-progress keyboard wire standing down. A
+  // decided cancel stops the key as the toggle does, the canvas's own
+  // Escape handler on a selected node scheduling a blur of the wrapper —
+  // a cancel must leave the user where they stood. Selection is view
+  // state: it stays live through the lock, exactly as clicking.
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      const uuid = toggleKey(event)
+      if (uuid !== null) {
+        event.preventDefault()
+        event.stopPropagation()
+        setNodes((current) =>
+          withDraggablePlaceholders(toggledSelection(current, uuid), editable),
+        )
+        return
+      }
+      const cancel = escapeCancel(event, nodesRef.current)
+      if (cancel === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      setWire(cancel.wire)
+      setNodes(withDraggablePlaceholders(cancel.nodes, editable))
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => document.removeEventListener('keydown', onKeyDown, true)
+  }, [editable])
+
+  // The lock takes an in-flight keyboard wire away with the edits.
+  useEffect(() => {
+    if (!editable) setWire(null)
+  }, [editable])
+
+  // The view following focus onto the canvas: React Flow pans a focused
+  // node into view; a focused port is panned back by the shortest shift
+  // that shows it.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const onFocusIn = (event) => {
+      const target = event.target
+      if (!target?.classList?.contains('react-flow__handle')) return
+      const view = panIntoView(
+        getViewport(),
+        canvas.getBoundingClientRect(),
+        target.getBoundingClientRect(),
+      )
+      if (view !== null) setViewport(view)
+    }
+    canvas.addEventListener('focusin', onFocusIn)
+    return () => canvas.removeEventListener('focusin', onFocusIn)
+  }, [getViewport, setViewport])
+
   const onDrop = useCallback(
     (event) => {
       event.preventDefault()
@@ -730,6 +519,23 @@ export function Editor() {
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
   }, [])
+
+  // The palette row's activation: the create a drop sends, at the view's
+  // centre — a deterministic, visible position, the keyboard's answer to
+  // "where it dropped".
+  const createFromPalette = useCallback(
+    (typeRef) => {
+      if (!editable || protocol.current === null) return
+      const canvas = canvasRef.current
+      if (canvas === null) return
+      const rect = canvas.getBoundingClientRect()
+      const position = viewportCenter(getViewport(), { width: rect.width, height: rect.height })
+      protocol
+        .current('create_node', { type_ref: typeRef, position })
+        .catch(showToast)
+    },
+    [editable, getViewport, showToast],
+  )
 
   // The one guard over loss: replacing the held graph — opening another
   // file or the same one, or starting fresh — asks before discarding
@@ -842,157 +648,121 @@ export function Editor() {
     setViewport({ x: view.x - covered / view.zoom, y: view.y, zoom: view.zoom })
   }, [selectedUuid, getViewport, setViewport])
 
-  const types = listing?.types
   const empty =
-    graph !== null && graph.nodes.length === 0 && types !== undefined && types.length > 0
+    graph !== null &&
+    graph.nodes.length === 0 &&
+    listing?.types !== undefined &&
+    listing.types.length > 0
   const control = runControl(run, graph, connected)
   const banner = bannerText(connection, mismatch)
 
   return (
     <EditContext.Provider value={edit}>
       <LockContext.Provider value={!editable}>
-        <div className={editable ? 'app' : 'app locked'}>
-          <header className="chrome">
-            <span className="file-name">{file?.path ?? 'untitled'}</span>
-            {hasUnsavedChanges(file) && (
-              <span className="file-dirty">unsaved changes</span>
-            )}
-            <span className="chrome-space" />
-            <button disabled={!control.enabled} onClick={actOnRun}>
-              {control.label}
-            </button>
-            <button disabled={!editable} onClick={newGraph}>New</button>
-            <button disabled={!editable} onClick={openFile}>Open</button>
-            <button disabled={!editable} onClick={() => save(false)}>Save</button>
-            <button disabled={!editable} onClick={() => save(true)}>Save as</button>
-          </header>
-          {/* The banner names the loss without covering the canvas: the
-              view beneath stays where the user left it, looking live. */}
-          {banner && <div className="banner">{banner}</div>}
-          <div className="workspace">
-            <aside className="palette">
-              <h1 className="palette-title">Nodes</h1>
-              {types === undefined ? null : types.length === 0 ? (
-                <p className="palette-empty">
-                  No node types are linked into this binary. Link a plugin crate
-                  to see its types here.
-                </p>
-              ) : (
-                paletteGroups(types).map((group) => (
-                  <section className="palette-plugin" key={group.plugin}>
-                    <h2 className="palette-heading">{group.plugin}</h2>
-                    {group.sections.map((section) => (
-                      <div className="palette-group" key={section.subGroup ?? ''}>
-                        {section.subGroup !== null && (
-                          <h3 className="palette-subgroup">{section.subGroup}</h3>
-                        )}
-                        <ul className="palette-list">
-                          {section.types.map((type) => (
-                            <li
-                              key={type.type_ref}
-                              className="palette-item"
-                              draggable={editable}
-                              onDragStart={(event) => {
-                                event.dataTransfer.setData(NODE_TYPE, type.type_ref)
-                                event.dataTransfer.effectAllowed = 'move'
-                              }}
-                            >
-                              <TypeIcon icon={type.icon} />
-                              <span className="palette-label">{type.label}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </section>
-                ))
+        <WireContext.Provider value={{ wire, setWire }}>
+          <div className={editable ? 'app' : 'app locked'}>
+            <header className="chrome">
+              <span className="file-name">{file?.path ?? 'untitled'}</span>
+              {hasUnsavedChanges(file) && (
+                <span className="file-dirty">unsaved changes</span>
               )}
-            </aside>
-            <main className="canvas" ref={canvasRef}>
-              {/* The plugin UI contract rides the canvas subtree alone: its
-                  readers are the node renderings, nothing in the chrome. */}
-              <PluginUiContext.Provider
-                value={{ h: createElement, bodies, valueBodies, failBody, failValue }}
-              >
-                <ReactFlow
-                  nodes={nodes}
-                  edges={graph === null ? [] : toEdges(graph, pulsing, listing)}
-                  nodeTypes={nodeTypes}
-                  edgeTypes={edgeTypes}
-                  onNodesChange={onNodesChange}
-                  onNodeDragStop={onNodeDragStop}
-                  onConnect={onConnect}
-                  onConnectEnd={onConnectEnd}
-                  onDrop={onDrop}
-                  onDragOver={onDragOver}
-                  fitView
-                  // The initial fit never zooms in past 100%: fitting a small
-                  // graph up to maxZoom would lurch the view under the pointer.
-                  fitViewOptions={{ maxZoom: 1 }}
-                  minZoom={0.25}
-                  maxZoom={2.5}
-                  // Shift rides the shell's own tracker — backgroundDrag
-                  // above — and multiSelectionKeyCode makes a shift-click
-                  // on a node a toggle, React Flow's selection key retired
-                  // so its capture can never swallow a node's pointerdown.
-                  // The delete key is this shell's own gesture — fanning
-                  // out to the delete operation per selected node — so
-                  // React Flow's is retired. A wire is a drag from either
-                  // end — a click never starts or lands one — and the drag
-                  // threshold keeps a port click from reading as a drag-off.
-                  multiSelectionKeyCode="Shift"
-                  selectionKeyCode={null}
-                  deleteKeyCode={null}
-                  {...backgroundDrag(shiftHeld)}
-                  nodesDraggable={editable}
-                  nodesConnectable={editable}
-                  connectionDragThreshold={4}
-                  connectOnClick={false}
-                >
-                  <Background variant="dots" gap={24} size={1.5} />
-                </ReactFlow>
-              </PluginUiContext.Provider>
-              {empty && (
-                <div className="canvas-hint">
-                  Drag a node type from the palette onto the canvas.
-                </div>
-              )}
-              <div className="toasts">
-                {toasts.map((toast) => (
-                  <div
-                    key={toast.id}
-                    className="toast"
-                    role="status"
-                    onClick={() => dismissToast(toast.id)}
-                  >
-                    {toast.text}
-                  </div>
-                ))}
-              </div>
-            </main>
-            <Sidebar
-              node={selected}
-              type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
-              wiredInputs={selectedWiredInputs}
-              baseScalars={listing?.baseScalars ?? {}}
-            />
-            {selectedNodes.length > 1 && (
-              <SelectionSidebar
-                nodes={selectedNodes}
-                types={new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))}
-                baseScalars={listing?.baseScalars ?? {}}
-                edges={graph?.edges ?? []}
+              <span className="chrome-space" />
+              <button disabled={!control.enabled} onClick={actOnRun}>
+                {control.label}
+              </button>
+              <button disabled={!editable} onClick={newGraph}>New</button>
+              <button disabled={!editable} onClick={openFile}>Open</button>
+              <button disabled={!editable} onClick={() => save(false)}>Save</button>
+              <button disabled={!editable} onClick={() => save(true)}>Save as</button>
+            </header>
+            {/* The banner names the loss without covering the canvas: the
+                view beneath stays where the user left it, looking live. */}
+            <Banner text={banner} />
+            <div className="workspace">
+              <Palette
+                types={listing?.types}
+                editable={editable}
+                onCreate={createFromPalette}
               />
-            )}
+              <main className="canvas" ref={canvasRef}>
+                {/* The plugin UI contract rides the canvas subtree alone: its
+                    readers are the node renderings, nothing in the chrome. */}
+                <PluginUiContext.Provider
+                  value={{ h: createElement, bodies, valueBodies, failBody, failValue }}
+                >
+                  <ReactFlow
+                    nodes={nodes}
+                    edges={graph === null ? [] : toEdges(graph, pulsing, listing)}
+                    nodeTypes={nodeTypes}
+                    edgeTypes={edgeTypes}
+                    onNodesChange={onNodesChange}
+                    onConnect={onConnect}
+                    onConnectEnd={onConnectEnd}
+                    onDrop={onDrop}
+                    onDragOver={onDragOver}
+                    fitView
+                    // The initial fit never zooms in past 100%: fitting a small
+                    // graph up to maxZoom would lurch the view under the pointer.
+                    fitViewOptions={{ maxZoom: 1 }}
+                    minZoom={0.25}
+                    maxZoom={2.5}
+                    // Shift rides the shell's own tracker — backgroundDrag
+                    // above — and multiSelectionKeyCode makes a shift-click
+                    // on a node a toggle, React Flow's selection key retired
+                    // so its capture can never swallow a node's pointerdown.
+                    // The delete key is this shell's own gesture — fanning
+                    // out to the delete operation per selected node — so
+                    // React Flow's is retired, as is edge focus: a wire is
+                    // not operable, and takes no seat in the tab order. A
+                    // wire is a drag from either end — a click never starts
+                    // or lands one — and the drag threshold keeps a port
+                    // click from reading as a drag-off.
+                    multiSelectionKeyCode="Shift"
+                    selectionKeyCode={null}
+                    deleteKeyCode={null}
+                    edgesFocusable={false}
+                    {...backgroundDrag(shiftHeld)}
+                    nodesDraggable={editable}
+                    nodesConnectable={editable}
+                    connectionDragThreshold={4}
+                    connectOnClick={false}
+                  >
+                    <Background variant="dots" gap={24} size={1.5} />
+                  </ReactFlow>
+                </PluginUiContext.Provider>
+                {empty && (
+                  <div className="canvas-hint">
+                    Drag a node type from the palette onto the canvas, or
+                    press Enter on a palette row.
+                  </div>
+                )}
+                <Toasts toasts={toasts} onDismiss={dismissToast} />
+              </main>
+              <Sidebar
+                node={selected}
+                type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
+                wiredInputs={selectedWiredInputs}
+                baseScalars={listing?.baseScalars ?? {}}
+              />
+              {selectedNodes.length > 1 && (
+                <SelectionSidebar
+                  nodes={selectedNodes}
+                  types={new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))}
+                  baseScalars={listing?.baseScalars ?? {}}
+                  edges={graph?.edges ?? []}
+                />
+              )}
+            </div>
+            <footer
+              className={`status${status.error ? ' error' : ''}`}
+              aria-live="polite"
+            >
+              {status.text}
+            </footer>
           </div>
-          <footer
-            className={`status${status.error ? ' error' : ''}`}
-            aria-live="polite"
-          >
-            {status.text}
-          </footer>
-        </div>
+        </WireContext.Provider>
       </LockContext.Provider>
     </EditContext.Provider>
   )
 }
+

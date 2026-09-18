@@ -65,8 +65,9 @@ pub fn base_scalars() -> Map<String, Value> {
 /// declared appearance informs it — a union-declared port, a reference the
 /// registry does not know, a type that does not declare both. The browser
 /// carries the same pair as its own neutral, so there is one neutral
-/// everywhere.
-const NEUTRAL_COLOR: &str = "#8f99a8";
+/// everywhere, and it clears the editor's 3:1 edge floor against both the
+/// canvas a wire sits on and the node surface a port dot sits on.
+const NEUTRAL_COLOR: &str = "#6b7d8f";
 const NEUTRAL_SHAPE: &str = "circle";
 
 /// The listing's data-type fact: per data type reference — every name the

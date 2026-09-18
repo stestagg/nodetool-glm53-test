@@ -8,7 +8,7 @@
 // shape outside the drawn set takes the neutral shape, the colour
 // verbatim: the declarer's to fix, as with icons.
 
-export const NEUTRAL = { color: '#8f99a8', shape: 'circle' }
+export const NEUTRAL = { color: '#6b7d8f', shape: 'circle' }
 
 // The plain codepoint ordering every view agrees on, so every tab and
 // every reload reads the same order.
