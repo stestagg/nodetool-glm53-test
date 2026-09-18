@@ -57,6 +57,7 @@ async fn main() {
                 label: node_type.label.to_owned(),
                 parameters: Default::default(),
                 families: Default::default(),
+                fed: Default::default(),
             };
             (node_type
                 .behaviour

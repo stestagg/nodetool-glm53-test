@@ -113,6 +113,7 @@ fn behaviour_of(type_ref: &str) -> Box<dyn Behaviour> {
         label: node_type.label.to_owned(),
         parameters: Default::default(),
         families: Default::default(),
+        fed: Default::default(),
     };
     (node_type
         .behaviour

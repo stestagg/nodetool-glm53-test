@@ -18,9 +18,11 @@
 //! upstream connection while an output may fan out freely. A node instance
 //! carries a unique uuid, a parameter must name an input port, and an input
 //! carries a parameter or a connection — never both. An input left with
-//! neither a connection nor a parameter value is *not* an error: it
-//! compiles unconnected; flagging such inputs early, if wanted, belongs to
-//! the editor's warn-early set, not to compilation.
+//! neither a connection nor a parameter value is *not* of itself an error:
+//! it compiles unconnected, and whether that is a fault only the node type
+//! can say — one whose behaviour gates on the input declares it through
+//! `check_parameters`; flagging such inputs otherwise belongs to the
+//! editor's warn-early set, not to compilation.
 //!
 //! Every connection's type is resolved before the graph is built, across the
 //! unions its ports declare: the first exact match, walking the upstream's
@@ -65,7 +67,7 @@
 //! connection into or out of a family port is rebuilt against the
 //! resolution, so what the compiled graph carries is what will flow.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use uuid::Uuid;
 
@@ -453,6 +455,10 @@ pub fn compile(
     }
 
     let mut nodes = BTreeMap::new();
+    let mut fed_of = BTreeMap::<Uuid, BTreeSet<&'static str>>::new();
+    for (uuid, input) in fed_by.keys() {
+        fed_of.entry(*uuid).or_default().insert(*input);
+    }
     for (uuid, (instance, node_type)) in &instances {
         let Some(node_type) = node_type else { continue };
         let compiled = CompiledNode {
@@ -463,6 +469,7 @@ pub fn compile(
                 .unwrap_or_else(|| node_type.label.to_owned()),
             parameters: parameters_of.remove(uuid).unwrap_or_default(),
             families: families_of.remove(uuid).unwrap_or_default(),
+            fed: fed_of.remove(uuid).unwrap_or_default(),
         };
         if let Some(check) = node_type.check_parameters {
             for message in check(&compiled) {
@@ -513,6 +520,9 @@ pub struct CompiledNode {
     /// by family name. A behaviour built over a family-declared node reads
     /// values as the member its family resolved to.
     pub families: BTreeMap<&'static str, &'static DataType>,
+    /// The input ports the graph's wiring feeds, by port name — the rest of
+    /// an input's carriage is a parameter value, or nothing at all.
+    pub fed: BTreeSet<&'static str>,
 }
 
 /// A parameter value that compiled: the data type the literal resolved to,

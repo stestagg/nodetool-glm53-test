@@ -33,7 +33,10 @@ use crate::numeric::{
     NUMERIC_FAMILY,
 };
 
-mod numeric;
+/// The generic-port idiom, plugin-side: the numeric family the fizzbuzz
+/// nodes are written against, and the `Numeric` trait the generic bodies
+/// are written over.
+pub mod numeric;
 
 /// The counter's sequence logic, generic over the family member the
 /// compiler resolved: start, then start+step, and so on while the
@@ -81,11 +84,27 @@ fn counter(compiled: &CompiledNode) -> Box<dyn Behaviour> {
 /// mid-stream.
 fn counter_check(compiled: &CompiledNode) -> Vec<String> {
     if compiled.families.contains_key(NUMERIC_FAMILY) {
-        for_numeric!(compiled, counter_step_check)
+        let mut errors = carried_check(compiled, &["start", "stop", "step"]);
+        errors.extend(for_numeric!(compiled, counter_step_check));
+        errors
     } else {
         // The family itself failed to compile; it reported its own error.
         Vec::new()
     }
+}
+
+/// The compile-time form of an input the behaviour reads but nothing
+/// carries: neither a connection feeds it nor a parameter holds it, so the
+/// node's gate waits on an input whose stream is empty — the run would
+/// stall there without end, with nothing to read and no error to show.
+fn carried_check(compiled: &CompiledNode, names: &[&str]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| !compiled.parameters.contains_key(*name) && !compiled.fed.contains(*name))
+        .map(|name| {
+            format!("input `{name}` holds no parameter value and no connection feeds it — the node would never fire")
+        })
+        .collect()
 }
 
 fn counter_step_check<T: Numeric>(compiled: &CompiledNode) -> Vec<String> {
@@ -161,8 +180,8 @@ conditions! {
 /// held divisor. The general condition's pairing would re-emit on that
 /// arrival too — a duplicate no downstream pairing could tell from a
 /// count's own boolean — while this node's consumers pair its stream with
-/// the `a` stream one value per count. Emitted per count, the stream is
-/// that pairing, for any divisor, streamed or fixed.
+/// the `a` stream one value per count. One boolean per count, then,
+/// whatever form the divisor takes.
 struct DivisibleLogic<T: Numeric> {
     _member: PhantomData<T>,
 }
@@ -192,6 +211,10 @@ fn divisible_behaviour(compiled: &CompiledNode) -> Box<dyn Behaviour> {
     for_numeric!(compiled, divisible_of)
 }
 
+fn divisible_check(compiled: &CompiledNode) -> Vec<String> {
+    carried_check(compiled, &["a", "b"])
+}
+
 node_type! {
     type_ref: "fizzbuzz/divisible",
     label: "Divisible",
@@ -199,6 +222,7 @@ node_type! {
     plugin: "fizzbuzz",
     sub_group: "condition",
     behaviour: divisible_behaviour,
+    check_parameters: divisible_check,
     inputs: [ a: ["numeric", NUMERICS], b: ["numeric", NUMERICS] ],
     outputs: [ result: "bool" ],
 }
@@ -254,9 +278,10 @@ fn case_behaviour(compiled: &CompiledNode) -> Box<dyn Behaviour> {
     for_numeric!(compiled, case_selection)
 }
 
-/// The count's fizzbuzz string: a divisor flag turns the count into its
-/// word, both together into the joined word, neither leaves the count's
-/// plain form.
+fn case_check(compiled: &CompiledNode) -> Vec<String> {
+    carried_check(compiled, &["count", "fizz", "buzz"])
+}
+
 fn case_text<T: Numeric>(count: T, fizz: bool, buzz: bool) -> String {
     match (fizz, buzz) {
         (true, true) => "FizzBuzz".to_owned(),
@@ -266,7 +291,9 @@ fn case_text<T: Numeric>(count: T, fizz: bool, buzz: bool) -> String {
     }
 }
 
-/// The input's current value as the boolean the run was gated on.
+/// The input's current value as its declared `bool` — the run is gated on
+/// the input's first value, and the compiler type-checks the port against
+/// its declaration.
 fn flag_input(io: &mut Io<'_>, name: &str) -> bool {
     io.input(name)
         .current()
@@ -280,6 +307,7 @@ node_type! {
     icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M2 4h4l6 4M2 8h10M2 12h4l6-4" stroke="#333" stroke-width="1.5" fill="none"/></svg>"##,
     plugin: "fizzbuzz",
     behaviour: case_behaviour,
+    check_parameters: case_check,
     inputs: [ count: ["numeric", NUMERICS], fizz: "bool", buzz: "bool" ],
     outputs: [ text: "String" ],
 }

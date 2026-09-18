@@ -283,11 +283,11 @@ impl<'a> Io<'a> {
 /// Build the behaviour one instance of a node type runs — the authoring
 /// API's half of the declaration, together with the descriptor the whole
 /// node type. The compiled node carries what compile time settled for the
-/// instance: its label, its resolved parameters, and one concrete type per
-/// port family. A node type declared over a port family stamps its
-/// behaviour for the resolved type here, once per instance — the behaviour
-/// itself then reads values as that concrete Rust type, with no dispatch
-/// on values.
+/// instance: its label, its resolved parameters, one concrete type per
+/// port family, and the inputs the wiring feeds. A node type declared over
+/// a port family stamps its behaviour for the resolved type here, once per
+/// instance — the behaviour itself then reads values as that concrete Rust
+/// type, with no dispatch on values.
 pub type BehaviourFn = fn(&crate::compile::CompiledNode) -> Box<dyn Behaviour>;
 
 /// Drive one node: run its behaviour over its inputs and outputs per the

@@ -10,7 +10,10 @@
 //! fails to compile, and a run that ends in an error go to stderr, naming
 //! what and where, with a non-zero exit.
 
+use std::io::{self, Write};
 use std::process::ExitCode;
+
+use tokio::sync::watch;
 
 use nodetool::compile;
 use nodetool::engine::Run;
@@ -51,8 +54,13 @@ async fn main() -> ExitCode {
 
     // The terminal completes every output the graph leaves unconnected:
     // one consumer per such output, joined to its fan-out like any other
-    // downstream, printing each value as it arrives.
+    // downstream, printing each value as it arrives. The run ends with the
+    // terminal: a write that fails — the reader went away, `head` or a
+    // pager done — stops the run quietly, not as a failure, and no panic
+    // ever reaches the terminal.
     let mut run = Run::new(&compiled);
+    let (stop, stopped) = watch::channel(false);
+    run.stop_on(stopped);
     for (uuid, node) in &compiled.nodes {
         for port in node.node_type.outputs {
             let fed = compiled
@@ -62,11 +70,17 @@ async fn main() -> ExitCode {
             if fed {
                 continue;
             }
-            run.consume(*uuid, port.name, |mut values| async move {
-                while let Some(value) = values.recv().await {
-                    println!("{}", plain(&value));
+            run.consume(*uuid, port.name, {
+                let stop = stop.clone();
+                move |mut values| async move {
+                    while let Some(value) = values.recv().await {
+                        if writeln!(io::stdout().lock(), "{}", plain(&value)).is_err() {
+                            let _ = stop.send(true);
+                            break;
+                        }
+                    }
+                    Ok(())
                 }
-                Ok(())
             });
         }
     }
@@ -85,6 +99,9 @@ async fn main() -> ExitCode {
 /// itself. A value outside the base scalars is named rather than rendered;
 /// rendering a custom type is its plugin's business.
 fn plain(value: &Value) -> String {
+    // The scalar list is the twin of `string_form` in crates/nodetool-utility:
+    // the same twelve base scalars, kept in step by hand — linking that
+    // crate here would register its node types, which this binary does not.
     macro_rules! scalars {
         ($($ty:ty),* $(,)?) => {$(
             if let Some(form) = value.get::<$ty>().map(ToString::to_string) {

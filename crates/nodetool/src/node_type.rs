@@ -29,11 +29,12 @@ pub struct NodeType {
     /// the declaration. A type declared without one is a descriptor alone:
     /// the compiler accepts it, but nothing runs it.
     pub behaviour: Option<BehaviourFn>,
-    /// Validates the instance's compiled parameters at compile time, when
-    /// the node type can say something about them the type rules cannot —
-    /// a zero step, an inverted range. The compiler consults it after the
-    /// parameters and any port families resolved; every returned line is a
-    /// compile error. A type declared without one has nothing to add.
+    /// Validates the compiled instance at compile time, when the node type
+    /// can say something about it the type rules cannot — a zero step, an
+    /// inverted range, an input its behaviour gates on that nothing
+    /// carries. The compiler consults it after the parameters and any port
+    /// families resolved; every returned line is a compile error. A type
+    /// declared without one has nothing to add.
     pub check_parameters: Option<ParameterCheck>,
 }
 
@@ -50,10 +51,10 @@ pub struct Port {
     pub family: Option<&'static str>,
 }
 
-/// Validates one compiled node instance's parameters, from the plugin that
-/// declared the node type. The compiler consults it after the parameters
-/// and any port families resolved; each returned line is a compile error
-/// the compiler reports naming the node.
+/// Validates one compiled node instance, from the plugin that declared the
+/// node type. The compiler consults it after the parameters and any port
+/// families resolved; each returned line is a compile error the compiler
+/// reports naming the node.
 pub type ParameterCheck = fn(&CompiledNode) -> Vec<String>;
 
 inventory::collect! { NodeType }

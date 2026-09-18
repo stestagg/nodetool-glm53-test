@@ -44,7 +44,7 @@ scalar data types.
   is the whole integration step.
 - `crates/nodetool-fizzbuzz` — the first-party fizzbuzz node library, a
   plugin crate like the utility one: a `Counter` source, the seven
-  `Condition` comparisons (one node type per operation, under a condition
+  `Condition` operations (one node type per operation, under a condition
   sub-group — the six comparisons beside the `Divisible` divisibility
   test), the `Case selection` that pairs a count with its two divisibility
   streams and emits each count's fizzbuzz string, and an `Output`
@@ -120,8 +120,7 @@ cargo run -p load-graph        # load a graph file, print it, show the round tri
 cargo run -p compile-graph     # compile each sample graph file, print the result
 cargo run -p run-node          # drive one behaviour-ful node with scripted streams
 cargo run -p run-graph         # run the pipeline sample headless, values as they arrive
-cargo run -p nodetool-fizzbuzz -- crates/nodetool-fizzbuzz/graphs/fizzbuzz.yml
-                             # the fizzbuzz run: one hundred lines, as they arrive
+cargo run -p nodetool-fizzbuzz -- crates/nodetool-fizzbuzz/graphs/fizzbuzz.yml  # one hundred lines, as they arrive
 cargo run -p visual            # the editor on http://127.0.0.1:8420
 cargo run -p visual -- examples/visual/graphs/sample.yml  # the editor on a graph file
 ```
