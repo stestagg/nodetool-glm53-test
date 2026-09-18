@@ -14,7 +14,8 @@
 // which keystrokes cost nodes (deleteKeys), how the background's two
 // drags differ (backgroundDrag), which nodes a drag or a delete fans out
 // to, the draggable flag a placeholder travels under, the toggle the
-// shift-activation lands, and the node changes the view applies — never
+// shift-activation lands, what a rebuilt node carries across a push
+// (carriedNode), and the node changes the view applies — never
 // a removal.
 import { describe, expect, it } from 'vitest'
 import { SelectionMode } from '@xyflow/react'
@@ -22,6 +23,7 @@ import { NEUTRAL } from './types.js'
 import {
   backgroundDrag,
   bannerText,
+  carriedNode,
   deleteKeys,
   deleteSelection,
   emittedTargets,
@@ -533,6 +535,41 @@ describe('toggledSelection', () => {
       { id: 'u1', selected: false },
       { id: 'u2', selected: false },
     ])
+  })
+})
+
+describe('carriedNode', () => {
+  const redrawn = (status) => ({
+    id: 'u1',
+    position: { x: 5, y: 6 },
+    type: 'type',
+    data: { status },
+  })
+  const held = (over = {}) => ({
+    id: 'u1',
+    position: { x: 1, y: 2 },
+    type: 'type',
+    data: { status: 'previous' },
+    selected: true,
+    measured: { width: 130, height: 44 },
+    ...over,
+  })
+
+  it('a rebuilt node keeps the held selection and measurement, takes the pushed truth', () => {
+    const carried = carriedNode(redrawn('running'), held())
+    expect(carried.selected).toBe(true)
+    expect(carried.measured).toEqual({ width: 130, height: 44 })
+    expect(carried.data).toEqual({ status: 'running' })
+    expect(carried.position).toEqual({ x: 5, y: 6 })
+  })
+
+  it('a drag in flight keeps the position it is held at', () => {
+    expect(carriedNode(redrawn(), held({ dragging: true })).position).toEqual({ x: 1, y: 2 })
+  })
+
+  it('a node the canvas has not held starts bare, to be measured', () => {
+    const node = redrawn()
+    expect(carriedNode(node, undefined)).toBe(node)
   })
 })
 

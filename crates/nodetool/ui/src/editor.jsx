@@ -69,14 +69,14 @@ import { PlaceholderNode, TypeNode } from './nodes.jsx'
 import { Sidebar, SelectionSidebar } from './sidebar.jsx'
 import { Banner, Toasts } from './chrome.jsx'
 import { Palette } from './palette.jsx'
-import { finalMoves, panIntoView, toggleKey, viewportCenter } from './keyboard.js'
+import { escapeCancel, finalMoves, panIntoView, toggleKey, viewportCenter } from './keyboard.js'
 import {
   backgroundDrag,
   bannerText,
+  carriedNode,
   deleteKeys,
   emittedTargets,
   hasUnsavedChanges,
-  inTextField,
   nodeMarks,
   offPortUnhook,
   runControl,
@@ -296,19 +296,18 @@ export function Editor() {
 
   useEffect(() => {
     if (graph === null) return
-    // Selection and a drag in flight are view state: the definition push
-    // replaces what is drawn, never what the user has picked or holds.
+    // Selection, a drag in flight, and the measurement the canvas took
+    // are view state: the definition push replaces what is drawn, never
+    // what the user has picked or holds — and a rebuilt node that
+    // forgets its measurement is measured afresh, the canvas holding it
+    // invisible meanwhile, which would drop a mid-run focus off the
+    // canvas (carriedNode).
     setNodes((current) => {
       const before = new Map(current.map((node) => [node.id, node]))
       return withDraggablePlaceholders(
-        toNodes(graph, listing, marks, statuses, values).map((node) => {
-          const held = before.get(node.id)
-          return {
-            ...node,
-            selected: held?.selected ?? false,
-            position: held?.dragging ? held.position : node.position,
-          }
-        }),
+        toNodes(graph, listing, marks, statuses, values).map((node) =>
+          carriedNode(node, before.get(node.id)),
+        ),
         editable,
       )
     })
@@ -470,24 +469,19 @@ export function Editor() {
     return () => document.removeEventListener('keydown', onKeyDown, true)
   }, [editable])
 
-  // Escape, the keyboard's quiet cancel: the selection clears — the
-  // sidebar closing by its rule — and an in-progress keyboard wire
-  // stands down. An uncommitted field edit keeps the Escape it already
-  // had, which is why a text field is excluded here.
+  // Escape, the keyboard's quiet cancel: the decision is escapeCancel's —
+  // the selection clears, the sidebar closing by its rule, and an
+  // in-progress keyboard wire stands down.
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (event.key !== 'Escape' || inTextField(event.target)) return
-      setWire(null)
-      setNodes((current) =>
-        withDraggablePlaceholders(
-          current.map((node) => ({ ...node, selected: false })),
-          editable,
-        ),
-      )
+      const cancel = escapeCancel(event, wire, nodesRef.current)
+      if (cancel === null) return
+      setWire(cancel.wire)
+      setNodes(withDraggablePlaceholders(cancel.nodes, editable))
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [editable])
+  }, [editable, wire])
 
   // The lock takes an in-flight keyboard wire away with the edits.
   useEffect(() => {
@@ -694,7 +688,6 @@ export function Editor() {
                 types={listing?.types}
                 editable={editable}
                 onCreate={createFromPalette}
-                onDragType={NODE_TYPE}
               />
               <main className="canvas" ref={canvasRef}>
                 {/* The plugin UI contract rides the canvas subtree alone: its

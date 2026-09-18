@@ -71,40 +71,37 @@ export function TypeIcon({ icon }) {
   return <span className="type-icon" dangerouslySetInnerHTML={{ __html: icon }} />
 }
 
-// The port's keys, turned into the operation each pointer gesture sends:
-// Delete on a connected input unhooks, Enter or Space starts or lands a
-// keyboard wire. The decision is keyboard.js's; the lock holds here the
+// The port's keyboard concern in one place, one context read per port:
+// the keys turned into the operation each pointer gesture sends — Delete
+// on a connected input unhooks, Enter or Space starts or lands a
+// keyboard wire — and the wire-from test marking the port a keyboard
+// wire runs from. The decision is keyboard.js's; the lock holds here the
 // way it holds every port's pointer gesture.
 function usePortKeys() {
   const edit = useEdit()
   const locked = useLocked()
   const { wire, setWire } = useContext(WireContext)
-  return (event, port) => {
-    const act = portKey(event, port, wire, !locked)
-    if (act === null) return
-    event.preventDefault()
-    event.stopPropagation()
-    if (act.kind === 'unhook') edit('unhook', act.fields)
-    else if (act.kind === 'start') setWire({ node: port.node, port: port.port, type: port.type })
-    else {
-      setWire(null)
-      if (act.fields) edit('wire', act.fields)
-    }
+  return {
+    act: (event, port) => {
+      const act = portKey(event, port, wire, !locked)
+      if (act === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (act.kind === 'unhook') edit('unhook', act.fields)
+      else if (act.kind === 'start') setWire({ node: port.node, port: port.port, type: port.type })
+      else {
+        setWire(null)
+        if (act.fields) edit('wire', act.fields)
+      }
+    },
+    wireFrom: (nodeUuid, portName, type) =>
+      wire?.node === nodeUuid && wire?.port === portName && wire?.type === type,
   }
-}
-
-// The handle a keyboard wire runs from: the wire's visible origin, held
-// while the candidate focus moves.
-function useWireFrom() {
-  const { wire } = useContext(WireContext)
-  return (nodeUuid, portName, type) =>
-    wire?.node === nodeUuid && wire?.port === portName && wire?.type === type
 }
 
 function InputPort({ port, node, wired, scalar, appearance, title }) {
   const edit = useEdit()
-  const onPortKey = usePortKeys()
-  const wireFrom = useWireFrom()
+  const { act: onPortKey, wireFrom } = usePortKeys()
   return (
     <div
       className={`port in${wired ? ' connected' : ''}`}
@@ -168,8 +165,7 @@ function PortValue({ port, dataTypes, value }) {
 }
 
 function OutputPort({ port, appearance, value, dataTypes, nodeUuid, title }) {
-  const onPortKey = usePortKeys()
-  const wireFrom = useWireFrom()
+  const { act: onPortKey, wireFrom } = usePortKeys()
   return (
     <div className="port out" title={port.type_refs.join(', ')}>
       <Handle

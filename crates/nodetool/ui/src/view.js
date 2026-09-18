@@ -186,6 +186,22 @@ export function toggledSelection(nodes, uuid) {
   )
 }
 
+// What a definition push's rebuilt node keeps from the one the canvas
+// holds: the selection, a drag's in-flight position, and the measurement
+// the canvas already took. The measurement is the quiet one — a rebuilt
+// node without it is measured afresh, and until the measuring lands the
+// canvas holds the node invisible, which drops keyboard focus off the
+// canvas mid-run.
+export function carriedNode(node, held) {
+  if (held === undefined) return node
+  return {
+    ...node,
+    selected: held.selected ?? false,
+    position: held.dragging ? held.position : node.position,
+    measured: held.measured,
+  }
+}
+
 // The background's two drags differ by Shift alone, and so does their
 // catch: a plain drag pans, a shift-drag draws the marquee, and the
 // marquee takes every node the rectangle touches — inside or

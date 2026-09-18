@@ -1,11 +1,21 @@
 // The keyboard's decisions, pure: the keyboard-created node's position,
 // the moves a canvas change batch commits, the port keys that start,
-// land, and unhook wires, the shift-activation that toggles a node in
-// the selection, and the view-follow that brings a focused port back.
-// Each answer names the operation its pointer gesture sends; the shell
-// turns the answer into the operation.
+// land, and unhook wires, the landings a candidate can take, Escape's
+// quiet cancel over the selection and an in-progress wire, the
+// shift-activation that toggles a node in the selection, and the
+// view-follow that brings a focused port back. Each answer names the
+// operation its pointer gesture sends; the shell turns the answer into
+// the operation.
 import { describe, expect, it } from 'vitest'
-import { finalMoves, panIntoView, portKey, viewportCenter, wireLanding } from './keyboard.js'
+import {
+  escapeCancel,
+  finalMoves,
+  panIntoView,
+  portKey,
+  toggleKey,
+  viewportCenter,
+  wireLanding,
+} from './keyboard.js'
 
 describe('viewportCenter', () => {
   it('the view centre is the flow position the keyboard creates at', () => {
@@ -80,6 +90,22 @@ describe('wireLanding', () => {
     expect(
       wireLanding(out, { node: 'u1', port: 'value', type: 'target' }),
     ).toEqual({ from: 'u1', from_port: 'sum', to: 'u1', to_port: 'value' })
+  })
+
+  it('one node’s opposite ports may share a name — the self-wire a pointer drag lands', () => {
+    const value = (type) => ({ node: 'u5', port: 'value', type })
+    expect(wireLanding(value('source'), value('target'))).toEqual({
+      from: 'u5',
+      from_port: 'value',
+      to: 'u5',
+      to_port: 'value',
+    })
+    expect(wireLanding(value('target'), value('source'))).toEqual({
+      from: 'u5',
+      from_port: 'value',
+      to: 'u5',
+      to_port: 'value',
+    })
   })
 })
 
@@ -157,5 +183,63 @@ describe('panIntoView', () => {
 
   it('no canvas to measure against pans nothing', () => {
     expect(panIntoView(viewport, undefined, { left: 1, top: 1, right: 2, bottom: 2 })).toBeNull()
+  })
+})
+
+describe('escapeCancel', () => {
+  const drawn = (id, selected) => ({ id, selected })
+  const nodes = [drawn('u1', true), drawn('u2', true), drawn('u3', false)]
+  const inField = { target: { closest: () => ['input'] } }
+  const press = (target = {}) => ({ key: 'Escape', target })
+  const running = { node: 'u1', port: 'sum', type: 'source' }
+
+  it('Escape clears the selection and stands the wire down', () => {
+    expect(escapeCancel(press(), running, nodes)).toEqual({
+      wire: null,
+      nodes: [drawn('u1', false), drawn('u2', false), drawn('u3', false)],
+    })
+  })
+
+  it('a quiet cancel with no wire running still clears the selection', () => {
+    expect(escapeCancel(press(), null, nodes)).toEqual({
+      wire: null,
+      nodes: [drawn('u1', false), drawn('u2', false), drawn('u3', false)],
+    })
+  })
+
+  it('any other key is no cancel', () => {
+    expect(escapeCancel({ key: 'Enter', target: {} }, running, nodes)).toBeNull()
+  })
+
+  it('a text field keeps the Escape it already had', () => {
+    expect(escapeCancel(press(inField.target), running, nodes)).toBeNull()
+  })
+})
+
+describe('toggleKey', () => {
+  const inNode = (id) => ({
+    target: {
+      closest: (selector) =>
+        selector === '.react-flow__node' ? { getAttribute: () => id } : null,
+    },
+  })
+  const inField = { target: { closest: () => ['input'] } }
+
+  it('Shift with Enter or Space names the focused node, the shift-click’s twin', () => {
+    expect(toggleKey({ shiftKey: true, key: 'Enter', ...inNode('u2') })).toBe('u2')
+    expect(toggleKey({ shiftKey: true, key: ' ', ...inNode('u2') })).toBe('u2')
+  })
+
+  it('a plain activation stays the canvas’s own, and another key is nothing', () => {
+    expect(toggleKey({ shiftKey: false, key: 'Enter', ...inNode('u2') })).toBeNull()
+    expect(toggleKey({ shiftKey: true, key: 'a', ...inNode('u2') })).toBeNull()
+  })
+
+  it('a target outside a node names nothing', () => {
+    expect(toggleKey({ shiftKey: true, key: 'Enter', target: {} })).toBeNull()
+  })
+
+  it('a text field keeps the keys', () => {
+    expect(toggleKey({ shiftKey: true, key: 'Enter', ...inField })).toBeNull()
   })
 })

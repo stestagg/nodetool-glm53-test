@@ -194,10 +194,10 @@ focused node selects it alone, as a click does; Shift with them toggles
 it in the selection, as a shift-click does; Escape is the quiet cancel —
 it clears the selection, stands down an in-progress keyboard wire, and
 discards an uncommitted field edit, as it already did. Arrow keys nudge
-the selected nodes (5px a press, 20px with Shift), each nudge committing
+the selected nodes, Shift for the larger step, each nudge committing
 the same move a drag stop commits. A focused port takes Enter or Space to
 start a keyboard wire from it — from either end, a connected input
-included; Tab (or an arrow) moves the wire's candidate to the next port,
+included; Tab moves the wire's candidate to the next port,
 Enter or Space lands the wire where a pointer drag would — an
 already-wired input replaced — and Escape stands the wire down. Delete
 (or Backspace) on a focused connected input unhooks it, the drag-off's

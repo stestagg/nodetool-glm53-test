@@ -32,7 +32,16 @@ function meets(ratio, floor, why) {
 
 describe('the theme as the stylesheet defines it', () => {
   it('declares the colours the floor is judged against', () => {
-    for (const name of ['--text', '--muted', '--panel', '--canvas', '--titlebar', '--accent', '--danger']) {
+    for (const name of [
+      '--text',
+      '--muted',
+      '--panel',
+      '--canvas',
+      '--titlebar',
+      '--accent',
+      '--danger',
+      '--report-text',
+    ]) {
       expect(vars[name], name).toMatch(/^#[0-9a-fA-F]{6}$/)
     }
   })
@@ -50,7 +59,7 @@ describe('the theme as the stylesheet defines it', () => {
   })
 
   it('the reports stay readable on the danger they are painted on', () => {
-    meets(contrastRatio('#ffffff', vars['--danger']), TEXT, 'banner and toast text')
+    meets(contrastRatio(vars['--report-text'], vars['--danger']), TEXT, 'banner and toast text')
   })
 
   it('the derived statuses clear 4.5:1 on the title bar they name', () => {
@@ -66,6 +75,18 @@ describe('the theme as the stylesheet defines it', () => {
     for (const surface of ['--panel', '--canvas', '--titlebar']) {
       meets(contrastRatio(vars['--danger'], vars[surface]), EDGE, `problem mark on ${surface}`)
     }
+  })
+
+  it('a port’s focus ring stands outside the dot, panel colour beneath the accent', () => {
+    // The pairing that matters on a port is ring-against-panel — inside
+    // the dot the accent would meet the dot's own declared colour, 1:1 on
+    // the numeric ports. The rule itself is the claim, so a revert to an
+    // in-dot ring fails here rather than passing silently.
+    const rule = css.match(/\.port \.react-flow__handle[^{}]*:focus-visible\s*\{([^}]*)\}/)
+    expect(rule, 'the port declares its own focus treatment').toBeTruthy()
+    expect(rule[1]).toContain('outline: none')
+    expect(rule[1]).toContain('var(--panel)')
+    expect(rule[1]).toContain('var(--accent)')
   })
 })
 

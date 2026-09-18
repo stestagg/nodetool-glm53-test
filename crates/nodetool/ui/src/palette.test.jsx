@@ -5,7 +5,6 @@
 // the lock holds, a row keeps its place but goes quiet with its drag.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { NODE_TYPE } from './protocol.js'
 import { Palette, paletteGroups } from './palette.jsx'
 
 afterEach(cleanup)
@@ -75,9 +74,7 @@ describe('paletteGroups', () => {
 
 describe('Palette rows', () => {
   const palette = (editable, onCreate) =>
-    render(
-      <Palette types={types} editable={editable} onCreate={onCreate} onDragType={NODE_TYPE} />,
-    )
+    render(<Palette types={types} editable={editable} onCreate={onCreate} />)
 
   it('an activated row creates through the same create a drop sends', () => {
     const onCreate = vi.fn()

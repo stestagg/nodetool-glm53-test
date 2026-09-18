@@ -8,6 +8,7 @@
 // go quiet exactly with their pointer twin — the drag — the same
 // disabled reading the file controls get.
 
+import { NODE_TYPE } from './protocol.js'
 import { TypeIcon } from './nodes.jsx'
 
 // The palette's sections, from the listing's plugin and sub-group facts:
@@ -47,7 +48,7 @@ function activated(event) {
   return event.key === 'Enter' || event.key === ' '
 }
 
-export function Palette({ types, editable, onCreate, onDragType }) {
+export function Palette({ types, editable, onCreate }) {
   return (
     <aside className="palette">
       <h1 className="palette-title">Nodes</h1>
@@ -80,10 +81,7 @@ export function Palette({ types, editable, onCreate, onDragType }) {
                         }
                       }}
                       onDragStart={(event) => {
-                        event.dataTransfer.setData(
-                          onDragType,
-                          type.type_ref,
-                        )
+                        event.dataTransfer.setData(NODE_TYPE, type.type_ref)
                         event.dataTransfer.effectAllowed = 'move'
                       }}
                     >

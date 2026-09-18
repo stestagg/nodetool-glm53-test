@@ -2,9 +2,12 @@
 // makes, shaped as the same operation its pointer gesture sends — a
 // palette row's activation the create a drop sends, a focused port's
 // activation the wire drag sends, Delete on a connected input the
-// drag-off sends, a nudge the drag stop's move sends. The shell turns
-// each decision into the operation; pan and zoom stay pointer-only,
-// focus being the keyboard's way around the canvas.
+// drag-off sends, a nudge the drag stop's move sends, Escape the quiet
+// cancel it already is over a field. The shell turns each decision into
+// the operation; pan and zoom stay pointer-only, focus being the
+// keyboard's way around the canvas.
+
+import { inTextField } from './view.js'
 
 // The flow position the view's centre names: where a keyboard-created
 // node lands — deterministic given the view, visible by construction.
@@ -31,10 +34,11 @@ export function finalMoves(changes) {
 // The wire operation's fields for landing a wire on `candidate` when it
 // runs from `from` — either end may hold the running end, the operation
 // always naming source then target — or null when the candidate cannot
-// take it: its own port, or its own side.
+// take it: its own side, the running port itself included. The same
+// node's opposite ports may share a name; such a self-wire lands as any
+// other, the selfloop edge it draws already the canvas's.
 export function wireLanding(from, candidate) {
   if (from.type === candidate.type) return null
-  if (from.node === candidate.node && from.port === candidate.port) return null
   const [out, into] = from.type === 'source' ? [from, candidate] : [candidate, from]
   return { from: out.node, from_port: out.port, to: into.node, to_port: into.port }
 }
@@ -58,10 +62,24 @@ export function portKey(event, port, wire, editable) {
 
 // The shift-activation on a focused node: the node it names, or null —
 // the shift-click's twin, taken before the canvas's own selection keys
-// see it. A plain activation stays the canvas's, the plain click's.
+// see it. A plain activation stays the canvas's, the plain click's, and
+// a text field keeps the keys, as every canvas key does.
 export function toggleKey(event) {
-  if (!event.shiftKey || (event.key !== 'Enter' && event.key !== ' ')) return null
+  if (!event.shiftKey || (event.key !== 'Enter' && event.key !== ' ') || inTextField(event.target))
+    return null
   return event.target.closest?.('.react-flow__node')?.getAttribute('data-id') ?? null
+}
+
+// Escape, the keyboard's quiet cancel: the state the press leaves — an
+// in-progress keyboard wire stood down, the selection cleared, the
+// sidebar closing by its rule — or null when the key keeps the meaning
+// it already had: a text field discards its own uncommitted draft.
+export function escapeCancel(event, wire, nodes) {
+  if (event.key !== 'Escape' || inTextField(event.target)) return null
+  return {
+    wire: null,
+    nodes: nodes.map((node) => ({ ...node, selected: false })),
+  }
 }
 
 // The minimal pan that brings a screen-space rect inside the canvas's,
