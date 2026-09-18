@@ -5,7 +5,7 @@
 //! A graph file is plain YAML, writable by hand in a text editor:
 //!
 //! ```yaml
-//! schema_version: 1
+//! schema_version: 2
 //! name: circle to uppercase
 //! nodes:
 //!   - uuid: b6a529e2-4b58-4a3d-9f01-2f6f4a1d9c33
@@ -24,8 +24,9 @@
 //!     to_port: text
 //! ```
 //!
-//! The document carries the [`SCHEMA_VERSION`] it was written for, an
-//! optional name, the graph's nodes, and its edges. Each node is an
+//! The document carries the [`SCHEMA_VERSION`] it is written as, an
+//! optional name, the graph's nodes, its edges, and — since version 2 — an
+//! optional `groups` section. Each node is an
 //! instance, not a type: its own uuid, the type reference of the node type
 //! it instantiates, an optional user label overriding the type's default
 //! label, parameter values for inputs fixed as literals, and a metadata
@@ -36,14 +37,63 @@
 //! two ways — an edge, or a parameter value written as a plain YAML scalar
 //! (boolean, integer, float, or string).
 //!
+//! A group is a named, reusable node type the document itself defines: a
+//! nested graph packaged with exposed ports.
+//!
+//! ```yaml
+//! groups:
+//!   - name: shout
+//!     inputs:
+//!       - name: text
+//!         type_refs: [String]
+//!         node: 3f2b8a1c-6d54-4e8a-9b7e-1c2d3e4f5a6b
+//!         port: text
+//!     outputs:
+//!       - name: text
+//!         type_refs: [String]
+//!         node: 3f2b8a1c-6d54-4e8a-9b7e-1c2d3e4f5a6b
+//!         port: text
+//!     nodes:
+//!       - uuid: 3f2b8a1c-6d54-4e8a-9b7e-1c2d3e4f5a6b
+//!         type_ref: text/uppercase
+//!         metadata:
+//!           position: { x: 40, y: 20 }
+//!     edges: []
+//! ```
+//!
+//! The name is unique in the document: it is the type reference a group
+//! instance carries, and the default label its instances render by. The
+//! exposed ports are the interface — each a name, declared type references
+//! (the same port vocabulary as any node type's, unions allowed), and the
+//! inner node and port it binds, the edge it stood in for at packaging
+//! time. The nested graph is nodes and edges in exactly the top-level
+//! shapes, and it is closed: an inner edge lands only on the group's own
+//! nodes, so everything crossing the boundary crosses as an exposed port.
+//! An instance of the group is an ordinary node instance whose type
+//! reference names it, carrying label, parameters, and metadata like any
+//! node's; groups may instantiate other groups, and a group that,
+//! directly or through others, instantiates itself is an error like a
+//! graph cycle.
+//!
+//! Versions: this reader understands versions 1 and 2, and writes
+//! [`SCHEMA_VERSION`]. A version 1 file means exactly what it always
+//! meant — the version gates the shape, so a version 1 document carrying a
+//! `groups` section is a load error naming the version, never a v1 file
+//! silently gaining meaning. Anything [`load`] returns is written as
+//! version 2, so saving a loaded version 1 file upgrades it — the one
+//! migration the format promises, the version field being enough.
+//!
 //! Loading is structural, and deliberately no more. The loader checks the
 //! document's shape — well-formed YAML, nodes and edges where they belong,
-//! edges pointing at nodes in the file, at most one upstream per input, no
-//! unknown fields, a schema version this reader knows — and nothing else:
-//! no node types need to be registered at all, and whether a referenced
-//! type exists, whether ports line up, whether a connection's types are
-//! compatible is compile time's business, so a file referencing types this
-//! binary never linked still loads. What loading guarantees is honesty
+//! edges pointing at nodes in their own graph, at most one upstream per
+//! input, no unknown fields, a schema version this reader knows — and,
+//! for groups, only what is document-local: each name unique in the
+//! document, an inner edge landing inside its own group, a binding naming
+//! an inner node the group contains. Nothing else: no node types need to
+//! be registered at all, and whether a referenced type exists, whether a
+//! bound port lines up, whether the declared types bridge is compile
+//! time's business, so a file referencing types this binary never linked
+//! still loads. What loading guarantees is honesty
 //! about failure: a file that fails to load fails loudly and precisely, the
 //! error naming the offending node, edge, or field and where it sits —
 //! nothing guessed, defaulted, or silently dropped.
@@ -51,12 +101,14 @@
 //! The load contract, stated plainly: `schema_version`, `nodes`, and
 //! `edges` are required — write `edges: []` for a graph with no edges — and
 //! the schema version must be a non-negative integer this reader supports.
-//! Duplicate YAML keys are rejected rather than silently resolved, and
+//! A group carries `name`, `inputs`, `outputs`, `nodes`, and `edges` —
+//! write `inputs: []` and `outputs: []` for a group with neither. Duplicate
+//! YAML keys are rejected rather than silently resolved, and
 //! parameter names must be strings. One known gap in the locations: a
 //! duplicate key is reported at its mapping's start rather than at the
 //! repeated key, though the message names the key either way.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use serde::Serialize;
@@ -66,23 +118,27 @@ use uuid::Uuid;
 /// without a direct serde_yaml dependency.
 pub use serde_yaml::{Mapping, Value};
 
-/// The schema version this reader understands; the only version [`load`]
-/// accepts, and the one it stores.
-pub const SCHEMA_VERSION: u64 = 1;
+/// The schema version this reader writes: the newest it understands, and
+/// the one anything [`load`] returns. Loading also accepts the versions
+/// before it that carried no `groups` section.
+pub const SCHEMA_VERSION: u64 = 2;
 
 /// A graph definition, exactly as a file carries it: the schema version it
-/// was written for, an optional name, the node instances, and the edges
-/// between them.
+/// is written as, an optional name, the node instances, the edges between
+/// them, and the groups they may instantiate.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct GraphDefinition {
-    /// The schema version the file carries; [`SCHEMA_VERSION`] for anything
-    /// [`load`] returns.
+    /// The schema version the file is written as; [`SCHEMA_VERSION`] for
+    /// anything [`load`] returns.
     pub schema_version: u64,
     /// The graph's name, if the file gives one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub nodes: Vec<NodeInstance>,
     pub edges: Vec<Edge>,
+    /// The groups the document defines, whose instances the nodes carry.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<GroupDefinition>,
 }
 
 impl GraphDefinition {
@@ -93,6 +149,7 @@ impl GraphDefinition {
             name: None,
             nodes: Vec::new(),
             edges: Vec::new(),
+            groups: Vec::new(),
         }
     }
 }
@@ -129,6 +186,39 @@ pub struct Edge {
     pub from_port: String,
     pub to: Uuid,
     pub to_port: String,
+}
+
+/// A group: a named, reusable node type the document itself defines — a
+/// nested graph packaged with exposed ports. Its instances are ordinary
+/// node instances whose type reference names the group.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct GroupDefinition {
+    /// The group's name, unique in the document: the type reference its
+    /// instances carry, and the default label they render by.
+    pub name: String,
+    /// The exposed inputs: what outside wiring may feed.
+    pub inputs: Vec<GroupPort>,
+    /// The exposed outputs: what the inside may emit outward.
+    pub outputs: Vec<GroupPort>,
+    /// The group's inner nodes, in exactly the top-level shape.
+    pub nodes: Vec<NodeInstance>,
+    /// The group's inner edges, in exactly the top-level shape.
+    pub edges: Vec<Edge>,
+}
+
+/// One exposed port: the interface a group shows the outside, bound to the
+/// inner node and port whose place it took at packaging time.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct GroupPort {
+    /// The port's name on the group instance.
+    pub name: String,
+    /// The declared type references — the same vocabulary as any node
+    /// type's port, unions allowed.
+    pub type_refs: Vec<String>,
+    /// The inner node the port binds.
+    pub node: Uuid,
+    /// The inner port, on that node, the port binds.
+    pub port: String,
 }
 
 /// A parameter value: a plain YAML scalar of one of the four kinds.
@@ -203,10 +293,13 @@ impl std::error::Error for LoadError {}
 const DOCUMENT: &str = "document";
 const NODES: &str = "nodes";
 const EDGES: &str = "edges";
+const GROUPS: &str = "groups";
 
-const DOCUMENT_FIELDS: &[&str] = &["schema_version", "name", "nodes", "edges"];
+const DOCUMENT_FIELDS: &[&str] = &["schema_version", "name", "nodes", "edges", "groups"];
 const NODE_FIELDS: &[&str] = &["uuid", "type_ref", "label", "parameters", "metadata"];
 const EDGE_FIELDS: &[&str] = &["from", "from_port", "to", "to_port"];
+const GROUP_FIELDS: &[&str] = &["name", "inputs", "outputs", "nodes", "edges"];
+const GROUP_PORT_FIELDS: &[&str] = &["name", "type_refs", "node", "port"];
 
 /// Load a graph definition from YAML text.
 ///
@@ -276,18 +369,40 @@ fn load_document(root: &Value) -> Result<GraphDefinition, LoadError> {
         fields
             .get(NODES)
             .ok_or_else(|| err(DOCUMENT, "missing field `nodes`"))?,
+        NODES,
     )?;
     let edges = load_edges(
         fields
             .get(EDGES)
             .ok_or_else(|| err(DOCUMENT, "missing field `edges`"))?,
+        EDGES,
     )?;
-    cross_check(&nodes, &edges)?;
+    // The version gates the shape: groups arrived with version 2, so a
+    // version 1 document carrying them is refused, naming the version it
+    // carries — never a v1 file silently gaining meaning.
+    let groups = match fields.get(GROUPS) {
+        Some(value) => {
+            if schema_version == 1 {
+                return Err(err(
+                    "schema_version",
+                    format!(
+                        "a version 1 document carries a `groups` section; groups arrived with version {SCHEMA_VERSION}"
+                    ),
+                ));
+            }
+            load_groups(value)?
+        }
+        None => Vec::new(),
+    };
+    cross_check("", "the file", &nodes, &edges)?;
+    // Whatever versions were read, what a definition is is written as: the
+    // current shape, so a dump of a loaded version 1 file upgrades it.
     Ok(GraphDefinition {
-        schema_version,
+        schema_version: SCHEMA_VERSION,
         name,
         nodes,
         edges,
+        groups,
     })
 }
 
@@ -302,37 +417,38 @@ fn check_schema_version(value: &Value) -> Result<u64, LoadError> {
             format!("the schema version must be a non-negative integer{not}"),
         )
     })?;
-    if version != SCHEMA_VERSION {
+    if version == 0 || version > SCHEMA_VERSION {
         return Err(err(
             "schema_version",
-            format!("unsupported schema version {version}; this reader understands version {SCHEMA_VERSION}"),
+            format!(
+                "unsupported schema version {version}; this reader understands versions 1 to {SCHEMA_VERSION}"
+            ),
         ));
     }
     Ok(version)
 }
 
-fn load_nodes(value: &Value) -> Result<Vec<NodeInstance>, LoadError> {
-    let items = as_sequence(value, NODES)?;
+fn load_nodes(value: &Value, path: &str) -> Result<Vec<NodeInstance>, LoadError> {
+    let items = as_sequence(value, path)?;
     items
         .iter()
         .enumerate()
-        .map(|(index, node)| load_node(node, index))
+        .map(|(index, node)| load_node(node, &format!("{path}[{index}]")))
         .collect()
 }
 
-fn load_node(node: &Value, index: usize) -> Result<NodeInstance, LoadError> {
-    let path = format!("{NODES}[{index}]");
-    let fields = fields(node, &path, NODE_FIELDS)?;
+fn load_node(node: &Value, path: &str) -> Result<NodeInstance, LoadError> {
+    let fields = fields(node, path, NODE_FIELDS)?;
     let uuid = load_uuid(
         fields
             .get("uuid")
-            .ok_or_else(|| err(&path, "missing field `uuid`"))?,
+            .ok_or_else(|| err(path, "missing field `uuid`"))?,
         &format!("{path}.uuid"),
     )?;
     let type_ref = as_str(
         fields
             .get("type_ref")
-            .ok_or_else(|| err(&path, "missing field `type_ref`"))?,
+            .ok_or_else(|| err(path, "missing field `type_ref`"))?,
         &format!("{path}.type_ref"),
     )?
     .to_owned();
@@ -414,60 +530,209 @@ pub(crate) fn read_parameter_text(text: &str) -> Result<ParameterValue, String> 
     read_parameter(&value)
 }
 
-fn load_edges(value: &Value) -> Result<Vec<Edge>, LoadError> {
-    let items = as_sequence(value, EDGES)?;
+fn load_edges(value: &Value, path: &str) -> Result<Vec<Edge>, LoadError> {
+    let items = as_sequence(value, path)?;
     items
         .iter()
         .enumerate()
-        .map(|(index, edge)| load_edge(edge, index))
+        .map(|(index, edge)| load_edge(edge, &format!("{path}[{index}]")))
         .collect()
 }
 
-fn load_edge(edge: &Value, index: usize) -> Result<Edge, LoadError> {
-    let path = format!("{EDGES}[{index}]");
-    let fields = fields(edge, &path, EDGE_FIELDS)?;
+fn load_edge(edge: &Value, path: &str) -> Result<Edge, LoadError> {
+    let fields = fields(edge, path, EDGE_FIELDS)?;
     Ok(Edge {
         from: load_uuid(
             fields
                 .get("from")
-                .ok_or_else(|| err(&path, "missing field `from`"))?,
+                .ok_or_else(|| err(path, "missing field `from`"))?,
             &format!("{path}.from"),
         )?,
         from_port: as_str(
             fields
                 .get("from_port")
-                .ok_or_else(|| err(&path, "missing field `from_port`"))?,
+                .ok_or_else(|| err(path, "missing field `from_port`"))?,
             &format!("{path}.from_port"),
         )?
         .to_owned(),
         to: load_uuid(
             fields
                 .get("to")
-                .ok_or_else(|| err(&path, "missing field `to`"))?,
+                .ok_or_else(|| err(path, "missing field `to`"))?,
             &format!("{path}.to"),
         )?,
         to_port: as_str(
             fields
                 .get("to_port")
-                .ok_or_else(|| err(&path, "missing field `to_port`"))?,
+                .ok_or_else(|| err(path, "missing field `to_port`"))?,
             &format!("{path}.to_port"),
         )?
         .to_owned(),
     })
 }
 
-/// The document-wide cross-checks between the node list and the edge list:
-/// uuids unique, edges landing on nodes in the file, at most one upstream
-/// per input, an input not carrying both a parameter value and a
-/// connection.
-fn cross_check(nodes: &[NodeInstance], edges: &[Edge]) -> Result<(), LoadError> {
+/// A document's groups: each loaded, each name unique in the document.
+fn load_groups(value: &Value) -> Result<Vec<GroupDefinition>, LoadError> {
+    let items = as_sequence(value, GROUPS)?;
+    let mut groups = Vec::with_capacity(items.len());
+    let mut names = HashSet::new();
+    for (index, group) in items.iter().enumerate() {
+        let group = load_group(group, index)?;
+        if !names.insert(group.name.clone()) {
+            return Err(err(
+                format!("{GROUPS}[{index}]"),
+                format!("duplicate group name `{}`", group.name),
+            ));
+        }
+        groups.push(group);
+    }
+    Ok(groups)
+}
+
+fn load_group(group: &Value, index: usize) -> Result<GroupDefinition, LoadError> {
+    let path = format!("{GROUPS}[{index}]");
+    let fields = fields(group, &path, GROUP_FIELDS)?;
+    let name = as_str(
+        fields
+            .get("name")
+            .ok_or_else(|| err(&path, "missing field `name`"))?,
+        &format!("{path}.name"),
+    )?
+    .to_owned();
+    let inputs = load_group_ports(
+        fields
+            .get("inputs")
+            .ok_or_else(|| err(&path, "missing field `inputs`"))?,
+        &format!("{path}.inputs"),
+    )?;
+    let outputs = load_group_ports(
+        fields
+            .get("outputs")
+            .ok_or_else(|| err(&path, "missing field `outputs`"))?,
+        &format!("{path}.outputs"),
+    )?;
+    let nodes = load_nodes(
+        fields
+            .get(NODES)
+            .ok_or_else(|| err(&path, "missing field `nodes`"))?,
+        &format!("{path}.{NODES}"),
+    )?;
+    let edges = load_edges(
+        fields
+            .get(EDGES)
+            .ok_or_else(|| err(&path, "missing field `edges`"))?,
+        &format!("{path}.{EDGES}"),
+    )?;
+    // The group's graph is closed, and every binding lands inside it: both
+    // ends of an inner edge and both bindings of an exposed port name one
+    // of the group's own nodes.
+    let contained = nodes.iter().map(|node| node.uuid).collect::<HashSet<_>>();
+    for (field, side, ports) in [
+        ("inputs", "input", &inputs),
+        ("outputs", "output", &outputs),
+    ] {
+        for (index, port) in ports.iter().enumerate() {
+            if !contained.contains(&port.node) {
+                return Err(err(
+                    format!("{path}.{field}[{index}]"),
+                    format!(
+                        "the exposed {side} port `{}` binds node {}, which the group does not contain",
+                        port.name, port.node
+                    ),
+                ));
+            }
+        }
+    }
+    cross_check(
+        &format!("{path}."),
+        &format!("group `{name}`"),
+        &nodes,
+        &edges,
+    )?;
+    Ok(GroupDefinition {
+        name,
+        inputs,
+        outputs,
+        nodes,
+        edges,
+    })
+}
+
+fn load_group_ports(value: &Value, path: &str) -> Result<Vec<GroupPort>, LoadError> {
+    let items = as_sequence(value, path)?;
+    let mut ports = Vec::with_capacity(items.len());
+    let mut names = HashSet::new();
+    for (index, port) in items.iter().enumerate() {
+        let port = load_group_port(port, &format!("{path}[{index}]"))?;
+        if !names.insert(port.name.clone()) {
+            return Err(err(
+                format!("{path}[{index}]"),
+                format!("duplicate port name `{}`", port.name),
+            ));
+        }
+        ports.push(port);
+    }
+    Ok(ports)
+}
+
+fn load_group_port(value: &Value, path: &str) -> Result<GroupPort, LoadError> {
+    let fields = fields(value, path, GROUP_PORT_FIELDS)?;
+    let type_refs = as_sequence(
+        fields
+            .get("type_refs")
+            .ok_or_else(|| err(path, "missing field `type_refs`"))?,
+        &format!("{path}.type_refs"),
+    )?
+    .iter()
+    .enumerate()
+    .map(|(index, reference)| {
+        as_str(reference, &format!("{path}.type_refs[{index}]")).map(str::to_owned)
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+    Ok(GroupPort {
+        name: as_str(
+            fields
+                .get("name")
+                .ok_or_else(|| err(path, "missing field `name`"))?,
+            &format!("{path}.name"),
+        )?
+        .to_owned(),
+        type_refs,
+        node: load_uuid(
+            fields
+                .get("node")
+                .ok_or_else(|| err(path, "missing field `node`"))?,
+            &format!("{path}.node"),
+        )?,
+        port: as_str(
+            fields
+                .get("port")
+                .ok_or_else(|| err(path, "missing field `port`"))?,
+            &format!("{path}.port"),
+        )?
+        .to_owned(),
+    })
+}
+
+/// The cross-checks between a graph's node list and its edge list — the
+/// top-level's, and each group's: uuids unique within the graph, edges
+/// landing on nodes of the same graph, at most one upstream per input, an
+/// input not carrying both a parameter value and a connection. `prefix`
+/// locates the nodes and edges in the document, and `scope` names the
+/// graph an error speaks of.
+fn cross_check(
+    prefix: &str,
+    scope: &str,
+    nodes: &[NodeInstance],
+    edges: &[Edge],
+) -> Result<(), LoadError> {
     let mut indexes = HashMap::<Uuid, usize>::new();
     for (index, node) in nodes.iter().enumerate() {
         if let Some(first) = indexes.insert(node.uuid, index) {
             return Err(err(
-                format!("{NODES}[{index}]"),
+                format!("{prefix}{NODES}[{index}]"),
                 format!(
-                    "duplicate node uuid {}; already used at nodes[{first}]",
+                    "duplicate node uuid {}; already used at {prefix}{NODES}[{first}]",
                     node.uuid
                 ),
             ));
@@ -475,12 +740,12 @@ fn cross_check(nodes: &[NodeInstance], edges: &[Edge]) -> Result<(), LoadError> 
     }
     let mut connected = HashMap::<(Uuid, &str), usize>::new();
     for (index, edge) in edges.iter().enumerate() {
-        let path = format!("{EDGES}[{index}]");
+        let path = format!("{prefix}{EDGES}[{index}]");
         for (uuid, end) in [(&edge.from, "from"), (&edge.to, "to")] {
             if !indexes.contains_key(uuid) {
                 return Err(err(
                     &path,
-                    format!("the edge's `{end}` node {uuid} is not defined in the file"),
+                    format!("the edge's `{end}` node {uuid} is not defined in {scope}"),
                 ));
             }
         }
@@ -488,7 +753,7 @@ fn cross_check(nodes: &[NodeInstance], edges: &[Edge]) -> Result<(), LoadError> 
             return Err(err(
                 &path,
                 format!(
-                    "input `{}` of node {} receives more than one connection; edges[{first}] already feeds it",
+                    "input `{}` of node {} receives more than one connection; {prefix}{EDGES}[{first}] already feeds it",
                     edge.to_port, edge.to
                 ),
             ));

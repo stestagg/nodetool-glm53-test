@@ -93,7 +93,7 @@ fn a_loaded_file_dumps_back_identical() {
 
     let dumped = graph::dump(&definition);
     assert_eq!(graph::load(&dumped).unwrap(), definition);
-    assert!(dumped.contains("schema_version: 1"), "dumped:\n{dumped}");
+    assert!(dumped.contains("schema_version: 2"), "dumped:\n{dumped}");
 }
 
 #[test]
@@ -310,10 +310,10 @@ fn unknown_fields_are_errors() {
 
 #[test]
 fn an_unsupported_schema_version_is_an_error() {
-    let (path, message) = path_error("schema_version: 2\nnodes: []\nedges: []\n");
+    let (path, message) = path_error("schema_version: 3\nnodes: []\nedges: []\n");
     assert_eq!(path, "schema_version");
     assert!(
-        message.contains("unsupported schema version 2"),
+        message.contains("unsupported schema version 3"),
         "{message}"
     );
 
@@ -333,6 +333,19 @@ fn an_unsupported_schema_version_is_an_error() {
         message.contains("missing field `schema_version`"),
         "{message}"
     );
+}
+
+#[test]
+fn both_versions_this_reader_understands_load() {
+    for version in [1, 2] {
+        let definition = graph::load(&format!(
+            "schema_version: {version}\nnodes:\n  - uuid: {CIRCLE}\n    type_ref: shapes/circle\nedges: []\n"
+        ))
+        .unwrap_or_else(|error| panic!("version {version} loads: {error}"));
+        // What a definition is, is what the reader writes: the current
+        // version, whatever the file carried.
+        assert_eq!(definition.schema_version, graph::SCHEMA_VERSION);
+    }
 }
 
 #[test]

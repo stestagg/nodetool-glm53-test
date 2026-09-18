@@ -18,8 +18,9 @@ scalar data types.
 - `crates/nodetool` — the core library: the node type model, the data type
   model with the base scalars, the `node_type!` and `data_type!` declaration
   macros, the versioned YAML graph file format (`nodetool::graph`; its
-  rustdoc is the format's spec), the compiler that turns a graph definition
-  into a compiled, executable graph (`nodetool::compile`), the node
+  rustdoc is the format's spec, groups included), the compiler that turns a
+  graph definition into a compiled, executable graph (`nodetool::compile`;
+  groups compile away, so the engine runs one flat shape), the node
   authoring API and the stream semantics behaviour programs against
   (`nodetool::behaviour`; its rustdoc is the semantics' spec), the engine
   that runs a compiled graph as live, streaming execution and tells an
@@ -104,7 +105,9 @@ scalar data types.
   errors ending the path, printed, with a non-zero exit; the `if-true` and
   `if-false` samples run the same If-and-Format graph under opposite
   conditions, showing the router steering between its two branches, one
-  Format with a format template and one without.
+  Format with a format template and one without; the `grouped` sample is
+  the editor's own grouped file (`examples/visual/graphs/grouped.yml`),
+  the same document both experiences run.
 - `examples/visual-badui` — the editor binary with the `badui` plugin
   linked: one deliberately unknown contract version, for a deliberate
   look at the fallback. Dropping its node renders it by the default class
@@ -207,6 +210,26 @@ keyboard's editing paths go quiet exactly with their pointer twins, the
 one lock over both input modes, while focus, selection, and navigation
 stay live.
 
+A graph file may define groups: named, reusable node types the document
+itself carries — a nested graph packaged with exposed ports, the format
+module's rustdoc telling the shape. A group instance sits on the canvas as
+one collapsed node carrying the group's ports, drawn by the same default
+node class as any type: its type reference resolves against the
+document's groups before the node-type listing's, its label defaults to
+the group's name and is editable as any node's, exposed inputs carry the
+same inline fields and type colours, and the sidebar edits it like any
+node — the shipped gestures treating it untouched, deletion removing the
+instance, never the group's definition. The palette stays a palette of
+linked plugin types: groups arrive with the document, not the registry.
+While a run is on, the collapsed node's status mark aggregates its
+inside — error when an inner node errors (the report naming the group
+instance and the inner node), completed when every inner node is,
+stopped with the run's closure, running while inner nodes run — and a
+value crossing the boundary animates the boundary port and its wires,
+while the inside's pulses stay inside. The same file runs headless
+unchanged: compiling flattens the groups into one graph, so the headless
+run is the same run the editor watches.
+
 The declared data types carry the graph's type channel: a port declaring
 exactly one type renders its dot in that type's declared colour and shape,
 a wire renders in the colour of the source port it flows from, and a
@@ -307,6 +330,7 @@ joins the live stream, so every open tab animates the same run.
 
 ```sh
 cargo run -p visual -- examples/visual/graphs/ticker.yml  # the streaming sample
+cargo run -p visual -- examples/visual/graphs/grouped.yml  # the grouped sample: a collapsed node among ordinary ones
 cargo run -p visual-badui  # the editor with one deliberately unknown-contract bundle linked
 ```
 
@@ -371,6 +395,7 @@ cargo run -p run-graph broken       # a load error ends the path, printed, exit 
 cargo run -p run-graph uncompilable # compile errors end the path, printed, exit 1
 cargo run -p run-graph if-true      # the utility If steers to `then`, the Format template substituting
 cargo run -p run-graph if-false     # the same graph steered to `else`, the Format's plain string form
+cargo run -p run-graph grouped      # the editor's grouped sample, values crossing the boundary as they arrive
 ```
 
 Three things to expect from the `if` samples. The first routed value prints

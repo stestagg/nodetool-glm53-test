@@ -112,3 +112,55 @@ describe('the port key dispatch', () => {
     expect(edit).not.toHaveBeenCalled()
   })
 })
+
+// A collapsed group renders by the same default node class as any type:
+// the group's ports, the type channel, an inline field on a scalar
+// exposed input — and no icon in the title bar, where every ordinary node
+// shows its type's.
+describe('the collapsed group node', () => {
+  const group = {
+    type_ref: 'shout',
+    label: 'shout',
+    icon: null,
+    inputs: [{ name: 'text', type_refs: ['String'] }],
+    outputs: [{ name: 'text', type_refs: ['String'] }],
+  }
+
+  function renderGroup() {
+    render(
+      <EditContext.Provider value={vi.fn()}>
+        <LockContext.Provider value={false}>
+          <WireContext.Provider value={{ wire: null, setWire: vi.fn() }}>
+            <ReactFlowProvider>
+              <TypeNode
+                selected={false}
+                data={{
+                  node: { uuid: 'g1', type_ref: 'shout', parameters: {} },
+                  type: group,
+                  wiredInputs: [],
+                  scalarInputs: ['text'],
+                  marks: [],
+                  portValues: { text: 'HELLO' },
+                  dataTypes: { String: { color: '#2d72d2', shape: 'circle' } },
+                }}
+              />
+            </ReactFlowProvider>
+          </WireContext.Provider>
+        </LockContext.Provider>
+      </EditContext.Provider>,
+    )
+  }
+
+  it('carries the group name and no icon in its title bar, the ports with the type channel', () => {
+    renderGroup()
+    expect(document.querySelector('.type-icon')).toBeNull()
+    expect(screen.getByText('shout')).toBeTruthy()
+    expect(screen.getByLabelText('shout text output')).toBeTruthy()
+    expect(screen.getByLabelText('shout text input')).toBeTruthy()
+  })
+
+  it('a boundary emission shows at the exposed output port', () => {
+    renderGroup()
+    expect(screen.getByTitle('HELLO')).toBeTruthy()
+  })
+})

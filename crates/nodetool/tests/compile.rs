@@ -67,6 +67,7 @@ fn definition(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> GraphDefinition {
         name: None,
         nodes,
         edges,
+        groups: Vec::new(),
     }
 }
 

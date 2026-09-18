@@ -63,6 +63,16 @@
 //! node type backed by a subgraph — its compiled body a nested compiled
 //! graph — slots into [`CompiledNode`] without reworking the shape.
 //!
+//! A definition may also carry groups — node types the document itself
+//! defines, a nested graph packaged with exposed ports ([`crate::graph`]).
+//! Compiling flattens them before anything else: every group instance is
+//! replaced by its group's inner graph under derived identities
+//! ([`inner_identity`]), boundary edges rewired through the exposed ports'
+//! bindings, an exposed input's parameter literal fed inside — so the
+//! engine runs one flat graph with no knowledge that groups exist, and
+//! every inner-node event and error names the group instance and inner
+//! node it belongs to by the composed label and the derived identity.
+//!
 //! One node type can declare a set of its ports as one *family* — the same
 //! family name on several ports — whose members the ports spell out: the
 //! family resolves to one concrete type per instance, drawn from the
@@ -82,7 +92,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use uuid::Uuid;
 
+mod flatten;
 mod literal;
+
+pub use flatten::inner_identity;
 
 use crate::graph::{Edge, GraphDefinition, NodeInstance, ParameterValue};
 use crate::registry::Registry;
@@ -91,17 +104,53 @@ use crate::{Conversion, DataType, NodeType, Port};
 
 /// Compile a graph definition into a runnable graph, or report every compile
 /// error found, with the non-fatal warnings beside either.
+///
+/// The definition's groups are flattened out first (see [`inner_identity`]
+/// for the identities inner nodes take), and everything below runs on the
+/// flat graph — the only shape the compiler, the engine, and their events
+/// have ever known.
 pub fn compile(definition: &GraphDefinition, registry: &Registry) -> CompileResult {
-    let mut errors = Vec::new();
+    let flat = flatten::flatten(definition, registry);
+    let mut result = compile_flat(
+        &flat.nodes,
+        &flat.edges,
+        definition.name.clone(),
+        flat.errors,
+        registry,
+    );
+    // A problem naming an inner node is re-pointed at the group instance
+    // whose collapsed node holds it, so a mark lands where the canvas can
+    // show it; the message keeps the composed name of the inner node.
+    for problem in result.errors.iter_mut().chain(result.warnings.iter_mut()) {
+        problem.nodes = problem
+            .nodes
+            .iter()
+            .map(|uuid| flat.provenance.get(uuid).copied().unwrap_or(*uuid))
+            .collect();
+    }
+    result
+}
+
+/// The compile of an already-flat node and edge list: every check, type
+/// resolution, and family resolution the definition must pass, and the
+/// compiled graph when it all holds. `errors` arrives preloaded with the
+/// flattening's own.
+fn compile_flat(
+    nodes: &[NodeInstance],
+    edges: &[Edge],
+    name: Option<String>,
+    mut errors: Vec<Problem>,
+    registry: &Registry,
+) -> CompileResult {
     let mut warnings = Vec::new();
 
     let mut instances = BTreeMap::<Uuid, (&NodeInstance, Option<&'static NodeType>)>::new();
-    for instance in &definition.nodes {
+    for instance in nodes {
         let node_type = registry.node_type(&instance.type_ref);
         if node_type.is_none() {
             errors.push(error(
                 format!(
-                    "node {} instantiates `{}`, which no linked plugin declares",
+                    "node {} instantiates `{}`, which no group in the document defines and no linked plugin declares",
                     node_name(instance, node_type),
                     instance.type_ref
                 ),
@@ -121,7 +170,7 @@ pub fn compile(definition: &GraphDefinition, registry: &Registry) -> CompileResu
         }
     }
 
-    if let Some(cycle) = find_cycle(&definition.nodes, &definition.edges, &instances) {
+    if let Some(cycle) = find_cycle(nodes, edges, &instances) {
         let named = cycle
             .iter()
             .map(|uuid| {
@@ -130,15 +179,19 @@ pub fn compile(definition: &GraphDefinition, registry: &Registry) -> CompileResu
             })
             .collect::<Vec<_>>()
             .join(" → ");
-        errors.push(error(format!("cycle: {named}"), cycle));
+        // A self-loop's walk names its node twice; the mark list says
+        // where the problem lives, once is enough.
+        let mut marks = cycle;
+        marks.dedup();
+        errors.push(error(format!("cycle: {named}"), marks));
     }
 
-    let mut connections = Vec::with_capacity(definition.edges.len());
+    let mut connections = Vec::with_capacity(edges.len());
     let mut fed_by = HashMap::<(Uuid, &'static str), Uuid>::new();
     // Where each input's feed comes from, for the family sources below:
     // the upstream instance, its port, and the resolved connection type.
     let mut feeds = HashMap::<(Uuid, &'static str), (Uuid, &'static str, &'static DataType)>::new();
-    for edge in &definition.edges {
+    for edge in edges {
         let from = instances.get(&edge.from).copied();
         let to = instances.get(&edge.to).copied();
         for (uuid, role) in [(edge.from, "from"), (edge.to, "to")] {
@@ -573,7 +626,7 @@ pub fn compile(definition: &GraphDefinition, registry: &Registry) -> CompileResu
     if errors.is_empty() {
         CompileResult {
             graph: Some(CompiledGraph {
-                name: definition.name.clone(),
+                name,
                 nodes,
                 connections,
             }),
@@ -840,56 +893,70 @@ fn resolve_types(
     None
 }
 
-/// The first cycle a depth-first walk meets, as the uuids around it. The
-/// walk starts from each node in definition order and follows edges in edge
-/// order, so the same definition always names the same cycle.
+/// The first cycle the graph's edges form, as the uuids around it: the
+/// shared walk ([`first_cycle`]) over the compiled instances' adjacency,
+/// starting from each node in definition order and following edges in
+/// edge order.
 fn find_cycle(
     nodes: &[NodeInstance],
     edges: &[Edge],
     instances: &BTreeMap<Uuid, (&NodeInstance, Option<&'static NodeType>)>,
 ) -> Option<Vec<Uuid>> {
-    let mut adjacency = BTreeMap::<Uuid, Vec<Uuid>>::new();
+    let mut adjacency = HashMap::<Uuid, Vec<Uuid>>::new();
     for edge in edges {
         if instances.contains_key(&edge.from) && instances.contains_key(&edge.to) {
             adjacency.entry(edge.from).or_default().push(edge.to);
         }
     }
+    let roots = nodes.iter().map(|node| node.uuid).collect::<Vec<_>>();
+    first_cycle(&roots, &adjacency)
+}
+
+/// The first cycle a depth-first walk meets, as the keys around it, or
+/// none. The walk starts from each root in the order given and follows
+/// each key's neighbours in the order stored, so the same graph always
+/// names the same cycle. The graph cycle and the group-reference cycle
+/// walk this one function — two adjacency maps, one determinism contract.
+fn first_cycle<K>(roots: &[K], adjacency: &HashMap<K, Vec<K>>) -> Option<Vec<K>>
+where
+    K: Copy + Eq + std::hash::Hash,
+{
     let mut done = HashSet::new();
     let mut active = HashSet::new();
-    let mut stack = Vec::<(Uuid, usize)>::new();
-    for node in nodes {
-        if done.contains(&node.uuid) {
+    let mut stack = Vec::<(K, usize)>::new();
+    for root in roots {
+        if done.contains(root) {
             continue;
         }
-        active.insert(node.uuid);
-        stack.push((node.uuid, 0));
+        active.insert(*root);
+        stack.push((*root, 0));
         while let Some(&(current, visited)) = stack.last() {
             let neighbor = adjacency
                 .get(&current)
                 .and_then(|neighbors| neighbors.get(visited))
                 .copied();
             match neighbor {
-                Some(uuid) => {
+                Some(next) => {
                     stack.last_mut().expect("just read").1 += 1;
-                    if active.contains(&uuid) {
+                    if active.contains(&next) {
                         let position = stack
                             .iter()
-                            .position(|(candidate, _)| *candidate == uuid)
-                            .expect("an active node is on the path");
-                        let mut cycle: Vec<Uuid> =
-                            stack[position..].iter().map(|(uuid, _)| *uuid).collect();
-                        cycle.push(uuid);
+                            .position(|(candidate, _)| *candidate == next)
+                            .expect("an active key is on the path");
+                        let mut cycle: Vec<K> =
+                            stack[position..].iter().map(|(key, _)| *key).collect();
+                        cycle.push(next);
                         return Some(cycle);
                     }
-                    if !done.contains(&uuid) {
-                        active.insert(uuid);
-                        stack.push((uuid, 0));
+                    if !done.contains(&next) {
+                        active.insert(next);
+                        stack.push((next, 0));
                     }
                 }
                 None => {
-                    let (uuid, _) = stack.pop().expect("just read");
-                    active.remove(&uuid);
-                    done.insert(uuid);
+                    let (key, _) = stack.pop().expect("just read");
+                    active.remove(&key);
+                    done.insert(key);
                 }
             }
         }

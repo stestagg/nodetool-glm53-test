@@ -10,9 +10,9 @@
 //! way; the flag changes only who is watching.
 //!
 //! One of the built-in sample graphs names the run: `pipeline` (the
-//! default), `failing`, `broken`, `uncompilable`, `if-true`, or `if-false`;
-//! the flag follows the sample (`run-graph failing observe`, or `run-graph
-//! observe` for the default sample).
+//! default), `failing`, `broken`, `uncompilable`, `if-true`, `if-false`, or
+//! `grouped`; the flag follows the sample (`run-graph failing observe`, or
+//! `run-graph observe` for the default sample).
 
 use std::sync::Arc;
 
@@ -69,6 +69,13 @@ const SAMPLES: &[Sample] = &[
         name: "if-false",
         text: include_str!("../graphs/if-false.yml"),
         consumed: Some((uuid!("00000000-0000-0000-0000-500000000004"), "text")),
+    },
+    // The grouped pipeline is the editor sample's own file: the same
+    // document the visual editor opens, run here headless.
+    Sample {
+        name: "grouped",
+        text: include_str!("../../visual/graphs/grouped.yml"),
+        consumed: Some((uuid!("00000000-0000-0000-0000-600000000003"), "text")),
     },
 ];
 
