@@ -302,6 +302,15 @@ body {
   cursor: grab;
 }
 
+/* The slot a node's custom UI body renders into, between the title bar
+   and the ports: the editor's shell owns the frame, the plugin owns the
+   content. The padding is the slot's own; everything inside is the
+   bundle's. */
+
+.node-body {
+  padding: 4px 8px;
+}
+
 /* The icon-and-label half of the title bar: the type's declared icon
    beside the node's current label, centred against the text. */
 

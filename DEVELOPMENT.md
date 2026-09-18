@@ -59,12 +59,20 @@ scalar data types.
   graph is `graphs/fizzbuzz.yml`, the classic fizzbuzz.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the tests
   (`alpha` is sub-grouped, `beta` is flat, `gamma` supplies the compiler
-  tests' node types, `delta` supplies the engine tests' node types).
+  tests' node types, `delta` supplies the engine tests' node types, `epsilon`
+  supplies the custom-UI tests' declarations: a serialised custom type with
+  its value UI, a node type with declared node UI, and undeclared kinds
+  beside them).
 - `examples/plugins` — small example plugin crates (`shapes` is sub-grouped,
   `text` is flat). The text plugin's `Ticker` is a slow source: fired by
   its `count` parameter it counts from one through the count, a fixed
   pause between values — the one shipped node a run lasts long enough to
-  watch, edit against, and stop.
+  watch, edit against, and stop. The shapes plugin declares custom UI:
+  its `shapes/shape` type carries a serialiser and a value bundle, and its
+  `Shape stage` node carries a node bundle — both embedded from
+  `examples/plugins/shapes/ui/` — and it ships the runnable `Shape source`
+  emitter the value flow is watched at. `badui` deliberately names a
+  component contract version no editor speaks.
 - `examples/list-nodes` — demo binary linked against both example plugins;
   prints the registry listing: node types, then data types with their
   metadata and declared conversions.
@@ -97,6 +105,10 @@ scalar data types.
   `if-false` samples run the same If-and-Format graph under opposite
   conditions, showing the router steering between its two branches, one
   Format with a format template and one without.
+- `examples/visual-badui` — the editor binary with the `badui` plugin
+  linked: one deliberately unknown contract version, for a deliberate
+  look at the fallback. Dropping its node renders it by the default class
+  and the report names the type.
 
 ## Build and check
 
@@ -179,7 +191,15 @@ declare both a colour and a shape renders in one shared neutral. Colours
 and shapes live with the type declarations — the base scalars' in core,
 custom types' in the declaring plugin's metadata — composed into the
 listing the server serves, so the browser hardcodes no type's appearance;
-the declared types remain readable in a port's tooltip.
+the declared types remain readable in a port's tooltip. A node whose type
+declares custom UI renders the plugin's own body between the editor's
+title bar and ports — the shell stays editor-rendered, so every gesture
+on it behaves exactly as on a default node — and a value whose type
+declares value UI displays through the plugin's component wherever values
+display. Both bundles load only when first used, and every failure around
+them is reported naming the type, the attachment point falling back on
+its own: the node to the default class, the readout to its contentless
+form, the editor never blank.
 
 Nothing is policed while editing — a graph with problems edits, saves,
 and starts exactly as freely as a clean one — but the problems are shown
@@ -235,9 +255,11 @@ abandons it — and every value an output emits travels its wires as a
 pulse, a fan-out pulsing each downstream wire, and shows as small text
 at the emitting output port, replaced by each new emission. Values of
 the base scalars display as their plain text; a plugin's custom type
-animates the wire but carries no invented content, its rendering being
-plugin territory. Statuses and values persist after the run ends — the
-failed node stays findable, the counter's last ticked value stays
+displays in the form its declared serialiser produces, through the
+value bundle the type declares — and a type that declares neither
+serialiser nor bundle animates the wire and carries no invented
+content, exactly as it always has. Statuses and values persist after
+the run ends — the failed node stays findable, the counter's last ticked value stays
 evidence of what the run did — until the next start resets the canvas.
 The browser coalesces the animation, keeping only the latest value per
 port and letting a fast graph drop frames rather than queue a backlog,
@@ -247,7 +269,8 @@ is given the current statuses and values beside the run state and then
 joins the live stream, so every open tab animates the same run.
 
 ```sh
-cargo run -p visual -- examples/visual/graphs/ticker.yml  # the streaming sample
+cargo run -p visual -- examples/visual/graphs/sample.yml  # the editor on a graph file
+cargo run -p visual-badui  # the editor with one deliberately unknown-contract bundle linked
 ```
 
 The ticker sample is the one to watch. A `Ticker` counts to 100000 at
@@ -356,6 +379,38 @@ type; `crates/nodetool-fizzbuzz` is the reference. The optional
 `check_parameters` arm names a function the compiler consults once the
 instance's parameters and families resolved, for validations the type rules
 cannot express — a zero step, say.
+
+A plugin can also ship UI the same way it ships nodes and types: declared on
+the Rust side, embedded in the crate at build time, served by the editor
+server under `/plugins/`, and loaded by the browser only when first used —
+the first node of the type on the canvas, or the first displayed value. The
+optional `ui` arm of `node_type!` names a `NodeUi` — the bundle that renders
+that node type's body in the editor — and the optional `ui` arm of
+`data_type!` names a `ValueUi`: the serialisation function called whenever a
+value of the type crosses to the browser, and the bundle rendering that form
+wherever the values display. The serialisation is display only — nothing
+travels back. A type or node declared without `ui` changes nothing: values
+cross contentless, nodes render by the default class. `examples/plugins/shapes`
+declares both, and `examples/visual-badui` demonstrates the fallback.
+
+A bundle is a plain ES module exporting its component — no build step of the
+editor's involved — and is built against a versioned contract, `contract: 1`
+today: the component receives the page's `h` (`React.createElement`), the
+node's definition slice (label, parameters, connected inputs), the live
+display state (the run status, the problem messages naming the node, the
+per-port latest values with custom types already in their serialiser's
+form), the `locked` flag a run holds — the bundle's own editing controls sit
+inert while it is true — and two helpers, `setLabel` and `setParameter`,
+which issue exactly the same edit operations the sidebar and the default
+node's fields commit; there is no second editing path and no other
+operation. The contract's floor for the bundle's author: render the marks
+handed to it, and make its own content accessible — the editor never
+sanitises or styles a plugin's UI, the way it never sanitises an icon. A
+bundle naming a contract version the editor does not speak, one that fails
+to load, or one whose component throws is reported naming the type, and the
+attachment point falls back on its own — the node to the default class, the
+value readout to its contentless form. The contract's wording lives in
+`crates/nodetool/ui/src/pluginui.jsx`.
 
 Data types are the vocabulary ports refer to. Core ships the base scalars and
 declares their trivial conversions through the same mechanism a plugin uses;

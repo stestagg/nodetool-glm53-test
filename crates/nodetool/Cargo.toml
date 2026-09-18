@@ -20,4 +20,5 @@ test-plugin-alpha = { path = "tests/plugins/alpha" }
 test-plugin-beta = { path = "tests/plugins/beta" }
 test-plugin-gamma = { path = "tests/plugins/gamma" }
 test-plugin-delta = { path = "tests/plugins/delta" }
+test-plugin-epsilon = { path = "tests/plugins/epsilon" }
 tokio = { version = "1", features = ["rt", "macros", "sync", "time", "test-util"] }

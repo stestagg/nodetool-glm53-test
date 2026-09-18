@@ -10,11 +10,11 @@
 //! completed or failed from its own final transition, and stopped when a
 //! failed or user-stopped run-finished closes a started node without one —
 //! once, here, keyed by instance uuid, and pushes each derived change as
-//! state. It holds the latest value per emitting port, a base scalar as
-//! its plain string form, a plugin custom type as nothing at all — the
-//! port's held entry goes with it, so no scalar a custom emission
-//! displaced lingers as the port's latest; rendering custom types is
-//! plugin territory, core staying opaque to them. And it carries a
+//! state. It holds the latest value per emitting port — a base scalar as
+//! its plain string form, a custom type in the form its declared
+//! serialiser produces, and nothing at all for a type with neither — so
+//! no scalar a contentless emission displaced lingers as the port's
+//! latest. And it carries a
 //! run-finished outcome back into the run state — the ending the chrome
 //! shows arrives through this observer, not beside it.
 //!
@@ -39,6 +39,7 @@ use super::run::{Outcome, RunState};
 use super::Session;
 use crate::async_trait;
 use crate::engine::{Event, Observer, RunOutcome};
+use crate::registry::Registry;
 
 /// A node's derived status: story 07's, extended with the stopped outcome
 /// a failed or user-stopped run leaves behind. Rendered as its name; the
@@ -108,20 +109,40 @@ impl RunDisplay {
 pub(super) struct Bridge {
     session: Arc<Mutex<Session>>,
     pushes: tokio::sync::broadcast::Sender<String>,
+    registry: Arc<Registry>,
 }
 
 impl Bridge {
     pub(super) fn new(
         session: Arc<Mutex<Session>>,
         pushes: tokio::sync::broadcast::Sender<String>,
+        registry: Arc<Registry>,
     ) -> Bridge {
-        Bridge { session, pushes }
+        Bridge {
+            session,
+            pushes,
+            registry,
+        }
     }
 
     fn push_status(&self, uuid: Uuid, status: Status) {
         let _ = self
             .pushes
             .send(protocol::node_status_message(uuid, status.name()));
+    }
+
+    /// The browser form of one emitted value: a base scalar as its plain
+    /// text, a custom type through its declared serialiser — looked up by
+    /// the value's own type, core switching on nothing. A type with no
+    /// serialiser renders no content of core's inventing.
+    fn browser_text(&self, value: &crate::Value) -> Option<String> {
+        crate::scalars::scalar_text(value).or_else(|| {
+            (self
+                .registry
+                .data_type_by_id(value.type_id())?
+                .ui?
+                .serialise)(value)
+        })
     }
 }
 
@@ -147,17 +168,19 @@ impl Bridge {
             .expect("the session lock is never poisoned");
 
         // An emission's browser-renderable text: held as the port's latest,
-        // and riding the forwarded event. A plugin custom type renders no
-        // content of core's inventing — the event still crosses, the wire
-        // still animates, and the port's held entry goes with it, leaving
-        // nothing where the last displayable text stood until a
-        // displayable emission replaces it.
+        // and riding the forwarded event. A base scalar renders as its plain
+        // text; a custom type renders through its declared serialiser, the
+        // form the plugin owns. A type with neither — the default, no
+        // declaration — renders no content of core's inventing: the event
+        // still crosses, the wire still animates, and the port's held entry
+        // goes with it, leaving nothing where the last displayable text
+        // stood until a displayable emission replaces it.
         let value = match &event {
             Event::Emitted {
                 node,
                 port,
                 value: emitted,
-            } => match crate::scalars::scalar_text(emitted) {
+            } => match self.browser_text(emitted) {
                 Some(text) => {
                     session
                         .display

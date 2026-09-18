@@ -1,0 +1,13 @@
+[package]
+name = "visual-badui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nodetool = { path = "../../crates/nodetool" }
+nodetool-utility = { path = "../../crates/nodetool-utility" }
+nodetool-fizzbuzz = { path = "../../crates/nodetool-fizzbuzz" }
+plugin-shapes = { path = "../plugins/shapes" }
+plugin-text = { path = "../plugins/text" }
+plugin-badui = { path = "../plugins/badui" }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "net"] }

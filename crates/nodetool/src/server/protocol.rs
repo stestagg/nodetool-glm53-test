@@ -70,10 +70,12 @@ const NEUTRAL_SHAPE: &str = "circle";
 
 /// The listing's data-type fact: per data type reference — every name the
 /// registry knows, and every reference the listed node types' ports
-/// declare — the colour and shape its declaration gives it. A type that
+/// declare — the colour and shape its declaration gives it, and, when the
+/// type declares custom value UI, the ui fact beside them. A type that
 /// does not declare both a colour and a shape, and a reference the
-/// registry does not know, get the neutral pair. Composed here, where the
-/// declarations live, so the browser holds no colour or shape table of its
+/// registry does not know, get the neutral pair; a type with no declared
+/// value UI carries no ui fact. Composed here, where the declarations
+/// live, so the browser holds no colour, shape, or asset table of its
 /// own: it renders the colour verbatim and takes the neutral for a shape
 /// name outside the small set it draws.
 pub fn data_type_facts(listing: &[&NodeType]) -> Map<String, Value> {
@@ -97,18 +99,25 @@ pub fn data_type_facts(listing: &[&NodeType]) -> Map<String, Value> {
         .collect()
 }
 
-/// One reference's colour and shape: the declared pair when the type
+/// One reference's colour and shape, and — when the type declares custom
+/// value UI — the ui fact beside them: the declared pair when the type
 /// declares both, the neutral pair otherwise. Nothing else about the type
-/// is read, and nothing in core switches on either — the fact is
+/// is read, and nothing in core switches on either — the facts are
 /// presentation the browser renders.
 fn appearance(reference: &str, declared: &HashMap<&str, &DataType>) -> Value {
-    let pair = declared.get(reference).and_then(|data_type| {
+    let data_type = declared.get(reference).copied();
+    let pair = data_type.and_then(|data_type| {
         Some(json!({
             "color": declared_str(data_type, "color")?,
             "shape": declared_str(data_type, "shape")?,
         }))
     });
-    pair.unwrap_or_else(|| json!({ "color": NEUTRAL_COLOR, "shape": NEUTRAL_SHAPE }))
+    let mut fact =
+        pair.unwrap_or_else(|| json!({ "color": NEUTRAL_COLOR, "shape": NEUTRAL_SHAPE }));
+    if let Some(ui) = data_type.and_then(|data_type| data_type.ui) {
+        fact["ui"] = ui_fact(ui.contract, ui.entry);
+    }
+    fact
 }
 
 fn declared_str(data_type: &DataType, key: &str) -> Option<&'static str> {
@@ -118,8 +127,23 @@ fn declared_str(data_type: &DataType, key: &str) -> Option<&'static str> {
     }
 }
 
+/// The path a declared bundle serves at: the per-plugin path composed from
+/// the entry the declaration names. Composed server-side, so the browser
+/// hardcodes no plugin, type, or asset path — the listing fact is the only
+/// thing it reads.
+pub fn plugin_asset_url(entry: &str) -> String {
+    format!("/plugins/{entry}")
+}
+
+/// The listing's ui fact for one declared bundle: the entry asset's served
+/// path and the component contract version the bundle names. Absent when
+/// nothing is declared — no fact, no custom UI.
+fn ui_fact(contract: u64, entry: &str) -> Value {
+    json!({ "entry": plugin_asset_url(entry), "contract": contract })
+}
+
 pub fn node_type_json(node_type: &NodeType) -> Value {
-    json!({
+    let mut fact = json!({
         "type_ref": node_type.type_ref,
         "label": node_type.label,
         "icon": node_type.icon,
@@ -127,7 +151,11 @@ pub fn node_type_json(node_type: &NodeType) -> Value {
         "sub_group": node_type.sub_group,
         "inputs": ports_json(node_type.inputs),
         "outputs": ports_json(node_type.outputs),
-    })
+    });
+    if let Some(ui) = node_type.ui {
+        fact["ui"] = ui_fact(ui.contract, ui.entry);
+    }
+    fact
 }
 
 fn ports_json(ports: &[Port]) -> Value {

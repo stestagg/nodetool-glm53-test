@@ -49,6 +49,13 @@ import {
 import { NODE_TYPE, connect, connectionLost } from './protocol.js'
 import { RunCoalescer } from './coalesce.js'
 import { EditContext, LockContext, scalarPossible } from './fields.jsx'
+import {
+  PluginUiContext,
+  bodyTypeRefs,
+  createBundleStore,
+  valueTypeRefs,
+} from './pluginui.jsx'
+import { createElement } from 'react'
 import { SelfLoopEdge } from './edges.jsx'
 import { byName, portAppearance } from './types.js'
 import { PlaceholderNode, TypeIcon, TypeNode } from './nodes.jsx'
@@ -371,6 +378,13 @@ export function Editor() {
   const [values, setValues] = useState({})
   const [pulsing, setPulsing] = useState(() => new Set())
   const [nodes, setNodes] = useState([])
+  // The loaded plugin bundles, per attachment point: a node type's body
+  // component and a type's value component, absent until the first node of
+  // the type or the first displayed value asks for the bundle, and null
+  // once a load or a render has failed there — the default class and the
+  // contentless readout taking over, the failure reported.
+  const [bodies, setBodies] = useState({})
+  const [valueBodies, setValueBodies] = useState({})
   const [status, setStatus] = useState({ text: 'connecting…', error: false })
   // The connection: connecting until the first greeting, open while it
   // holds, lost on every drop the client is retrying, and incompatible
@@ -413,6 +427,11 @@ export function Editor() {
   // next definition arrival, which brings the view to the graph; a
   // failed gesture disarms it.
   const pendingRefit = useRef(false)
+  // The page's one bundle table: whatever node UI and value UI the
+  // listing's facts name, loaded once each however many nodes and ports
+  // ask for them.
+  const bundles = useRef(null)
+  if (bundles.current === null) bundles.current = createBundleStore()
   const { screenToFlowPosition, getViewport, setViewport, fitView } = useReactFlow()
 
   // The background's two drags differ by Shift alone, and so do the two
@@ -493,6 +512,45 @@ export function Editor() {
   }, [])
 
   const marks = useMemo(() => nodeMarks(problems, run), [problems, run])
+
+  // A failed bundle is reported through the toast surface naming the type,
+  // and its attachment point marked fallen-back: the node renders by the
+  // default class, the value readout stays contentless, and neither asks
+  // for the bundle again this page.
+  const failedBundle = (setState) => (ref, error) => {
+    setState((current) => (current[ref] === null ? current : { ...current, [ref]: null }))
+    showToast(`plugin UI for ${ref} failed: ${error?.message ?? error}`)
+  }
+  const failBody = useCallback(failedBundle(setBodies), [showToast])
+  const failValue = useCallback(failedBundle(setValueBodies), [showToast])
+
+  // Node-type UI loads lazily: the first node of the type on the canvas
+  // asks for its bundle, the palette asking for nothing. Value UI loads
+  // the same way, at the first displayed value. A bundle that has not
+  // arrived delays nothing — the nodes it belongs to render by the default
+  // class until it lands.
+  useEffect(() => {
+    if (graph === null || listing === null) return
+    const byRef = new Map(listing.types.map((type) => [type.type_ref, type]))
+    for (const ref of bodyTypeRefs(graph, listing.types)) {
+      if (bodies[ref] !== undefined) continue
+      bundles.current.attempt(byRef.get(ref).ui).then(
+        (body) => setBodies((current) => ({ ...current, [ref]: body })),
+        (error) => failBody(ref, error),
+      )
+    }
+  }, [graph, listing, bodies, failBody])
+
+  useEffect(() => {
+    if (graph === null || listing === null) return
+    for (const ref of valueTypeRefs(graph, listing.types, listing.dataTypes, values)) {
+      if (valueBodies[ref] !== undefined) continue
+      bundles.current.attempt(listing.dataTypes[ref].ui).then(
+        (body) => setValueBodies((current) => ({ ...current, [ref]: body })),
+        (error) => failValue(ref, error),
+      )
+    }
+  }, [graph, listing, values, valueBodies, failValue])
 
   useEffect(() => {
     if (graph === null) return
@@ -786,144 +844,154 @@ export function Editor() {
   const banner = bannerText(connection, mismatch)
 
   return (
-    <EditContext.Provider value={edit}>
-      <LockContext.Provider value={!editable}>
-        <div className={editable ? 'app' : 'app locked'}>
-          <header className="chrome">
-            <span className="file-name">{file?.path ?? 'untitled'}</span>
-            {hasUnsavedChanges(file) && (
-              <span className="file-dirty">unsaved changes</span>
-            )}
-            <span className="chrome-space" />
-            <button disabled={!control.enabled} onClick={actOnRun}>
-              {control.label}
-            </button>
-            <button disabled={!editable} onClick={newGraph}>New</button>
-            <button disabled={!editable} onClick={openFile}>Open</button>
-            <button disabled={!editable} onClick={() => save(false)}>Save</button>
-            <button disabled={!editable} onClick={() => save(true)}>Save as</button>
-          </header>
-          {/* The banner names the loss without covering the canvas: the
-              view beneath stays where the user left it, looking live. */}
-          {banner && <div className="banner">{banner}</div>}
-          <div className="workspace">
-            <aside className="palette">
-              <h1 className="palette-title">Nodes</h1>
-              {types === undefined ? null : types.length === 0 ? (
-                <p className="palette-empty">
-                  No node types are linked into this binary. Link a plugin crate
-                  to see its types here.
-                </p>
-              ) : (
-                paletteGroups(types).map((group) => (
-                  <section className="palette-plugin" key={group.plugin}>
-                    <h2 className="palette-heading">{group.plugin}</h2>
-                    {group.sections.map((section) => (
-                      <div className="palette-group" key={section.subGroup ?? ''}>
-                        {section.subGroup !== null && (
-                          <h3 className="palette-subgroup">{section.subGroup}</h3>
-                        )}
-                        <ul className="palette-list">
-                          {section.types.map((type) => (
-                            <li
-                              key={type.type_ref}
-                              className="palette-item"
-                              draggable={editable}
-                              onDragStart={(event) => {
-                                event.dataTransfer.setData(NODE_TYPE, type.type_ref)
-                                event.dataTransfer.effectAllowed = 'move'
-                              }}
-                            >
-                              <TypeIcon icon={type.icon} />
-                              <span className="palette-label">{type.label}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </section>
-                ))
+    <PluginUiContext.Provider
+      value={{
+        h: createElement,
+        bodies,
+        valueBodies,
+        failBody,
+        failValue,
+      }}
+    >
+      <EditContext.Provider value={edit}>
+        <LockContext.Provider value={!editable}>
+          <div className={editable ? 'app' : 'app locked'}>
+            <header className="chrome">
+              <span className="file-name">{file?.path ?? 'untitled'}</span>
+              {hasUnsavedChanges(file) && (
+                <span className="file-dirty">unsaved changes</span>
               )}
-            </aside>
-            <main className="canvas" ref={canvasRef}>
-              <ReactFlow
-                nodes={nodes}
-                edges={graph === null ? [] : toEdges(graph, pulsing, listing)}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                onNodesChange={onNodesChange}
-                onNodeDragStop={onNodeDragStop}
-                onConnect={onConnect}
-                onConnectEnd={onConnectEnd}
-                onDrop={onDrop}
-                onDragOver={onDragOver}
-                fitView
-                // The initial fit never zooms in past 100%: fitting a small
-                // graph up to maxZoom would lurch the view under the pointer.
-                fitViewOptions={{ maxZoom: 1 }}
-                minZoom={0.25}
-                maxZoom={2.5}
-                // Shift rides the shell's own tracker — backgroundDrag
-                // above — and multiSelectionKeyCode makes a shift-click
-                // on a node a toggle, React Flow's selection key retired
-                // so its capture can never swallow a node's pointerdown.
-                // The delete key is this shell's own gesture — fanning
-                // out to the delete operation per selected node — so
-                // React Flow's is retired. A wire is a drag from either
-                // end — a click never starts or lands one — and the drag
-                // threshold keeps a port click from reading as a drag-off.
-                multiSelectionKeyCode="Shift"
-                selectionKeyCode={null}
-                deleteKeyCode={null}
-                {...backgroundDrag(shiftHeld)}
-                nodesDraggable={editable}
-                nodesConnectable={editable}
-                connectionDragThreshold={4}
-                connectOnClick={false}
-              >
-                <Background variant="dots" gap={24} size={1.5} />
-              </ReactFlow>
-              {empty && (
-                <div className="canvas-hint">
-                  Drag a node type from the palette onto the canvas.
-                </div>
-              )}
-              <div className="toasts">
-                {toasts.map((toast) => (
-                  <div
-                    key={toast.id}
-                    className="toast"
-                    role="status"
-                    onClick={() => dismissToast(toast.id)}
-                  >
-                    {toast.text}
+              <span className="chrome-space" />
+              <button disabled={!control.enabled} onClick={actOnRun}>
+                {control.label}
+              </button>
+              <button disabled={!editable} onClick={newGraph}>New</button>
+              <button disabled={!editable} onClick={openFile}>Open</button>
+              <button disabled={!editable} onClick={() => save(false)}>Save</button>
+              <button disabled={!editable} onClick={() => save(true)}>Save as</button>
+            </header>
+            {/* The banner names the loss without covering the canvas: the
+                view beneath stays where the user left it, looking live. */}
+            {banner && <div className="banner">{banner}</div>}
+            <div className="workspace">
+              <aside className="palette">
+                <h1 className="palette-title">Nodes</h1>
+                {types === undefined ? null : types.length === 0 ? (
+                  <p className="palette-empty">
+                    No node types are linked into this binary. Link a plugin crate
+                    to see its types here.
+                  </p>
+                ) : (
+                  paletteGroups(types).map((group) => (
+                    <section className="palette-plugin" key={group.plugin}>
+                      <h2 className="palette-heading">{group.plugin}</h2>
+                      {group.sections.map((section) => (
+                        <div className="palette-group" key={section.subGroup ?? ''}>
+                          {section.subGroup !== null && (
+                            <h3 className="palette-subgroup">{section.subGroup}</h3>
+                          )}
+                          <ul className="palette-list">
+                            {section.types.map((type) => (
+                              <li
+                                key={type.type_ref}
+                                className="palette-item"
+                                draggable={editable}
+                                onDragStart={(event) => {
+                                  event.dataTransfer.setData(NODE_TYPE, type.type_ref)
+                                  event.dataTransfer.effectAllowed = 'move'
+                                }}
+                              >
+                                <TypeIcon icon={type.icon} />
+                                <span className="palette-label">{type.label}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </section>
+                  ))
+                )}
+              </aside>
+              <main className="canvas" ref={canvasRef}>
+                <ReactFlow
+                  nodes={nodes}
+                  edges={graph === null ? [] : toEdges(graph, pulsing, listing)}
+                  nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
+                  onNodesChange={onNodesChange}
+                  onNodeDragStop={onNodeDragStop}
+                  onConnect={onConnect}
+                  onConnectEnd={onConnectEnd}
+                  onDrop={onDrop}
+                  onDragOver={onDragOver}
+                  fitView
+                  // The initial fit never zooms in past 100%: fitting a small
+                  // graph up to maxZoom would lurch the view under the pointer.
+                  fitViewOptions={{ maxZoom: 1 }}
+                  minZoom={0.25}
+                  maxZoom={2.5}
+                  // Shift rides the shell's own tracker — backgroundDrag
+                  // above — and multiSelectionKeyCode makes a shift-click
+                  // on a node a toggle, React Flow's selection key retired
+                  // so its capture can never swallow a node's pointerdown.
+                  // The delete key is this shell's own gesture — fanning
+                  // out to the delete operation per selected node — so
+                  // React Flow's is retired. A wire is a drag from either
+                  // end — a click never starts or lands one — and the drag
+                  // threshold keeps a port click from reading as a drag-off.
+                  multiSelectionKeyCode="Shift"
+                  selectionKeyCode={null}
+                  deleteKeyCode={null}
+                  {...backgroundDrag(shiftHeld)}
+                  nodesDraggable={editable}
+                  nodesConnectable={editable}
+                  connectionDragThreshold={4}
+                  connectOnClick={false}
+                >
+                  <Background variant="dots" gap={24} size={1.5} />
+                </ReactFlow>
+                {empty && (
+                  <div className="canvas-hint">
+                    Drag a node type from the palette onto the canvas.
                   </div>
-                ))}
-              </div>
-            </main>
-            <Sidebar
-              node={selected}
-              type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
-              wiredInputs={selectedWiredInputs}
-              baseScalars={listing?.baseScalars ?? {}}
-            />
-            {selectedNodes.length > 1 && (
-              <SelectionSidebar
-                nodes={selectedNodes}
-                types={new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))}
+                )}
+                <div className="toasts">
+                  {toasts.map((toast) => (
+                    <div
+                      key={toast.id}
+                      className="toast"
+                      role="status"
+                      onClick={() => dismissToast(toast.id)}
+                    >
+                      {toast.text}
+                    </div>
+                  ))}
+                </div>
+              </main>
+              <Sidebar
+                node={selected}
+                type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
+                wiredInputs={selectedWiredInputs}
                 baseScalars={listing?.baseScalars ?? {}}
-                edges={graph?.edges ?? []}
               />
-            )}
+              {selectedNodes.length > 1 && (
+                <SelectionSidebar
+                  nodes={selectedNodes}
+                  types={new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))}
+                  baseScalars={listing?.baseScalars ?? {}}
+                  edges={graph?.edges ?? []}
+                />
+              )}
+            </div>
+            <footer
+              className={`status${status.error ? ' error' : ''}`}
+              aria-live="polite"
+            >
+              {status.text}
+            </footer>
           </div>
-          <footer
-            className={`status${status.error ? ' error' : ''}`}
-            aria-live="polite"
-          >
-            {status.text}
-          </footer>
-        </div>
-      </LockContext.Provider>
-    </EditContext.Provider>
+        </LockContext.Provider>
+      </EditContext.Provider>
+    </PluginUiContext.Provider>
   )
 }

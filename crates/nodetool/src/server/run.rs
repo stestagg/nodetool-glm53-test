@@ -63,10 +63,11 @@ impl RunState {
 pub(super) fn spawn(
     session: Arc<Mutex<super::Session>>,
     pushes: tokio::sync::broadcast::Sender<String>,
+    registry: std::sync::Arc<crate::registry::Registry>,
     compiled: crate::compile::CompiledGraph,
     stop_requested: watch::Receiver<bool>,
 ) {
-    let bridge = Arc::new(super::bridge::Bridge::new(session, pushes));
+    let bridge = Arc::new(super::bridge::Bridge::new(session, pushes, registry));
     tokio::spawn(async move {
         let mut run = crate::engine::Run::new(&compiled);
         run.stop_on(stop_requested);

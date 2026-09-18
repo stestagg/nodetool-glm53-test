@@ -97,14 +97,16 @@ struct Session {
 }
 
 /// The editing server: the held session, the palette listing of every
-/// linked plugin's node types, the registry the start compiles against,
-/// and the push channel every connection rides.
+/// linked plugin's node types, the registry the start compiles against and
+/// the bridge serialises values through, the plugin-declared UI assets, and
+/// the push channel every connection rides.
 pub struct Editor {
     session: Arc<Mutex<Session>>,
     listing: Vec<&'static NodeType>,
-    registry: Registry,
+    registry: Arc<Registry>,
     base_scalars: serde_json::Map<String, Value>,
     data_types: serde_json::Map<String, Value>,
+    plugin_assets: Vec<assets::PluginAsset>,
     pushes: broadcast::Sender<String>,
 }
 
@@ -135,11 +137,12 @@ impl Editor {
     /// asks.
     pub fn new(definition: GraphDefinition, file: Option<String>) -> Editor {
         let (pushes, _) = broadcast::channel(64);
-        let registry = Registry::collect();
+        let registry = Arc::new(Registry::collect());
         let problems = problems_of(&definition, &registry);
         let listing = protocol::node_type_listing();
         let base_scalars = protocol::base_scalars();
         let data_types = protocol::data_type_facts(&listing);
+        let plugin_assets = assets::plugin_assets();
         Editor {
             session: Arc::new(Mutex::new(Session {
                 graph: definition,
@@ -153,6 +156,7 @@ impl Editor {
             registry,
             base_scalars,
             data_types,
+            plugin_assets,
             pushes,
         }
     }
@@ -617,6 +621,7 @@ impl Editor {
         run::spawn(
             Arc::clone(&self.session),
             self.pushes.clone(),
+            Arc::clone(&self.registry),
             compiled,
             stop_requested,
         );
@@ -721,15 +726,13 @@ impl Editor {
             http::write_upgrade(&mut stream, &ws::accept_key(&key)).await?;
             return self.connection(stream).await;
         }
-        match assets::find(&request.path) {
-            Some(asset) => {
-                http::write_response(
-                    &mut stream,
-                    "200 OK",
-                    asset.content_type,
-                    asset.body.as_bytes(),
-                )
-                .await
+        // The embedded page and the plugin-declared UI bundles serve the one
+        // way: a declared asset's bytes, or the 404 a missing path answers
+        // with — a missing bundle is a browser-reported failure, never a
+        // crash.
+        match self.asset(&request.path) {
+            Some((content_type, body)) => {
+                http::write_response(&mut stream, "200 OK", content_type, body.as_bytes()).await
             }
             None => {
                 http::write_response(
@@ -741,6 +744,19 @@ impl Editor {
                 .await
             }
         }
+    }
+
+    /// The served file at `path`: the embedded editor UI, or one of the
+    /// plugin-declared UI bundles.
+    fn asset(&self, path: &str) -> Option<(&'static str, &'static str)> {
+        assets::find(path)
+            .map(|asset| (asset.content_type, asset.body))
+            .or_else(|| {
+                self.plugin_assets
+                    .iter()
+                    .find(|asset| asset.path == path)
+                    .map(|asset| (asset.content_type, asset.body))
+            })
     }
 
     /// One connection: a greeting, then every received message answered and

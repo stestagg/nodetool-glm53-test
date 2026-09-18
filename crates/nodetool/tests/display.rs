@@ -10,6 +10,7 @@ fn display_shows_the_grouping_and_every_port_with_its_type_references() {
         icon: "<svg/>",
         plugin: "shapes",
         sub_group: Some("2d"),
+        ui: None,
         inputs: &[Port {
             name: "radius",
             type_refs: &["i32", "f64"],
@@ -55,6 +56,7 @@ fn display_omits_an_absent_sub_group() {
         icon: "<svg/>",
         plugin: "beta",
         sub_group: None,
+        ui: None,
         inputs: &[],
         outputs: &[Port {
             name: "tick",
