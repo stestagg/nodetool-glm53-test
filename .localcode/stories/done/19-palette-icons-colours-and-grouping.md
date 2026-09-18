@@ -179,3 +179,5 @@ no node-header colouring — settled in the comments.
   registry listing, which the binary itself composes from its own linked
   declarations. A malformed or empty icon is that plugin's declaration to
   fix, not an input to sanitise.
+
+- 2026-09-18: Implemented in pull request #56 (http://localhost:8080/gitea/localcode/nodetool/pulls/56).
