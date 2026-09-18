@@ -1,6 +1,7 @@
 ---
 title: Fizzbuzz UI mode
 date: 2026-09-16
+pr_id: 61
 ---
 
 ## Description
