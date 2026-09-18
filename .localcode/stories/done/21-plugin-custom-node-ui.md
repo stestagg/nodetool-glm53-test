@@ -285,3 +285,5 @@ existing edit operations, not new ones.
   core scalars, never the plugin's type — and the demo rides the shapes
   plugin, which the example already links and which already declares the
   custom type and nodes emitting it.
+
+- 2026-09-18: Implemented in pull request #58 (http://localhost:8080/gitea/localcode/nodetool/pulls/58).
