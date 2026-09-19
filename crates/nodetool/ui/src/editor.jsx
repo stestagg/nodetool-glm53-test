@@ -71,7 +71,7 @@ import { Banner, Toasts } from './chrome.jsx'
 import { ContextMenu } from './menu.jsx'
 import { Palette } from './palette.jsx'
 import { escapeCancel, finalMoves, groupKeys, panIntoView, toggleKey, viewportCenter } from './keyboard.js'
-import { canvasValues, groupFacts, groupInstances, groupSuggestion, groupType } from './groups.js'
+import { canvasValues, groupFacts, groupInstances, groupNames, groupSuggestion, groupType } from './groups.js'
 import {
   backgroundDrag,
   bannerText,
@@ -173,8 +173,11 @@ export function Editor() {
   // has landed — reply and push race on one socket, and until the nodes
   // exist the handoff waits.
   const [handoff, setHandoff] = useState(null)
-  // The context menu's seat, in canvas coordinates, or null: the editor's
-  // first context menu, the selection's gestures where the pointer is.
+  // The context menu's seat, in canvas coordinates, or null, with the
+  // selection it opened for and whether it is the background's own: the
+  // selection's gestures where the pointer is, the background's Groups
+  // beside them, the entries re-derived from the held definition every
+  // render.
   const [menu, setMenu] = useState(null)
   // The page's one bundle table: whatever node UI and value UI the
   // listing's facts name, loaded once each however many nodes and ports
@@ -672,16 +675,30 @@ export function Editor() {
     })
   }, [editable, selectedHeld, showToast])
 
-  // The menu's opening moves: a right-click never disturbs the selection
-  // it acts on — a node already selected keeps the selection whole, an
-  // unselected one is selected alone first, as a plain click does — and
-  // the menu itself is an editing gesture, quiet while a run is on,
-  // selection staying live beneath the lock. A right-click with nothing
-  // to act on opens nothing: the entries ride the state, so `menu` set
-  // is always a menu the render shows and the closers can close.
-  const openMenu = useCallback(
-    (event, acted) => {
-      if (!editable || canvasRef.current === null) return
+  // The Groups submenu's pick: one instance of the named group, landing
+  // where the menu was opened. The seat is read at the send — the flow
+  // point under the menu still standing where it opened — so the create
+  // is the same operation a palette drop sends, position included.
+  const createGroupInstance = useCallback(
+    (name, seat) => {
+      if (!editable || protocol.current === null || canvasRef.current === null) return
+      const rect = canvasRef.current.getBoundingClientRect()
+      const position = screenToFlowPosition({ x: rect.left + seat.x, y: rect.top + seat.y })
+      protocol
+        .current('create_node', { type_ref: name, position })
+        .catch(showToast)
+    },
+    [editable, screenToFlowPosition, showToast],
+  )
+
+  // The menu's entries, read off the held definition and the captured
+  // selection at the moment they are asked — the open's decision and
+  // every render after, so the Groups submenu tracks the definition live:
+  // a package puts its group in it, the unpack of the last instance takes
+  // it back out. A submenu with no rows is no entry; a menu with no
+  // entries is no menu — the open decides by the same derivation.
+  const menuEntries = useCallback(
+    (acted, background, seat) => {
       const entries = []
       if (acted.length > 0) {
         entries.push({ key: 'package', label: 'Package into group…', onPick: packageSelection })
@@ -689,11 +706,43 @@ export function Editor() {
       if (groupInstances(acted, graphRef.current?.groups).length > 0) {
         entries.push({ key: 'unpack', label: 'Unpack group', onPick: unpackSelection })
       }
-      if (entries.length === 0) return
-      const rect = canvasRef.current.getBoundingClientRect()
-      setMenu({ x: event.clientX - rect.left, y: event.clientY - rect.top, entries })
+      const names = background ? groupNames(graphRef.current?.groups) : []
+      if (names.length > 0) {
+        entries.push({
+          key: 'groups',
+          label: 'Groups',
+          items: names.map((name) => ({
+            key: name,
+            label: name,
+            onPick: () => createGroupInstance(name, seat),
+          })),
+        })
+      }
+      return entries
     },
-    [editable, packageSelection, unpackSelection],
+    [packageSelection, unpackSelection, createGroupInstance],
+  )
+
+  // The menu's opening moves: a right-click never disturbs the selection
+  // it acts on — a node already selected keeps the selection whole, an
+  // unselected one is selected alone first, as a plain click does — and
+  // the menu itself is an editing gesture, quiet while a run is on,
+  // selection staying live beneath the lock. The background's own menu
+  // carries the Groups submenu beside the selection's entries; with
+  // nothing to act on and no groups it does not open — a menu whose one
+  // row cannot act is noise. A right-click with nothing to act on opens
+  // nothing: the entries ride the state, so `menu` set is always a menu
+  // the render shows and the closers can close.
+  const openMenu = useCallback(
+    (event, acted, background = false) => {
+      if (!editable || canvasRef.current === null) return
+      const rect = canvasRef.current.getBoundingClientRect()
+      const seat = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+      const entries = menuEntries(acted, background, seat)
+      if (entries.length === 0) return
+      setMenu({ ...seat, acted, background })
+    },
+    [editable, menuEntries],
   )
 
   const onNodeContextMenu = useCallback(
@@ -722,7 +771,10 @@ export function Editor() {
   const onPaneContextMenu = useCallback(
     (event) => {
       event.preventDefault()
-      openMenu(event, selectedHeld())
+      // The background's own menu: the selection's entries when one
+      // stands, and the document's Groups — the one surface a group
+      // definition reaches the canvas by.
+      openMenu(event, selectedHeld(), true)
     },
     [openMenu, selectedHeld],
   )
@@ -928,7 +980,10 @@ export function Editor() {
                   <ContextMenu
                     x={menu.x}
                     y={menu.y}
-                    entries={menu.entries}
+                    entries={menuEntries(menu.acted, menu.background, {
+                      x: menu.x,
+                      y: menu.y,
+                    })}
                     onClose={() => setMenu(null)}
                   />
                 )}

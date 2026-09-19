@@ -252,6 +252,22 @@ same inline fields and type colours, and the sidebar edits it like any
 node — the shipped gestures treating it untouched, deletion removing the
 instance, never the group's definition. The palette stays a palette of
 linked plugin types: groups arrive with the document, not the registry.
+Groups reach the canvas by the background's own context menu: a
+right-click on the canvas background carries a Groups submenu listing the
+document's groups by name, alphabetically — every tab and reload agreeing
+— and picking one creates one collapsed instance where the menu was
+opened, the same create operation a drop or a palette row sends, so the
+instance lands carrying the group's ports and the group's name as its
+default label. With no groups in the document the background menu itself
+does not open, and the submenu tracks the definition as it changes:
+packaging a selection puts its group in the menu at once, unpacking a
+definition's last instance takes it back out — a hand-written file's
+group no instance references is exactly what the menu makes reachable. A
+create naming a group the document does not define is refused naming the
+problem, the definition untouched. The menu and its submenu are operable
+and escapable by keyboard, activating a group's row creating at the
+menu's seat; while a run is on the whole gesture goes quiet with the
+other edits.
 While a run is on, the collapsed node's status mark aggregates its
 inside — error when an inner node errors (the report naming the group
 instance and the inner node), completed when every inner node is, stopped

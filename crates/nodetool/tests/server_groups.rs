@@ -924,3 +924,130 @@ fn read_file(path: &std::path::Path) -> graph::GraphDefinition {
     graph::load(&std::fs::read_to_string(path).expect("the test saved the file"))
         .expect("the saved file loads")
 }
+
+/// A hand-written file whose group no instance references — the
+/// zero-instance dead weight 23 made legal, the load checks only the
+/// document's shape, and the background menu makes reachable.
+const UNREFERENCED: &str = "schema_version: 2
+name: hand-written
+nodes: []
+edges: []
+groups:
+  - name: stage
+    inputs:
+      - name: b
+        type_refs: [i32]
+        node: 00000000-0000-0000-0000-0000000000a1
+        port: b
+    outputs:
+      - name: sum
+        type_refs: [i32]
+        node: 00000000-0000-0000-0000-0000000000a2
+        port: sum
+    nodes:
+      - uuid: 00000000-0000-0000-0000-0000000000a1
+        type_ref: alpha/add
+        metadata:
+          position: { x: 0, y: 0 }
+      - uuid: 00000000-0000-0000-0000-0000000000a2
+        type_ref: alpha/add
+        metadata:
+          position: { x: 100, y: 0 }
+    edges:
+      - from: 00000000-0000-0000-0000-0000000000a1
+        from_port: sum
+        to: 00000000-0000-0000-0000-0000000000a2
+        to_port: b";
+
+#[test]
+fn create_with_a_document_group_s_reference_instantiates_it() {
+    let editor = editor_holding(UNREFERENCED);
+    let mut watcher = editor.subscribe();
+
+    let reply = send(
+        &editor,
+        r#"{"id": 1, "type": "create_node", "type_ref": "stage", "position": {"x": 240, "y": 80}}"#,
+    );
+    assert_eq!(reply["type"], "node_created");
+    let uuid = reply["uuid"].as_str().unwrap();
+
+    // An ordinary node instance: the create's uuid, the create's position
+    // recorded in the metadata, no label override — the group's name is
+    // the default the view renders by.
+    let definition = held_definition(&editor);
+    let instance = node_of(&definition, uuid);
+    assert_eq!(instance["type_ref"], "stage");
+    assert_eq!(
+        instance["metadata"]["position"],
+        json!({ "x": 240, "y": 80 })
+    );
+    assert!(instance.get("label").is_none());
+    assert_eq!(definition["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        group_of(&definition, "stage")["nodes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // One edit, pushed whole to every connection.
+    let pushed = push(&mut watcher);
+    assert_eq!(pushed["type"], "definition");
+    assert_eq!(pushed["graph"]["nodes"][0]["uuid"], json!(uuid));
+    assert_eq!(pushed["graph"]["nodes"][0]["type_ref"], "stage");
+}
+
+#[test]
+fn a_reference_a_document_group_and_a_linked_type_both_provide_is_accepted() {
+    // The collision state's only producer is a hand-written document —
+    // packaging refuses the name, the loader checks only the shape — and
+    // create accepts it under any resolution order: the applied instance
+    // is the same ordinary node instance either way, carrying no
+    // classification, so no ambiguity refusal is invented at edit time.
+    let text = format!(
+        "schema_version: 2
+nodes: []
+edges: []
+groups:
+  - name: alpha/add
+    inputs: []
+    outputs: []
+    nodes:
+      - uuid: {U_ADD_1}
+        type_ref: alpha/add
+    edges: []"
+    );
+    let editor = editor_holding(&text);
+    let reply = send(
+        &editor,
+        r#"{"id": 1, "type": "create_node", "type_ref": "alpha/add", "position": {"x": 0, "y": 0}}"#,
+    );
+    assert_eq!(reply["type"], "node_created");
+    let definition = held_definition(&editor);
+    let nodes = definition["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0]["type_ref"], "alpha/add");
+}
+
+#[test]
+fn create_naming_a_group_the_document_does_not_define_is_refused_and_the_definition_is_untouched() {
+    let editor = editor_holding(UNREFERENCED);
+    let before = held_definition(&editor);
+
+    let reply = send(
+        &editor,
+        r#"{"id": 1, "type": "create_node", "type_ref": "nosuch", "position": {"x": 0, "y": 0}}"#,
+    );
+    assert_eq!(reply["type"], "error");
+    let message = reply["error"].as_str().unwrap();
+    assert!(
+        message.contains("nosuch"),
+        "the error names the problem: {message}"
+    );
+    assert_eq!(
+        held_definition(&editor),
+        before,
+        "the definition untouched, the connection usable"
+    );
+}

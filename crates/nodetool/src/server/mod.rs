@@ -331,13 +331,26 @@ impl Editor {
         let type_ref = protocol::take_string(fields, "type_ref")?;
         let position = protocol::take_position(fields, "position")?;
         protocol::done(fields)?;
-        if !self
-            .listing
+        // The reference resolves against the document's groups before the
+        // node-type listing's — 23's order, the browser's composition rule
+        // made create's membership here. An instance of a group is an
+        // ordinary node instance, so its creation is the ordinary create;
+        // a reference the document's groups and a linked type both provide
+        // is accepted under the order either way, no ambiguity judged at
+        // edit time.
+        let defined = session
+            .graph
+            .groups
             .iter()
-            .any(|node_type| node_type.type_ref == type_ref)
-        {
+            .any(|group| group.name == type_ref)
+            || self
+                .listing
+                .iter()
+                .any(|node_type| node_type.type_ref == type_ref);
+        if !defined {
             return Err(format!(
-                "no node type `{type_ref}` is linked into this binary"
+                "no group `{type_ref}` is defined in this document and no node type `{type_ref}` \
+                 is linked into this binary"
             ));
         }
         let uuid = uuid::Uuid::new_v4();

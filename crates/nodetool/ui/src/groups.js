@@ -77,6 +77,15 @@ export function groupInstances(selected, groups) {
   return selected.filter((node) => names.has(node.type_ref)).map((node) => node.uuid)
 }
 
+// The document's group names, as the background menu's submenu lists
+// them: alphabetical, the palette rows' deterministic order, so every tab
+// and every reload shows the same menu.
+export function groupNames(groups) {
+  return (groups ?? [])
+    .map((group) => group.name)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+}
+
 // Everything the canvas and the event path need about a document's groups,
 // or null when the document carries none — the flat case, no mapping work.
 // `emissions` maps the inner node-and-port an exposed output binds to the
