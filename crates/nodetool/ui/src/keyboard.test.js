@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 import {
   escapeCancel,
   finalMoves,
+  groupKeys,
   panIntoView,
   portKey,
   toggleKey,
@@ -233,5 +234,39 @@ describe('toggleKey', () => {
 
   it('a text field keeps the keys', () => {
     expect(toggleKey({ shiftKey: true, key: 'Enter', ...inField })).toBeNull()
+  })
+})
+
+describe('groupKeys', () => {
+  const editable = true
+  const groups = [{ name: 'stage' }]
+  const instance = { uuid: 'u2', type_ref: 'stage' }
+  const plain = { uuid: 'u1', type_ref: 'alpha/add' }
+  const chord = (event) => ({ ctrlKey: true, key: 'g', ...event })
+  const inField = { target: { closest: () => ['input'] } }
+
+  it('Ctrl+G on a non-empty selection is the package gesture', () => {
+    expect(groupKeys(chord({}), editable, [plain], groups)).toBe('package')
+    expect(groupKeys(chord({}), editable, [], groups)).toBeNull()
+  })
+
+  it('Ctrl+Shift+G is the unpack when the selection holds a group instance', () => {
+    expect(groupKeys(chord({ shiftKey: true }), editable, [plain, instance], groups)).toBe('unpack')
+    expect(groupKeys(chord({ shiftKey: true }), editable, [plain], groups)).toBeNull()
+  })
+
+  it('the platform key works alone: Cmd where the platform uses it', () => {
+    expect(groupKeys({ metaKey: true, key: 'g' }, editable, [plain], groups)).toBe('package')
+    expect(groupKeys({ key: 'g' }, editable, [plain], groups)).toBeNull()
+  })
+
+  it('the lock takes the chords away with every other edit', () => {
+    expect(groupKeys(chord({}), false, [plain], groups)).toBeNull()
+    expect(groupKeys(chord({ shiftKey: true }), false, [instance], groups)).toBeNull()
+  })
+
+  it('a text field keeps the keys, and another key is no chord', () => {
+    expect(groupKeys({ ctrlKey: true, key: 'g', ...inField }, editable, [plain], groups)).toBeNull()
+    expect(groupKeys({ ctrlKey: true, key: 'x' }, editable, [plain], groups)).toBeNull()
   })
 })

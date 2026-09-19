@@ -64,6 +64,7 @@ use uuid::Uuid;
 mod assets;
 mod bridge;
 mod http;
+mod packaging;
 mod protocol;
 mod run;
 mod ws;
@@ -127,6 +128,8 @@ const EDITING: &[&str] = &[
     "wire",
     "unhook",
     "delete_node",
+    "package_group",
+    "unpack_group",
     "open_file",
     "save_file",
     "new_graph",
@@ -255,6 +258,8 @@ impl Editor {
             "wire" => self.wire(&mut session, &mut fields),
             "unhook" => self.unhook(&mut session, &mut fields),
             "delete_node" => self.delete_node(&mut session, &mut fields),
+            "package_group" => self.package_group(&mut session, &mut fields),
+            "unpack_group" => self.unpack_group(&mut session, &mut fields),
             "open_file" => self.open_file(&mut session, &mut fields),
             "save_file" => self.save_file(&mut session, &mut fields),
             "new_graph" => self.new_graph(&mut session, &mut fields),
@@ -527,6 +532,38 @@ impl Editor {
         session.dirty = true;
         self.push_definition(session);
         Ok(json!({ "type": "node_deleted" }))
+    }
+
+    /// Package the selection the message names; `packaging::package` does
+    /// the work and the reply carries the new instance's uuid.
+    fn package_group(
+        &self,
+        session: &mut Session,
+        fields: &mut serde_json::Map<String, Value>,
+    ) -> Result<Value, String> {
+        let nodes = protocol::take_uuids(fields, "nodes")?;
+        let name = protocol::take_string(fields, "name")?;
+        protocol::done(fields)?;
+        let uuid = packaging::package(&mut session.graph, &nodes, &name, &self.registry)?;
+        session.dirty = true;
+        self.push_definition(session);
+        Ok(json!({ "type": "group_packaged", "uuid": uuid, "name": name }))
+    }
+
+    /// Unpack one group instance back into its nodes; the reply carries
+    /// the uuids the nodes returned under, so the client can hand them
+    /// the selection the instance held.
+    fn unpack_group(
+        &self,
+        session: &mut Session,
+        fields: &mut serde_json::Map<String, Value>,
+    ) -> Result<Value, String> {
+        let uuid = protocol::take_uuid(fields, "uuid")?;
+        protocol::done(fields)?;
+        let nodes = packaging::unpack(&mut session.graph, uuid)?;
+        session.dirty = true;
+        self.push_definition(session);
+        Ok(json!({ "type": "group_unpacked", "nodes": nodes }))
     }
 
     /// Open a graph file: the story 03 loader parses it structurally and

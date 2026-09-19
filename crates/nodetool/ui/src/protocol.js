@@ -129,6 +129,8 @@ export function connect({
         case 'wired':
         case 'unhooked':
         case 'node_deleted':
+        case 'group_packaged':
+        case 'group_unpacked':
         case 'file_opened':
         case 'file_saved':
         case 'graph_created':

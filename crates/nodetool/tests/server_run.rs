@@ -201,6 +201,8 @@ async fn while_a_run_is_on_every_editing_operation_is_refused_and_the_definition
         r#"{"id": 6, "type": "wire", "from": "00000000-0000-0000-0000-0000000000d1", "from_port": "out", "to": "00000000-0000-0000-0000-0000000000d2", "to_port": "b"}"#,
         r#"{"id": 7, "type": "unhook", "to": "00000000-0000-0000-0000-0000000000d2", "to_port": "a"}"#,
         r#"{"id": 8, "type": "delete_node", "uuid": "00000000-0000-0000-0000-0000000000d1"}"#,
+        r#"{"id": 14, "type": "package_group", "nodes": ["00000000-0000-0000-0000-0000000000d1"], "name": "stage"}"#,
+        r#"{"id": 15, "type": "unpack_group", "uuid": "00000000-0000-0000-0000-0000000000d1"}"#,
         &format!(
             r#"{{"id": 9, "type": "open_file", "path": {}}}"#,
             path_field(&file)

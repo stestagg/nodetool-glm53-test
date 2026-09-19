@@ -16,6 +16,11 @@
 // the boundary: an inner emission from the node an exposed output binds
 // animates the instance's own port and the wires that leave it, exactly
 // the value flow the flat run carries across.
+//
+// The packaging gestures' client-side decisions are the same kind of
+// composition — the name suggestion the dialog opens with and the group
+// instances unpack acts on are read off the definition's groups, the
+// browser assembling nothing of the format the server derives.
 
 const MASK = (1n << 128n) - 1n
 
@@ -52,6 +57,24 @@ export function groupType(node, group) {
     inputs: group.inputs ?? [],
     outputs: group.outputs ?? [],
   }
+}
+
+// The first available name in the Group, Group 2, ... sequence — Enter
+// alone packages, because the suggestion is one the server will take.
+export function groupSuggestion(groups) {
+  const taken = new Set((groups ?? []).map((group) => group.name))
+  for (let n = 1; ; n += 1) {
+    const name = n === 1 ? 'Group' : `Group ${n}`
+    if (!taken.has(name)) return name
+  }
+}
+
+// The group instances among `selected`: the nodes whose type reference a
+// document group defines — unpack's operation runs once per one of them,
+// the ordinary nodes in the selection left as they are.
+export function groupInstances(selected, groups) {
+  const names = new Set((groups ?? []).map((group) => group.name))
+  return selected.filter((node) => names.has(node.type_ref)).map((node) => node.uuid)
 }
 
 // Everything the canvas and the event path need about a document's groups,
