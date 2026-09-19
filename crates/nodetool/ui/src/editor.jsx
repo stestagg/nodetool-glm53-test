@@ -201,7 +201,6 @@ export function Editor() {
     protocol,
     graphRef,
     factsRef,
-    coalescer,
     actOnRun,
   } = useEditorWire(showToast)
 

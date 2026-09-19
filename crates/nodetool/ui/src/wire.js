@@ -2,33 +2,10 @@
 // socket delivers as the browser's state — the browser holds no
 // authoritative graph state, it renders what the server pushed and every
 // edit lands server-side. The greeting opens the exchange: the listing
-// and the definition requested, the connection named — open while it
-// holds, lost on every drop the client is retrying, incompatible when a
-// greeting named a version mismatch, the one state the client stops
-// retrying from.
-//
-// A definition arrival — the connect-time resync or a push — replaces
-// what is drawn, and the run state it carries narrates itself the way a
-// run push does. An idle state with no outcome — what a compile failure
-// leaves — reads as '', leaving the status line, the refused start's
-// error report, as it is. The run display is not part of it: the
-// statuses and values arrive as their own push, on the ordered stream
-// the live changes ride. Node statuses arrive already derived — pushed
-// as state, never recomputed — and each forwarded emission animates the
-// wires it travels and replaces the text at its emitting port.
-// Emissions coalesce through one animation frame (the coalescer,
-// coalesce.js): a fast graph updates once per frame, dropping frames,
-// never queueing a backlog, and only the latest value per port is kept —
-// what the canvas shows is always the events' own. A new run resets the
-// canvas; the last run's statuses and values persist after it ends,
-// until the next start.
-//
-// The run control's one act lives here too: a start hands the held
-// definition to the compiler and runs it, a stop ends the run that is
-// on, and the run-state push flips the control and the lock either way.
-// Between the click and that landing further clicks are ignored — the
-// click guard — so the second click of a double-click cannot land on the
-// not-yet-flipped label and end the run the first click began.
+// and the definition requested, the connection named. What each piece of
+// the delivery means — the definition, the connection states, the run
+// display, the coalescer, the run control's act — lives in the comment
+// above the code that carries it.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { connect } from './protocol.js'
