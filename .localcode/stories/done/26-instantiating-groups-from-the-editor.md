@@ -189,3 +189,5 @@ file format (23 wrote it).
   document — 25's packaging refuses to create it, 23's compile flags it at
   the next run, and nothing removes it in between — so the hand-written
   file is the fixture.
+
+- 2026-09-19: Implemented in pull request #63 (http://localhost:8080/gitea/localcode/nodetool/pulls/63).
