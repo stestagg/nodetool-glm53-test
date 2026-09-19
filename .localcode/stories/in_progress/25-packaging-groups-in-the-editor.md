@@ -1,6 +1,7 @@
 ---
 title: Packaging groups in the editor
 date: 2026-09-16
+pr_id: 62
 ---
 
 ## Description
