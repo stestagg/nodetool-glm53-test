@@ -30,8 +30,11 @@ scalar data types.
   (`nodetool::server`): a small HTTP server that serves the embedded UI
   over one address and speaks a JSON envelope protocol over one websocket
   connection per browser, holding the graph definition and the file being
-  edited as the one authoritative state. Core contains no node types: a
-  node library is always a plugin crate, first-party or not.
+  edited as the one authoritative state. A binary hosting the server may
+  supply what a run's unconnected outputs deliver to — the engine's
+  consumer mechanism carried through the server — and a host supplying
+  none keeps the engine's discard. Core contains no node types: a node
+  library is always a plugin crate, first-party or not.
 - `crates/nodetool/ui` — the editor UI the server embeds and serves: a
   React application whose canvas is React Flow under a light Blueprint
   look, with the palette of node types docked on the left and the editing
@@ -56,8 +59,16 @@ scalar data types.
   type (`src/numeric.rs` is the helper). Its binary is the headless
   runner: given a graph file path it loads, compiles, and runs the graph,
   and every output the graph leaves unconnected prints to the terminal as
-  it arrives — one line per value, in its plain string form. The shipped
-  graph is `graphs/fizzbuzz.yml`, the classic fizzbuzz.
+  it arrives — one line per value, in its plain string form. With `--ui`
+  the same binary hosts the editor over its own linked nodes instead:
+  `nodetool-fizzbuzz --ui [graph-file]` loads the file into the editor's
+  held definition — the same loader, so a file the headless run takes is
+  the file the editor opens — or starts on an empty, untitled canvas,
+  prints the served address, and hands the server the same terminal
+  printer, so a run started from the browser prints the values its graph
+  leaves unconnected exactly as a headless run does. Ctrl-C over unsaved
+  changes warns and stands down; the next Ctrl-C quits. The shipped graph
+  is `graphs/fizzbuzz.yml`, the classic fizzbuzz.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the tests
   (`alpha` is sub-grouped, `beta` is flat, `gamma` supplies the compiler
   tests' node types, `delta` supplies the engine tests' node types, `epsilon`
@@ -136,6 +147,7 @@ cargo run -p compile-graph     # compile each sample graph file, print the resul
 cargo run -p run-node          # drive one behaviour-ful node with scripted streams
 cargo run -p run-graph         # run the pipeline sample headless, values as they arrive
 cargo run -p nodetool-fizzbuzz -- crates/nodetool-fizzbuzz/graphs/fizzbuzz.yml  # one hundred lines, as they arrive
+cargo run -p nodetool-fizzbuzz -- --ui crates/nodetool-fizzbuzz/graphs/fizzbuzz.yml  # the editor over the same graph, the terminal keeping the output
 cargo run -p visual            # the editor on http://127.0.0.1:8420
 cargo run -p visual -- examples/visual/graphs/sample.yml  # the editor on a graph file
 ```

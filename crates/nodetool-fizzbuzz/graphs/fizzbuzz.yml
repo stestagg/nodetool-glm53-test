@@ -8,19 +8,35 @@ nodes:
       start: 1
       stop: 100
       step: 1
+    metadata:
+      position:
+        x: 60
+        y: 170
   - uuid: 00000000-0000-0000-0000-100000000002
     type_ref: fizzbuzz/divisible
     label: by three
     parameters:
       b: 3
+    metadata:
+      position:
+        x: 420
+        y: 40
   - uuid: 00000000-0000-0000-0000-100000000003
     type_ref: fizzbuzz/divisible
     label: by five
     parameters:
       b: 5
+    metadata:
+      position:
+        x: 420
+        y: 300
   - uuid: 00000000-0000-0000-0000-100000000004
     type_ref: fizzbuzz/case
     label: case selection
+    metadata:
+      position:
+        x: 780
+        y: 170
 edges:
   - from: 00000000-0000-0000-0000-100000000001
     from_port: count

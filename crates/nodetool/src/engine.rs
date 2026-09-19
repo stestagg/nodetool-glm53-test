@@ -371,6 +371,26 @@ impl<'g> Run<'g> {
     }
 }
 
+/// The outputs the compiled graph leaves unconnected — no connection
+/// carries their values anywhere: the streams [`Run::consume`] may join,
+/// each attached consumer one more downstream on that output's fan-out.
+/// Nodes in uuid order, each node's ports in declaration order.
+pub fn unconnected_outputs(graph: &CompiledGraph) -> Vec<(Uuid, &'static str)> {
+    let mut unconnected = Vec::new();
+    for (uuid, node) in &graph.nodes {
+        for port in node.node_type.outputs {
+            let fed = graph
+                .connections
+                .iter()
+                .any(|connection| connection.from == *uuid && connection.from_port == port.name);
+            if !fed {
+                unconnected.push((*uuid, port.name));
+            }
+        }
+    }
+    unconnected
+}
+
 /// Await a stop on the attached channel, if any. A channel whose sender is
 /// gone can never ask — the run then ends only its natural ways. Cancel-safe:
 /// the select rebuilds the wait every loop, and `changed` keeps its
