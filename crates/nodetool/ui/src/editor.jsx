@@ -7,7 +7,8 @@
 // pointer locally; one operation commits where a dragged node rests,
 // where a wire lands, which node a key press deletes, and what a field
 // commit holds — the sidebar and the node's inline fields both committing
-// through the same seam, both views of one stored value.
+// through the same seam, both views of one stored value. The wire
+// (wire.js) holds the connection and everything it delivers.
 //
 // The selection is view state over those gestures, the way scroll
 // position is: a shift-click-drag on the background marquees, a
@@ -31,16 +32,6 @@
 // keyboard.js holds the decisions; the canvas gestures sit on React
 // Flow's own interaction primitives, adjusted, not replaced.
 //
-// While a run is on, the canvas animates from the server's pushes: node
-// statuses arrive already derived — pushed as state, never recomputed
-// here — and each forwarded emission animates the wires it travels and
-// replaces the text at its emitting port. Emissions coalesce through one
-// animation frame (the coalescer, coalesce.js): a fast graph updates once
-// per frame, dropping frames, never queueing a backlog, and only the
-// latest value per port is kept — what the canvas shows is always the
-// events' own. A new run resets the canvas; the last run's statuses and
-// values persist after it ends, until the next start.
-//
 // Every report arrives through one surface: a toast in the chrome,
 // dismissed on click and on its own. What toasts deliberately do not
 // carry is the durable truth — a problem a compile found sits as a mark
@@ -52,10 +43,9 @@
 // returns. Both reports reach assistive technology as they appear, the
 // polite live regions they arrive through being chrome.jsx's.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Background, ReactFlow, useReactFlow } from '@xyflow/react'
-import { NODE_TYPE, connect, connectionLost } from './protocol.js'
-import { RunCoalescer } from './coalesce.js'
+import { NODE_TYPE, connectionLost } from './protocol.js'
 import { EditContext, LockContext, WireContext } from './fields.jsx'
 import {
   PluginUiContext,
@@ -70,19 +60,26 @@ import { Sidebar, SelectionSidebar } from './sidebar.jsx'
 import { Banner, Toasts } from './chrome.jsx'
 import { ContextMenu } from './menu.jsx'
 import { Palette } from './palette.jsx'
-import { escapeCancel, finalMoves, groupKeys, panIntoView, toggleKey, viewportCenter } from './keyboard.js'
-import { canvasValues, groupFacts, groupInstances, groupSuggestion, groupType } from './groups.js'
+import {
+  backgroundMenuKeys,
+  escapeCancel,
+  finalMoves,
+  groupKeys,
+  panIntoView,
+  toggleKey,
+  viewportCenter,
+} from './keyboard.js'
+import { groupInstances, groupNames, groupSuggestion, groupType } from './groups.js'
+import { useEditorWire } from './wire.js'
 import {
   backgroundDrag,
   bannerText,
   carriedNode,
   deleteKeys,
-  emittedTargets,
   hasUnsavedChanges,
   nodeMarks,
   offPortUnhook,
   runControl,
-  runStatusText,
   saveAsksForPath,
   toEdges,
   toNodes,
@@ -98,18 +95,6 @@ const edgeTypes = { selfloop: SelfLoopEdge }
 const TOAST_MS = 8000
 
 export function Editor() {
-  const [listing, setListing] = useState(null)
-  const [graph, setGraph] = useState(null)
-  const [file, setFile] = useState(null)
-  const [run, setRun] = useState(null)
-  const [problems, setProblems] = useState([])
-  // The canvas's view of the run, exactly what the bridge holds: the
-  // derived status per node and the latest value per emitting port,
-  // rendered as pushed — statuses via node_status state, values via the
-  // forwarded emissions and the connect-time snapshot.
-  const [statuses, setStatuses] = useState({})
-  const [values, setValues] = useState({})
-  const [pulsing, setPulsing] = useState(() => new Set())
   const [nodes, setNodes] = useState([])
   // The loaded plugin bundles, per attachment point: a node type's body
   // component and a type's value component, absent until the first node of
@@ -118,25 +103,11 @@ export function Editor() {
   // contentless readout taking over, the failure reported.
   const [bodies, setBodies] = useState({})
   const [valueBodies, setValueBodies] = useState({})
-  const [status, setStatus] = useState({ text: 'connecting…', error: false })
-  // The connection: connecting until the first greeting, open while it
-  // holds, lost on every drop the client is retrying, and incompatible
-  // when a greeting named a version mismatch — the one state the client
-  // stops retrying from.
-  const [connection, setConnection] = useState('connecting')
-  const [mismatch, setMismatch] = useState(null)
-  // The run control's click guard: armed by a start or stop, settled by
-  // the run state landing. The control's flip travels through the
-  // server's push, so a second click inside that gap — the second click
-  // of a habitual double-click on Start, say — lands before the label
-  // has flipped and must be ignored rather than read as the opposite act.
-  const [acting, setActing] = useState(false)
   const [toasts, setToasts] = useState([])
   // The keyboard wire in progress: the port it runs from, or null. The
   // ports read it for their origin handle; Escape and a landing stand it
   // down, and the lock takes it away as it takes every edit.
   const [wire, setWire] = useState(null)
-  const protocol = useRef(null)
   const canvasRef = useRef(null)
   const toastId = useRef(0)
   // The canvas's nodes as the gesture handlers read them: the key
@@ -146,24 +117,6 @@ export function Editor() {
   useEffect(() => {
     nodesRef.current = nodes
   })
-  // The held definition's edges, as the event path reads them: the
-  // emission handler lives across renders, and the wires it pulses are
-  // the ones the last resync carried.
-  const graphRef = useRef(null)
-  // The held definition's groups, as the event path and the render read
-  // them: which inner emissions cross a boundary, which stay inside,
-  // which statuses aggregate — composed once per definition arrival.
-  const factsRef = useRef(null)
-  // The coalescer owns the canvas's view of the run's values and pulses,
-  // applying each animation frame's truth to the state above; the status
-  // per node needs no coalescing and stays state alone.
-  const coalescer = useRef(null)
-  if (coalescer.current === null) {
-    coalescer.current = new RunCoalescer(({ values, pulsing }) => {
-      setValues(values)
-      setPulsing(pulsing)
-    })
-  }
   // Armed by a replacement gesture — open, new — and consumed by the
   // next definition arrival, which brings the view to the graph; a
   // failed gesture disarms it.
@@ -173,8 +126,11 @@ export function Editor() {
   // has landed — reply and push race on one socket, and until the nodes
   // exist the handoff waits.
   const [handoff, setHandoff] = useState(null)
-  // The context menu's seat, in canvas coordinates, or null: the editor's
-  // first context menu, the selection's gestures where the pointer is.
+  // The context menu's seat, in canvas coordinates, or null, with the
+  // flow position its create lands at, the selection it opened for and
+  // whether it is the background's own: the selection's gestures where
+  // the pointer is, the background's Groups beside them, the entries
+  // re-derived from the held definition every render.
   const [menu, setMenu] = useState(null)
   // The page's one bundle table: whatever node UI and value UI the
   // listing's facts name, loaded once each however many nodes and ports
@@ -208,20 +164,6 @@ export function Editor() {
     }
   }, [])
 
-  const connected = connection === 'open'
-  // While a run is on the definition is held still, and while the
-  // connection is gone nothing can reach the server: every editing
-  // gesture goes quiet — palette drops and activations, moves, wires,
-  // unhooking, deletion, label and parameter edits, and the file
-  // controls — while selection, panning, and zoom stay live, looking not
-  // being editing. The lock is one rule over both input modes: the
-  // pointer gesture and its keyboard twin quiet together. The server
-  // refuses whatever slips through when the lock is the reason; when the
-  // connection is, nothing is sent at all — the browser holds no graph
-  // state that could back an undeliverable edit.
-  const locked = run?.running === true
-  const editable = connected && !locked
-
   // A toast is the one surface a transient report arrives through:
   // dismissed on click, and on its own — a happening, never the durable
   // truth, which lives in the marks and the chrome state. A connection
@@ -241,24 +183,40 @@ export function Editor() {
     [dismissToast],
   )
 
-  // A definition arrival — the connect-time resync or a push — replaces
-  // what is drawn, and the run state it carries narrates itself the way a
-  // run push does. An idle state with no outcome — what a compile failure
-  // leaves — reads as '', leaving the status line, the refused start's
-  // error report, as it is. The run display is not part of it: the
-  // statuses and values arrive as their own push, on the ordered stream
-  // the live changes ride.
-  const resync = useCallback((graph, file, run, problems) => {
-    graphRef.current = graph
-    factsRef.current = groupFacts(graph)
-    setGraph(graph)
-    setFile(file)
-    setRun(run)
-    setProblems(problems ?? [])
-    setActing(false)
-    const text = runStatusText(run)
-    if (text) setStatus({ text, error: run.outcome === 'failed' })
-  }, [])
+  // The wire: the connection and everything it delivers, held in one
+  // place — the listing and the definition, the run and its display, the
+  // status line and the connection's states — with the run control's act.
+  const {
+    listing,
+    graph,
+    file,
+    run,
+    problems,
+    statuses,
+    values,
+    pulsing,
+    connection,
+    mismatch,
+    status,
+    protocol,
+    graphRef,
+    factsRef,
+    actOnRun,
+  } = useEditorWire(showToast)
+
+  const connected = connection === 'open'
+  // While a run is on the definition is held still, and while the
+  // connection is gone nothing can reach the server: every editing
+  // gesture goes quiet — palette drops and activations, moves, wires,
+  // unhooking, deletion, label and parameter edits, and the file
+  // controls — while selection, panning, and zoom stay live, looking not
+  // being editing. The lock is one rule over both input modes: the
+  // pointer gesture and its keyboard twin quiet together. The server
+  // refuses whatever slips through when the lock is the reason; when the
+  // connection is, nothing is sent at all — the browser holds no graph
+  // state that could back an undeliverable edit.
+  const locked = run?.running === true
+  const editable = connected && !locked
 
   const marks = useMemo(() => nodeMarks(problems, run, factsRef.current?.owner), [problems, run])
 
@@ -338,93 +296,6 @@ export function Editor() {
       fitView({ maxZoom: 1 })
     }
   }, [graph, listing, marks, statuses, values, editable, handoff, fitView])
-
-  useEffect(() => () => coalescer.current.dispose(), [])
-
-  useEffect(
-    () =>
-      connect({
-        onOpen: (request) => {
-          protocol.current = request
-          request('list_node_types').then(setListing, showToast)
-          request('get_definition').then(
-            ({ graph, file, run, problems }) => resync(graph, file, run, problems),
-            showToast,
-          )
-        },
-        onGreeting: () => {
-          setConnection('open')
-          setStatus({ text: '' })
-        },
-        onVersionMismatch: (text) => {
-          protocol.current = null
-          setMismatch(text)
-          setConnection('incompatible')
-        },
-        onDefinition: resync,
-        onFile: ({ path, dirty }) => setFile({ path, dirty }),
-        // The run display arrives as its own push — the connect-time
-        // resync's snapshot and nothing else; the live changes that keep
-        // it true ride the same ordered stream behind it. A group's
-        // boundary values are re-keyed to the instance port that shows
-        // them, and the inside's stay inside.
-        onRunDisplay: ({ statuses, values }) => {
-          setStatuses(statuses ?? {})
-          coalescer.current.replace(canvasValues(values, factsRef.current))
-        },
-        onRun: (state) => {
-          setRun(state)
-          setActing(false)
-          // A new run resets the canvas: the last run's statuses and
-          // values give way as this run's own events arrive.
-          if (state.running) {
-            setStatuses({})
-            coalescer.current.replace({})
-          }
-          setStatus({ text: runStatusText(state), error: state.outcome === 'failed' })
-          // A failure is a happening: the toast carries it, and the
-          // failed node's mark carries the explanation after the toast
-          // is gone.
-          if (state.outcome === 'failed') showToast(state.error ?? 'the run failed')
-        },
-        onRunEvent: (message) => {
-          // The statuses and the outcome ride their own state pushes;
-          // the emissions are what the canvas animates: the value at the
-          // emitting port, the wires the value travels. An inner node's
-          // emission animates the boundary when it is the one an exposed
-          // output binds, and stays inside otherwise — collapsed means
-          // collapsed.
-          if (message.event !== 'emitted') return
-          const facts = factsRef.current
-          const boundary = facts?.emissions.get(`${message.node}/${message.port}`)
-          if (boundary !== undefined) {
-            coalescer.current.emitted(
-              boundary.instance,
-              boundary.port,
-              message.value,
-              emittedTargets(graphRef.current?.edges ?? [], boundary.instance, boundary.port),
-            )
-          } else if (!facts?.inner.has(message.node)) {
-            coalescer.current.emitted(
-              message.node,
-              message.port,
-              message.value,
-              emittedTargets(graphRef.current?.edges ?? [], message.node, message.port),
-            )
-          }
-        },
-        onNodeStatus: ({ node, status: derived }) =>
-          setStatuses((current) => ({ ...current, [node]: derived })),
-        onError: showToast,
-        onClosed: () => {
-          protocol.current = null
-          setActing(false)
-          setConnection('lost')
-          setStatus({ text: '', error: false })
-        },
-      }),
-    [resync, showToast],
-  )
 
   // The editing seam every field commit rides: one operation out, the
   // definition push re-rendering both views. An error — a commit for a
@@ -672,16 +543,26 @@ export function Editor() {
     })
   }, [editable, selectedHeld, showToast])
 
-  // The menu's opening moves: a right-click never disturbs the selection
-  // it acts on — a node already selected keeps the selection whole, an
-  // unselected one is selected alone first, as a plain click does — and
-  // the menu itself is an editing gesture, quiet while a run is on,
-  // selection staying live beneath the lock. A right-click with nothing
-  // to act on opens nothing: the entries ride the state, so `menu` set
-  // is always a menu the render shows and the closers can close.
-  const openMenu = useCallback(
-    (event, acted) => {
-      if (!editable || canvasRef.current === null) return
+  // The Groups submenu's pick: one instance of the named group, landing
+  // where the menu was opened — the flow position carried from the open,
+  // so a view change between open and pick cannot move the landing. The
+  // same create a palette drop sends, position included.
+  const createGroupInstance = useCallback(
+    (name, position) => {
+      if (!editable || protocol.current === null) return
+      protocol.current('create_node', { type_ref: name, position }).catch(showToast)
+    },
+    [editable, showToast],
+  )
+
+  // The menu's entries, read off the held definition and the captured
+  // selection at the moment they are asked — the open's decision and
+  // every render after, so the Groups submenu tracks the definition live:
+  // a package puts its group in it, the unpack of the last instance takes
+  // it back out. A submenu with no rows is no entry; a menu with no
+  // entries is no menu — the open decides by the same derivation.
+  const menuEntries = useCallback(
+    (acted, background, position) => {
       const entries = []
       if (acted.length > 0) {
         entries.push({ key: 'package', label: 'Package into group…', onPick: packageSelection })
@@ -689,12 +570,79 @@ export function Editor() {
       if (groupInstances(acted, graphRef.current?.groups).length > 0) {
         entries.push({ key: 'unpack', label: 'Unpack group', onPick: unpackSelection })
       }
-      if (entries.length === 0) return
-      const rect = canvasRef.current.getBoundingClientRect()
-      setMenu({ x: event.clientX - rect.left, y: event.clientY - rect.top, entries })
+      const names = background ? groupNames(graphRef.current?.groups) : []
+      if (names.length > 0) {
+        entries.push({
+          key: 'groups',
+          label: 'Groups',
+          items: names.map((name) => ({
+            key: name,
+            label: name,
+            onPick: () => createGroupInstance(name, position),
+          })),
+        })
+      }
+      return entries
     },
-    [editable, packageSelection, unpackSelection],
+    [packageSelection, unpackSelection, createGroupInstance],
   )
+
+  // The menu's opening moves: a right-click never disturbs the selection
+  // it acts on — a node already selected keeps the selection whole, an
+  // unselected one is selected alone first, as a plain click does — and
+  // the menu itself is an editing gesture, quiet while a run is on,
+  // selection staying live beneath the lock. The background's own menu
+  // carries the Groups submenu beside the selection's entries; with
+  // nothing to act on and no groups it does not open — a menu whose one
+  // row cannot act is noise. A right-click with nothing to act on opens
+  // nothing: the open and every render after read the same derivation, so
+  // `menu` set is always a menu the render shows and the closers can close.
+  const openMenu = useCallback(
+    (seat, position, acted, background = false) => {
+      if (!editable) return
+      const entries = menuEntries(acted, background, position)
+      if (entries.length === 0) return
+      setMenu({ x: seat.x, y: seat.y, position, acted, background })
+    },
+    [editable, menuEntries],
+  )
+
+  const openMenuAt = useCallback(
+    (event, acted, background = false) => {
+      if (canvasRef.current === null) return
+      const rect = canvasRef.current.getBoundingClientRect()
+      const seat = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+      openMenu(seat, screenToFlowPosition({ x: event.clientX, y: event.clientY }), acted, background)
+    },
+    [openMenu, screenToFlowPosition],
+  )
+
+  // The background menu's keyboard way in: the chord seats it at the
+  // view's centre — the deterministic, visible position the palette row
+  // creates at — and the create a row's activation sends lands at the
+  // flow point that centre names.
+  const openBackgroundMenu = useCallback(() => {
+    const canvas = canvasRef.current
+    if (canvas === null) return
+    const rect = canvas.getBoundingClientRect()
+    openMenu(
+      { x: rect.width / 2, y: rect.height / 2 },
+      viewportCenter(getViewport(), { width: rect.width, height: rect.height }),
+      selectedHeld(),
+      true,
+    )
+  }, [getViewport, openMenu, selectedHeld])
+
+  // The standing menu's entries: the same derivation the open made, read
+  // again at every render — the Groups submenu tracking the held
+  // definition live. A derivation that comes back empty closes the menu
+  // before it paints, a menu with no entries being no menu at the open
+  // and after: the last group unpacked in another tab takes the standing
+  // background menu with it.
+  const entries = menu === null ? [] : menuEntries(menu.acted, menu.background, menu.position)
+  useLayoutEffect(() => {
+    if (menu !== null && entries.length === 0) setMenu(null)
+  }, [menu, entries])
 
   const onNodeContextMenu = useCallback(
     (event, node) => {
@@ -714,27 +662,36 @@ export function Editor() {
       const acted = already
         ? selectedHeld()
         : (graphRef.current?.nodes ?? []).filter((held) => held.uuid === node.id)
-      openMenu(event, acted)
+      openMenuAt(event, acted)
     },
-    [editable, openMenu, selectedHeld],
+    [editable, openMenuAt, selectedHeld],
   )
 
   const onPaneContextMenu = useCallback(
     (event) => {
       event.preventDefault()
-      openMenu(event, selectedHeld())
+      // The background's own menu: the selection's entries when one
+      // stands, and the document's Groups — the one surface a group
+      // definition reaches the canvas by.
+      openMenuAt(event, selectedHeld(), true)
     },
-    [openMenu, selectedHeld],
+    [openMenuAt, selectedHeld],
   )
 
   // The chords: Ctrl+G packages the selection, Ctrl+Shift+G unpacks its
-  // group instances — the decisions in groupKeys, the operations here.
+  // group instances, and Ctrl+I opens the background menu seated at the
+  // view's centre — the decisions in keyboard.js, the operations here.
   // The selection handed over is the held definition's, the shape
   // groupKeys's unpack branch reads. With the menu open the menu is the
   // gesture in front: the chords stand down with the canvas's own keys.
   useEffect(() => {
     const onKeyDown = (event) => {
       if (menu !== null) return
+      if (backgroundMenuKeys(event, editable, graphRef.current?.groups)) {
+        event.preventDefault()
+        openBackgroundMenu()
+        return
+      }
       const gesture = groupKeys(event, editable, selectedHeld(), graphRef.current?.groups)
       if (gesture === null) return
       event.preventDefault()
@@ -743,7 +700,7 @@ export function Editor() {
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [editable, menu, packageSelection, unpackSelection, selectedHeld])
+  }, [editable, menu, openBackgroundMenu, packageSelection, unpackSelection, selectedHeld])
 
   // One save mechanism under both chrome entries: a save always knows its
   // target — the current file — and asks only for the first save of an
@@ -763,23 +720,6 @@ export function Editor() {
     },
     [file, showToast],
   )
-
-  // The run control's one act: a start hands the held definition to the
-  // compiler and runs it, a stop ends the run that is on, and the
-  // run-state push flips the control and the lock either way. Between
-  // the click and that landing further clicks are ignored — the guard
-  // above — so the second click of a double-click cannot land on the
-  // not-yet-flipped label and end the run the first click began.
-  const actOnRun = useCallback(() => {
-    if (acting || protocol.current === null) return
-    setActing(true)
-    protocol
-      .current(run?.running === true ? 'stop_run' : 'start_run')
-      .catch((error) => {
-        setActing(false)
-        showToast(error)
-      })
-  }, [acting, run, showToast])
 
   // The sidebar's selection: every node the canvas holds selected, read
   // off the same node state the canvas draws, so a definition push swaps
@@ -928,7 +868,7 @@ export function Editor() {
                   <ContextMenu
                     x={menu.x}
                     y={menu.y}
-                    entries={menu.entries}
+                    entries={entries}
                     onClose={() => setMenu(null)}
                   />
                 )}

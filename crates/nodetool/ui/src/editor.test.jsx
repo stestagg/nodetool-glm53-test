@@ -350,6 +350,142 @@ describe('the unpack gesture', () => {
   })
 })
 
+describe('groups from the background menu', () => {
+  const GROUP_STAGE = {
+    name: 'stage',
+    inputs: [{ name: 'a', type_refs: ['i32'], node: BODY_1, port: 'a' }],
+    outputs: [{ name: 'sum', type_refs: ['i32'], node: BODY_2, port: 'sum' }],
+    nodes: [
+      { uuid: BODY_1, type_ref: 'alpha/add', metadata: { position: { x: -50, y: 0 } } },
+      { uuid: BODY_2, type_ref: 'alpha/add', metadata: { position: { x: 50, y: 0 } } },
+    ],
+    edges: [],
+  }
+  const GROUP_FILTER = {
+    name: 'filter',
+    inputs: [],
+    outputs: [],
+    nodes: [{ uuid: BODY_1, type_ref: 'alpha/add' }],
+    edges: [],
+  }
+  const groupedGraph = (groups) => ({ nodes: [], edges: [], groups })
+
+  it('with no groups the background menu does not open and Ctrl+I reads as no chord; with them the submenu lists the document alphabetically and a pick instantiates at the opened seat', async () => {
+    const session = editor(graphWith([], []))
+    await drawn(FIRST)
+    fireEvent.contextMenu(document.querySelector('.react-flow__pane'))
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.keyDown(document, { key: 'i', ctrlKey: true })
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    session.push({ graph: groupedGraph([GROUP_STAGE, GROUP_FILTER]) })
+    fireEvent.contextMenu(document.querySelector('.react-flow__pane'), { clientX: 120, clientY: 90 })
+    await waitFor(() => screen.getByRole('menu'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Groups' }))
+    // The rows in order: the Groups parent — its submenu marker riding
+    // the label — then the document's groups alphabetically.
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Groups›',
+      'filter',
+      'stage',
+    ])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'stage' }))
+    const sent = session.requests.find((entry) => entry.type === 'create_node')
+    expect(sent.fields.type_ref).toBe('stage')
+    // The instance lands where the menu was opened — the seat itself.
+    expect(sent.fields.position).toEqual({ x: 120, y: 90 })
+    sent.resolve({ type: 'node_created', uuid: SECOND })
+    session.push({
+      graph: {
+        nodes: [{ uuid: SECOND, type_ref: 'stage', metadata: { position: sent.fields.position } }],
+        edges: [],
+        groups: [GROUP_STAGE, GROUP_FILTER],
+      },
+    })
+    await drawn(SECOND)
+    // The instance renders exactly as 23 renders any group instance: the
+    // group's exposed ports, the group's name as its default label.
+    expect(screen.getByLabelText('stage a input')).toBeTruthy()
+    expect(screen.getByLabelText('stage sum output')).toBeTruthy()
+  })
+
+  it('the submenu tracks the definition: a package adds its group, the unpack of the last instance takes it out', async () => {
+    const session = editor(graphWith([], []))
+    await drawn(FIRST)
+    await packaged(session)
+    // The packaged group is in the menu at once.
+    fireEvent.contextMenu(document.querySelector('.react-flow__pane'), { clientX: 120, clientY: 90 })
+    await waitFor(() => screen.getByRole('menu'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Groups' }))
+    expect(screen.getByRole('menuitem', { name: 'stage' })).toBeTruthy()
+    // Escape, the quiet cancel: the menu closes, nothing is created.
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    expect(session.requests.some((entry) => entry.type === 'create_node')).toBe(false)
+
+    // The unpack of the last instance takes the definition back out.
+    session.push({
+      graph: {
+        nodes: [{ uuid: SINK, type_ref: 'alpha/add', metadata: { position: { x: 400, y: 0 } } }],
+        edges: [],
+        groups: [],
+      },
+    })
+    fireEvent.contextMenu(document.querySelector('.react-flow__pane'), { clientX: 120, clientY: 90 })
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('Ctrl+I opens the background menu seated at the view centre, and a row there creates at the position a palette row creates at', async () => {
+    const session = editor(graphWith([], []))
+    await drawn(FIRST)
+    session.push({ graph: groupedGraph([GROUP_STAGE, GROUP_FILTER]) })
+    // The chord is the keyboard's way in — no pointer event involved. The
+    // menu opens with its first row focused, the keyboard finishing there.
+    fireEvent.keyDown(document, { key: 'i', ctrlKey: true })
+    await waitFor(() => screen.getByRole('menu'))
+    expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Groups' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Groups' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'stage' }))
+    const sent = session.requests.find((entry) => entry.type === 'create_node')
+    expect(sent.fields.type_ref).toBe('stage')
+
+    // The landing is the deterministic, visible position — the same one a
+    // palette row's activation sends, the view's centre.
+    fireEvent.keyDown(screen.getByText('Add'), { key: 'Enter' })
+    const fromPalette = session.requests.filter((entry) => entry.type === 'create_node')[1]
+    expect(fromPalette.fields.position).toEqual(sent.fields.position)
+  })
+
+  it('a push emptying the entries closes the standing menu', async () => {
+    const session = editor(graphWith([], []))
+    await drawn(FIRST)
+    session.push({ graph: groupedGraph([GROUP_STAGE]) })
+    fireEvent.contextMenu(document.querySelector('.react-flow__pane'), { clientX: 120, clientY: 90 })
+    await waitFor(() => screen.getByRole('menu'))
+    // The last instance's unpack in another tab takes the definition out
+    // while this menu stands: the derivation comes back empty, and the
+    // menu closes rather than hanging as an empty shell.
+    session.push({ graph: groupedGraph([]) })
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+  })
+
+  it('the run lock takes the background menu away with the other gestures', async () => {
+    editor(
+      {
+        nodes: [{ uuid: FIRST, type_ref: 'alpha/add', metadata: { position: { x: 0, y: 0 } } }],
+        edges: [],
+        groups: [GROUP_STAGE, GROUP_FILTER],
+      },
+      { running: true },
+    )
+    await drawn(FIRST)
+    fireEvent.contextMenu(document.querySelector('.react-flow__pane'), { clientX: 120, clientY: 90 })
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.keyDown(document, { key: 'i', ctrlKey: true })
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+})
+
 describe('the run lock takes the gestures away', () => {
   it('no menu opens on a right-click, the chord sends nothing, selection stays live', async () => {
     const session = editor(graphWith([], []), { running: true })

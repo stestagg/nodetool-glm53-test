@@ -22,6 +22,8 @@
 // instances unpack acts on are read off the definition's groups, the
 // browser assembling nothing of the format the server derives.
 
+import { byName } from './types.js'
+
 const MASK = (1n << 128n) - 1n
 
 function uuidBits(uuid) {
@@ -75,6 +77,12 @@ export function groupSuggestion(groups) {
 export function groupInstances(selected, groups) {
   const names = new Set((groups ?? []).map((group) => group.name))
   return selected.filter((node) => names.has(node.type_ref)).map((node) => node.uuid)
+}
+
+// The document's group names, as the background menu's submenu lists
+// them: alphabetical, types.js's byName — the palette rows' order.
+export function groupNames(groups) {
+  return (groups ?? []).map((group) => group.name).sort(byName)
 }
 
 // Everything the canvas and the event path need about a document's groups,

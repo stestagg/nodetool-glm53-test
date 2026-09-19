@@ -729,3 +729,10 @@ body {
 .menu button:hover {
   background: var(--hover);
 }
+
+/* The submenu parent's marker: the panel a pick opens sits to the right,
+   the chevron saying so where the row's label alone would read as an
+   action. */
+.menu .submenu-arrow {
+  float: right;
+}
