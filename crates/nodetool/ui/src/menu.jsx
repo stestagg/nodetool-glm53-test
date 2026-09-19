@@ -4,10 +4,9 @@
 // an unselected node it selects alone first — and the menu acts on the
 // selection it opened for: opening never disturbs it. It closes on a
 // pick, on Escape, and on a press outside it. Its items are buttons in
-// the tab order, and Enter or Space activates the row its click does —
-// the palette row's rule, the keyboard that started here finishing here
-// without leaning on the browser's button activation. An entry may carry
-// a submenu: the parent row opens it, its panel seating itself beside the
+// the tab order, so Enter or Space activates the row its click does —
+// the keyboard that started here finishing here. An entry may carry a
+// submenu: the parent row opens it, its panel seating itself beside the
 // row clamped inside the canvas, its first row taking focus. The chords
 // (keyboard.js's groupKeys) issue the same operations without it. Seated
 // where the pointer is, clamped to stay inside the canvas — a right-click
@@ -15,40 +14,26 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-// Enter or Space — the two activation keys, whichever the hand came from.
-function activated(event) {
-  return event.key === 'Enter' || event.key === ' '
-}
-
-// One menu row: the pick runs on a click and on its activation keys —
-// the same operation either hand sends, the key press prevented so the
-// browser's own activation cannot double it.
+// One menu row: a button, so the pick runs on the click either hand sends.
 function Item({ entry, onClose }) {
   const pick = () => {
     entry.onPick()
     onClose()
   }
   return (
-    <button
-      role="menuitem"
-      onClick={pick}
-      onKeyDown={(event) => {
-        if (activated(event)) {
-          event.preventDefault()
-          pick()
-        }
-      }}
-    >
+    <button role="menuitem" onClick={pick}>
       {entry.label}
     </button>
   )
 }
 
-// A submenu: the parent row opens and closes the panel, the panel seats
+// A submenu: the parent row opens and closes the panel; the panel seats
 // itself beside the row — clamped inside the canvas the menu renders in,
-// the reach the menu itself keeps — and its first row takes focus, the
-// keyboard's way in. The panel is inside the menu div, so the outside
-// press and Escape the menu listens for cover it.
+// the reach the menu itself keeps, flipping to the menu's left when the
+// right side would spill past the canvas's edge, as the menu itself and
+// a native submenu do — and its first row takes focus, the keyboard's
+// way in. The panel is inside the menu div, so the outside press and
+// Escape the menu listens for cover it.
 function Submenu({ entry, onClose }) {
   const row = useRef(null)
   const panel = useRef(null)
@@ -56,10 +41,14 @@ function Submenu({ entry, onClose }) {
   useLayoutEffect(() => {
     if (!open) return
     const node = panel.current
-    const menu = node?.closest('.menu')
+    // The menu the row belongs to, and the canvas that menu renders as a
+    // child of — the same box the menu itself clamps against.
+    const menu = row.current?.closest('.menu')
     const canvas = menu?.parentElement
     if (node === null || menu === null || canvas === null) return
-    node.style.left = `${menu.offsetWidth}px`
+    const spillRight =
+      menu.offsetLeft + menu.offsetWidth + node.offsetWidth > canvas.clientWidth
+    node.style.left = `${spillRight ? -node.offsetWidth : menu.offsetWidth}px`
     node.style.top = `${Math.max(
       0,
       Math.min(row.current.offsetTop, canvas.clientHeight - menu.offsetTop - node.offsetHeight),
@@ -69,23 +58,14 @@ function Submenu({ entry, onClose }) {
   const toggle = () => setOpen((current) => !current)
   return (
     <div>
-      <button
-        ref={row}
-        role="menuitem"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={toggle}
-        onKeyDown={(event) => {
-          if (activated(event)) {
-            event.preventDefault()
-            toggle()
-          }
-        }}
-      >
+      <button ref={row} role="menuitem" aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
         {entry.label}
+        <span className="submenu-arrow" aria-hidden="true">
+          ›
+        </span>
       </button>
       {open && (
-        <div className="menu submenu" role="menu" ref={panel}>
+        <div className="menu" role="menu" ref={panel}>
           {entry.items.map((item) => (
             <Item key={item.key} entry={item} onClose={onClose} />
           ))}

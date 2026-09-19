@@ -84,6 +84,19 @@ export function groupKeys(event, editable, selected, groups) {
   return selected.length > 0 ? 'package' : null
 }
 
+// The background menu's chord: Ctrl+I (Cmd where the platform uses it)
+// opens the canvas background's context menu — the keyboard's way into
+// the one gesture whose pointer way in is a right-click, the seat the
+// pointer would have chosen replaced by the deterministic one the shell
+// seats the menu at. The lock takes it away with every edit, a text
+// field keeps the keys, and a document with no groups reads as no chord:
+// the menu it would open does not exist.
+export function backgroundMenuKeys(event, editable, groups) {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'i') return null
+  if (!editable || inTextField(event.target)) return null
+  return (groups ?? []).length > 0
+}
+
 // Escape, the keyboard's quiet cancel: the state the press leaves — an
 // in-progress keyboard wire stood down, the selection cleared, the
 // sidebar closing by its rule — or null when the key keeps the meaning

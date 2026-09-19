@@ -332,12 +332,7 @@ impl Editor {
         let position = protocol::take_position(fields, "position")?;
         protocol::done(fields)?;
         // The reference resolves against the document's groups before the
-        // node-type listing's — 23's order, the browser's composition rule
-        // made create's membership here. An instance of a group is an
-        // ordinary node instance, so its creation is the ordinary create;
-        // a reference the document's groups and a linked type both provide
-        // is accepted under the order either way, no ambiguity judged at
-        // edit time.
+        // node-type listing's — no ambiguity judged at edit time.
         let defined = session
             .graph
             .groups

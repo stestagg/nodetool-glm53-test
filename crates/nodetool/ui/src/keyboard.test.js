@@ -2,12 +2,14 @@
 // the moves a canvas change batch commits, the port keys that start,
 // land, and unhook wires, the landings a candidate can take, Escape's
 // quiet cancel over the selection and an in-progress wire, the
-// shift-activation that toggles a node in the selection, and the
-// view-follow that brings a focused port back. Each answer names the
-// operation its pointer gesture sends; the shell turns the answer into
-// the operation.
+// shift-activation that toggles a node in the selection, the packaging
+// chords, the chord that opens the background menu, and the view-follow
+// that brings a focused port back. Each answer
+// names the operation its pointer gesture sends; the shell turns the
+// answer into the operation.
 import { describe, expect, it } from 'vitest'
 import {
+  backgroundMenuKeys,
   escapeCancel,
   finalMoves,
   groupKeys,
@@ -268,5 +270,24 @@ describe('groupKeys', () => {
   it('a text field keeps the keys, and another key is no chord', () => {
     expect(groupKeys({ ctrlKey: true, key: 'g', ...inField }, editable, [plain], groups)).toBeNull()
     expect(groupKeys({ ctrlKey: true, key: 'x' }, editable, [plain], groups)).toBeNull()
+  })
+})
+
+describe('backgroundMenuKeys', () => {
+  const editable = true
+  const groups = [{ name: 'stage' }]
+  const chord = (event) => ({ ctrlKey: true, key: 'i', ...event })
+
+  it('Ctrl+I opens when the document holds groups', () => {
+    expect(backgroundMenuKeys(chord({}), editable, groups)).toBe(true)
+    expect(backgroundMenuKeys({ metaKey: true, key: 'i' }, editable, groups)).toBe(true)
+  })
+
+  it('no groups, the lock, a text field, or another key reads as no chord', () => {
+    expect(backgroundMenuKeys(chord({}), editable, [])).toBe(false)
+    expect(backgroundMenuKeys(chord({}), editable, undefined)).toBe(false)
+    expect(backgroundMenuKeys(chord({}), false, groups)).toBeNull()
+    expect(backgroundMenuKeys({ ctrlKey: true, key: 'i', target: { closest: () => ['input'] } }, editable, groups)).toBeNull()
+    expect(backgroundMenuKeys({ ctrlKey: true, key: 'x' }, editable, groups)).toBeNull()
   })
 })
