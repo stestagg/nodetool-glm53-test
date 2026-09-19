@@ -25,7 +25,7 @@
 //! launch's load faults do, a session past its launch reporting through
 //! the editor's own surfaces.
 
-use std::io::{self, Write};
+use std::io;
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -37,9 +37,7 @@ use nodetool::compile;
 use nodetool::engine::{self, Run};
 use nodetool::graph;
 use nodetool::registry::{self, Registry};
-use nodetool::server::{
-    read_definition, Editor, UnconnectedConsumer, UnconnectedStream, DEFAULT_ADDRESS,
-};
+use nodetool::server::{read_definition, Editor, UnconnectedStream, DEFAULT_ADDRESS};
 use nodetool::Value;
 use nodetool_fizzbuzz as _;
 
@@ -61,7 +59,10 @@ fn mode(args: &mut impl Iterator<Item = String>) -> Result<Mode, &'static str> {
             (None, None) => Ok(Mode::Ui(None)),
             _ => Err(USAGE),
         },
-        Some(path) => Ok(Mode::Headless(path.to_owned())),
+        Some(path) => match args.next() {
+            None => Ok(Mode::Headless(path.to_owned())),
+            Some(_) => Err(USAGE),
+        },
         None => Err(USAGE),
     }
 }
@@ -117,17 +118,9 @@ async fn headless(path: &str) -> ExitCode {
     let (stop, stopped) = watch::channel(false);
     run.stop_on(stopped);
     for (uuid, port) in engine::unconnected_outputs(&compiled) {
-        run.consume(uuid, port, {
-            let stop = stop.clone();
-            move |mut values| async move {
-                while let Some(value) = values.recv().await {
-                    if writeln!(io::stdout().lock(), "{}", plain(&value)).is_err() {
-                        let _ = stop.send(true);
-                        break;
-                    }
-                }
-                Ok(())
-            }
+        let stop = stop.clone();
+        run.consume(uuid, port, move |values| {
+            print_values(io::stdout(), values, Some(stop))
         });
     }
 
@@ -158,7 +151,8 @@ async fn ui(file: Option<String>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let editor = Arc::new(Editor::new(definition, file).consume_unconnected(terminal_printer()));
+    let editor =
+        Arc::new(Editor::new(definition, file).consume_unconnected(Arc::new(print_stream)));
     let address = listener.local_addr().expect("the listener is bound");
     let mut serving = tokio::spawn(Arc::clone(&editor).serve(listener));
     println!("fizzbuzz editor on http://{address}");
@@ -192,23 +186,32 @@ async fn quit_guard(editor: &Editor) {
 }
 
 /// The printer the UI mode supplies to the server: the headless rule
-/// verbatim — every value an unconnected output delivers, one line per
-/// value, in arrival order, in its plain string form, as it arrives. A
-/// write that fails — the reader went away — ends the printing; the run
-/// itself is the editor's, its outcome the browser's.
-fn terminal_printer() -> UnconnectedConsumer {
-    Arc::new(print_stream)
+/// verbatim. A write that fails — the reader went away — ends the
+/// printing; the run itself is the editor's, its outcome the browser's.
+fn print_stream(values: Receiver<Value>) -> UnconnectedStream {
+    Box::pin(print_values(io::stdout(), values, None))
 }
 
-fn print_stream(mut values: Receiver<Value>) -> UnconnectedStream {
-    Box::pin(async move {
-        while let Some(value) = values.recv().await {
-            if writeln!(io::stdout().lock(), "{}", plain(&value)).is_err() {
-                break;
+/// Story 10's printing rule, one body for both doors: every value the
+/// output delivers, one line per value, in arrival order, in its plain
+/// string form, as it arrives. A write that fails — the reader went away —
+/// ends the printing; headless passes the run's stop channel through
+/// `stop`, the run ending with the terminal, while UI mode passes none,
+/// the run itself the editor's, its outcome the browser's.
+async fn print_values<W: io::Write>(
+    mut writer: W,
+    mut values: Receiver<Value>,
+    stop: Option<watch::Sender<bool>>,
+) -> Result<(), nodetool::behaviour::Error> {
+    while let Some(value) = values.recv().await {
+        if writeln!(writer, "{}", plain(&value)).is_err() {
+            if let Some(stop) = stop {
+                let _ = stop.send(true);
             }
+            break;
         }
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 /// The plain string form of a value — the Format node's without-template
@@ -255,5 +258,43 @@ mod tests {
     fn a_bare_invocation_and_a_doubled_file_argument_are_usage_errors() {
         assert_eq!(mode_of(&[]), Err(USAGE));
         assert_eq!(mode_of(&["--ui", "a.yml", "b.yml"]), Err(USAGE));
+    }
+
+    #[test]
+    fn anything_after_the_file_is_a_usage_error_not_a_silent_mode_change() {
+        assert_eq!(mode_of(&["g.yml", "--ui"]), Err(USAGE));
+        assert_eq!(mode_of(&["g.yml", "extra"]), Err(USAGE));
+    }
+
+    /// A writer that refuses every write, as a closed pipe does.
+    struct Refusing;
+    impl io::Write for Refusing {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::other("the reader went away"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_ends_the_ui_printing_quietly_not_as_a_failure() {
+        // The sender stays alive: a printer that kept reading past the
+        // failed write instead of ending would hang, and the bound names it.
+        let (sender, values) = tokio::sync::mpsc::channel(4);
+        sender
+            .send(Value::new(nodetool::scalars::I32, 1i32))
+            .await
+            .expect("the value queues");
+        let printed = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            print_values(Refusing, values, None),
+        )
+        .await
+        .expect("the printing ends; a failed write does not hang it");
+        assert!(
+            matches!(printed, Ok(())),
+            "the stream's end is not an error: {printed:?}"
+        );
     }
 }

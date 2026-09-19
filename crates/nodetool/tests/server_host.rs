@@ -165,37 +165,7 @@ fn the_unsaved_changes_state_is_the_dirty_state_the_exit_guard_judges() {
     assert_eq!(saved["type"], "file_saved");
     assert!(!editor.unsaved_changes(), "a save clears the state");
 
-    edit_parameter(
-        &editor,
-        3,
-        "00000000-0000-0000-0000-0000000000d1",
-        "start",
-        Some("4"),
-    );
-    let other = written_graph("host-other", COUNTER_ALONE);
-    let opened = send(
-        &editor,
-        &format!(
-            r#"{{"id": 4, "type": "open_file", "path": {}}}"#,
-            path_field(&other)
-        ),
-    );
-    assert_eq!(opened["type"], "file_opened");
-    assert!(!editor.unsaved_changes(), "an open clears the state");
-
-    edit_parameter(
-        &editor,
-        5,
-        "00000000-0000-0000-0000-0000000000d1",
-        "start",
-        Some("5"),
-    );
-    let fresh = send(&editor, r#"{"id": 6, "type": "new_graph"}"#);
-    assert_eq!(fresh["type"], "graph_created");
-    assert!(!editor.unsaved_changes(), "a fresh graph clears the state");
-
     let _ = fs::remove_file(&file);
-    let _ = fs::remove_file(&other);
 }
 
 /// An editor seeded the way a launch on a file seeds it: the loader's

@@ -31,11 +31,10 @@ scalar data types.
   over one address and speaks a JSON envelope protocol over one websocket
   connection per browser, holding the graph definition and the file being
   edited as the one authoritative state. A binary hosting the server may
-  supply the consumer the runs it starts deliver to on outputs the graph
-  leaves unconnected — the engine's consumer mechanism carried through
-  the server, one attached consumer per unconnected output — and a host
-  supplying none keeps the engine's discard. Core contains no node
-  types: a node library is always a plugin crate, first-party or not.
+  supply what a run's unconnected outputs deliver to — the engine's
+  consumer mechanism carried through the server — and a host supplying
+  none keeps the engine's discard. Core contains no node types: a node
+  library is always a plugin crate, first-party or not.
 - `crates/nodetool/ui` — the editor UI the server embeds and serves: a
   React application whose canvas is React Flow under a light Blueprint
   look, with the palette of node types docked on the left and the editing
@@ -68,9 +67,8 @@ scalar data types.
   prints the served address, and hands the server the same terminal
   printer, so a run started from the browser prints the values its graph
   leaves unconnected exactly as a headless run does. Ctrl-C over unsaved
-  changes warns and stands down; the next Ctrl-C quits. The utility crate
-  stays unlinked — the palette serves the graph this binary exists for.
-  The shipped graph is `graphs/fizzbuzz.yml`, the classic fizzbuzz.
+  changes warns and stands down; the next Ctrl-C quits. The shipped graph
+  is `graphs/fizzbuzz.yml`, the classic fizzbuzz.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the tests
   (`alpha` is sub-grouped, `beta` is flat, `gamma` supplies the compiler
   tests' node types, `delta` supplies the engine tests' node types, `epsilon`

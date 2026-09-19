@@ -35,13 +35,10 @@
 //! compiles the held definition afresh — every start compiles, nothing
 //! compiled survives a run — and the run's endings come back through the
 //! engine's event stream. The values a run delivers on outputs the graph
-//! leaves unconnected are the host's: the binary that launched the server
-//! may supply the consumer they deliver to — the engine's one consumer
-//! mechanism carried through, an attached consumer one more downstream of
-//! the same fan-out — and a host supplying none keeps the engine's
-//! discard. Opening and saving go through the one file
-//! format's loader and dump, so a file the headless run takes is the file
-//! the editor edits.
+//! leaves unconnected are the host's: the consumer the host may supply,
+//! defined at `UnconnectedConsumer`. Opening and saving go through the one
+//! file format's loader and dump, so a file the headless run takes is the
+//! file the editor edits.
 //!
 //! The websocket is untrusted input at a parse boundary: a message that
 //! fails to parse, is not a JSON object, names an unknown type, or carries
@@ -178,11 +175,8 @@ impl Editor {
     }
 
     /// Supply the consumer of the values the runs started from here
-    /// deliver on outputs the graph leaves unconnected: the hosting
-    /// binary's seam for what its runs produce, the engine's consumer
-    /// mechanism carried through — one consumer per unconnected output per
-    /// run, attached as one more downstream of the same fan-out. A host
-    /// supplying none keeps the engine's discard.
+    /// deliver on outputs the graph leaves unconnected — the host's seam,
+    /// `UnconnectedConsumer`'s contract.
     pub fn consume_unconnected(mut self, consumer: UnconnectedConsumer) -> Editor {
         self.unconnected = Some(consumer);
         self

@@ -11,8 +11,8 @@
 //!
 //! The tests take turns over the one loopback address the binary serves:
 //! the turn is a std lock guarding the *process*, not the runtime, so its
-//! guard rides the whole session across every await.
-#![allow(clippy::await_holding_lock)]
+//! guard rides the whole session across every await — the two places that
+//! hold it carry their own `allow`, leaving the lint live everywhere else.
 
 mod common;
 
@@ -71,6 +71,7 @@ struct Session {
 impl Session {
     /// Launch `--ui` and join its announcement: the printed address is
     /// both the launch's word and the proof the server is up.
+    #[allow(clippy::await_holding_lock)]
     async fn launch(args: &[&str]) -> Session {
         let turn = SERVER
             .lock()
@@ -259,7 +260,9 @@ impl Drop for Session {
 
 /// The server's half of the socket read one text frame at a time: the
 /// greeting, the replies, and the pushes ride unmasked text frames, a
-/// close ending the pump.
+/// close ending the pump. The frames the protocol carries here — the
+/// definition pushes the largest of them — stay inside the 126 length
+/// form, so that is the only form the reader knows.
 struct FrameSource {
     reader: ReadHalf<TcpStream>,
     buffer: Vec<u8>,
@@ -288,13 +291,6 @@ impl FrameSource {
                 126 if self.buffer.len() >= 4 => (
                     4,
                     u16::from_be_bytes([self.buffer[2], self.buffer[3]]) as usize,
-                ),
-                127 if self.buffer.len() >= 10 => (
-                    10,
-                    usize::try_from(u64::from_be_bytes(
-                        self.buffer[2..10].try_into().expect("eight bytes"),
-                    ))
-                    .expect("the frame fits memory"),
                 ),
                 _ => {
                     self.fill().await?;
@@ -332,16 +328,13 @@ async fn frame_pump(mut source: FrameSource, frames: tokio::sync::mpsc::Unbounde
 /// itself — the server unmasks to the same bytes.
 async fn write_frame(writer: &mut WriteHalf<TcpStream>, message: &str) {
     let payload = message.as_bytes();
+    let length = u16::try_from(payload.len()).expect("a test message fits the 16-bit length form");
     let mut frame = vec![0x81];
-    match payload.len() {
+    match length {
         length @ 0..=125 => frame.push(0x80 | length as u8),
-        length @ 126..=65_535 => {
+        _ => {
             frame.push(0x80 | 126);
-            frame.extend_from_slice(&(length as u16).to_be_bytes());
-        }
-        length => {
-            frame.push(0x80 | 127);
-            frame.extend_from_slice(&(length as u64).to_be_bytes());
+            frame.extend_from_slice(&length.to_be_bytes());
         }
     }
     frame.extend_from_slice(&[0, 0, 0, 0]);
@@ -396,6 +389,7 @@ async fn a_launch_without_a_file_starts_empty_and_untitled() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn a_launch_load_error_ends_non_zero_naming_the_fault_without_a_server() {
     let _turn = SERVER
         .lock()
