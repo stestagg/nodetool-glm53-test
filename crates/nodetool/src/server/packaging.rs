@@ -8,6 +8,7 @@
 //! leaves the definition exactly as it was and an applied gesture is one
 //! atomic edit the whole definition push carries.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
@@ -59,10 +60,10 @@ pub fn package(
     }
     if registry.node_type(name).is_some() {
         return Err(format!(
-            "the name `{name}` collides with the linked node type `{name}`"
+            "the name `{name}` collides with a node type a linked plugin declares"
         ));
     }
-    if let Some(who) = boundary_placeholders(graph, &selected, registry).first() {
+    if let Some(who) = boundary_placeholder(graph, &selected, registry) {
         return Err(format!(
             "the selection's boundary crosses node {who}, whose type no group in the document \
              defines and no linked plugin declares; an exposed port would have no types to declare"
@@ -123,12 +124,13 @@ pub fn package(
 /// uuids the nodes return under.
 ///
 /// Each body node reappears at its stored offset from where the instance
-/// sat; the external wires re-attach through the exposed ports' bindings;
-/// a value the instance held on an unconnected exposed input lands on the
-/// bound inner input as its parameter. The gesture always succeeds
-/// structurally: a returning uuid that collides with a surviving node is
-/// reassigned fresh, and the group definition leaves with the instance
-/// when no other instance references it.
+/// sat; the external wires re-attach through the exposed ports' bindings,
+/// a wire at a port name no binding declares having nothing to land on
+/// and going with the instance; a value the instance held on an
+/// unconnected exposed input lands on the bound inner input as its
+/// parameter. The gesture always succeeds structurally: a returning uuid
+/// that collides with a surviving node is reassigned fresh, and the group
+/// definition leaves with the instance when no other instance references it.
 pub fn unpack(graph: &mut GraphDefinition, uuid: Uuid) -> Result<Vec<Uuid>, String> {
     let at = graph
         .nodes
@@ -183,6 +185,9 @@ pub fn unpack(graph: &mut GraphDefinition, uuid: Uuid) -> Result<Vec<Uuid>, Stri
     // lands on the bound inner input. Either way the bound input ends up
     // fed from outside, so an inner edge already feeding it gives way —
     // the landing wire replaces what the input held, as a wire drop does.
+    // A wire at a port name no binding declares has nothing to land on
+    // and goes with the instance: the loader checks a document's shape,
+    // not its port names, and compile names such a wire.
     let mut spliced = HashSet::new();
     let mut reattached: Vec<Edge> = Vec::new();
     for edge in &graph.edges {
@@ -259,20 +264,18 @@ pub fn unpack(graph: &mut GraphDefinition, uuid: Uuid) -> Result<Vec<Uuid>, Stri
     Ok(returned)
 }
 
-/// The nodes in the selection that would put a port on the boundary
-/// without anything honest to declare on it: an unknown-typed placeholder
+/// The first node in the selection that would put a port on the boundary
+/// without anything honest to declare on it — an unknown-typed placeholder
 /// holding the in-selection end of a crossing edge, named the way an error
 /// names it. A placeholder whose edges stay internal packages fine —
 /// nobody asks its ports anything — and one outside the selection never
 /// blocks, the packaged side's declarations being what the exposed port
 /// carries.
-fn boundary_placeholders(
+fn boundary_placeholder(
     graph: &GraphDefinition,
     selected: &HashSet<Uuid>,
     registry: &Registry,
-) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut blocked = Vec::new();
+) -> Option<String> {
     for edge in &graph.edges {
         let from_in = selected.contains(&edge.from);
         let to_in = selected.contains(&edge.to);
@@ -287,21 +290,21 @@ fn boundary_placeholders(
             .expect("the selection was checked against the definition");
         let declared = registry.node_type(&node.type_ref).is_some()
             || graph.groups.iter().any(|group| group.name == node.type_ref);
-        if !declared && seen.insert(uuid) {
-            blocked.push(named(node));
+        if !declared {
+            return Some(named(node));
         }
     }
-    blocked
+    None
 }
 
 /// The exposed ports the selection's crossing edges derive, walking the
 /// edges in their stored order, with each crossing edge rewritten to run
 /// through the new instance instead — an input's single upstream re-seated,
 /// a fan-out's every downstream kept. One inner output serves all its
-/// external downstreams, so a binding already spoken for is not spoken for
-/// twice; an inner input and an inner output sharing a name are distinct
-/// ports, but the names they take are deduped across the whole new port
-/// set.
+/// external downstreams, so a binding already spoken for takes the first
+/// port's name again; an inner input and an inner output sharing a name
+/// are distinct ports, but the names they take are deduped across the
+/// whole new port set.
 fn exposed_ports(
     graph: &GraphDefinition,
     registry: &Registry,
@@ -311,8 +314,8 @@ fn exposed_ports(
     let mut inputs = Vec::new();
     let mut outputs = Vec::new();
     let mut reattached = Vec::new();
-    let mut used = HashSet::new();
     let mut taken = HashSet::new();
+    let mut spoken: HashMap<(bool, Uuid, String), String> = HashMap::new();
     for edge in &graph.edges {
         let from_in = selected.contains(&edge.from);
         let to_in = selected.contains(&edge.to);
@@ -323,30 +326,26 @@ fn exposed_ports(
         } else {
             continue;
         };
-        let fresh = taken.insert((outward, node, port.as_str()));
-        let name = if fresh {
-            let mut name = port.clone();
-            let mut suffix = 2;
-            while !used.insert(name.clone()) {
-                name = format!("{port} {suffix}");
-                suffix += 1;
+        let name = match spoken.entry((outward, node, port.clone())) {
+            Entry::Occupied(seen) => seen.get().clone(),
+            Entry::Vacant(seat) => {
+                let mut name = port.clone();
+                let mut suffix = 2;
+                while !taken.insert(name.clone()) {
+                    name = format!("{port} {suffix}");
+                    suffix += 1;
+                }
+                let ports = if outward { &mut outputs } else { &mut inputs };
+                ports.push(GroupPort {
+                    name: name.clone(),
+                    type_refs: inner_port_types(graph, registry, node, port, !outward),
+                    node,
+                    port: port.clone(),
+                });
+                seat.insert(name.clone());
+                name
             }
-            name
-        } else {
-            ports_lookup(outward, node, port, &inputs, &outputs)
-                .expect("the binding was spoken for by a port this walk created")
-                .name
-                .clone()
         };
-        if fresh {
-            let ports = if outward { &mut outputs } else { &mut inputs };
-            ports.push(GroupPort {
-                name: name.clone(),
-                type_refs: inner_port_types(graph, registry, node, port, !outward),
-                node,
-                port: port.clone(),
-            });
-        }
         reattached.push(if outward {
             Edge {
                 from: instance,
@@ -364,19 +363,6 @@ fn exposed_ports(
         });
     }
     (inputs, outputs, reattached)
-}
-
-fn ports_lookup<'p>(
-    outward: bool,
-    node: Uuid,
-    port: &str,
-    inputs: &'p [GroupPort],
-    outputs: &'p [GroupPort],
-) -> Option<&'p GroupPort> {
-    let ports = if outward { outputs } else { inputs };
-    ports
-        .iter()
-        .find(|bound| bound.node == node && bound.port == port)
 }
 
 /// The type references the bound inner port declares: a group instance's

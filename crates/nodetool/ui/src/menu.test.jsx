@@ -54,4 +54,35 @@ describe('ContextMenu', () => {
     fireEvent.mouseDown(document.body)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  it('a seat near the canvas edge clamps back inside; a fitting seat keeps its place', () => {
+    const sized = (owner, property, value) =>
+      Object.defineProperty(owner, property, { configurable: true, value })
+    sized(HTMLElement.prototype, 'offsetWidth', 170)
+    sized(HTMLElement.prototype, 'offsetHeight', 76)
+    try {
+      const seat = (x, y) => {
+        const canvas = document.body.appendChild(document.createElement('div'))
+        sized(canvas, 'clientWidth', 400)
+        sized(canvas, 'clientHeight', 200)
+        render(
+          <ContextMenu
+            x={x}
+            y={y}
+            entries={[{ key: 'package', label: 'Package into group…', onPick: vi.fn() }]}
+            onClose={vi.fn()}
+          />,
+          { container: canvas },
+        )
+        return canvas.firstElementChild
+      }
+      expect(seat(350, 180).style.left).toBe('230px')
+      expect(seat(350, 180).style.top).toBe('124px')
+      expect(seat(12, 30).style.left).toBe('12px')
+      expect(seat(12, 30).style.top).toBe('30px')
+    } finally {
+      delete HTMLElement.prototype.offsetWidth
+      delete HTMLElement.prototype.offsetHeight
+    }
+  })
 })

@@ -191,11 +191,24 @@ the whole selection, one move landing where each node rests, and Delete
 (or Backspace) with the canvas in focus — a field keeps the keys as text,
 so a stray keypress cannot cost nodes — removes every selected node
 together with their wires, unknown-typed placeholders included; alone, a
-placeholder stays inert. A right-click acts on the selection too, and
-never disturbs it: a node already selected keeps the whole selection, an
-unselected one is selected alone first as a plain click does, and the
-context menu opens with the packaging gestures — package the selection
-into a group, unpack its group instances. The sidebar with a multi-selection
+placeholder stays inert. A right-click acts on the selection too, and never disturbs it: a node already
+selected keeps the whole selection, an unselected one is selected alone first
+as a plain click does, and the context menu opens with the packaging gestures
+— package the selection into a group, unpack its group instances — seated
+where the pointer is, clamped to stay inside the canvas. Packaging asks the
+group's name in a small dialog pre-filled with an available suggestion, Enter
+committing and Esc cancelling quietly, and the server derives the rest from
+the definition it holds: the edges crossing the selection's boundary become
+the group's exposed ports, and the packaged nodes' stored positions move into
+the body as offsets from the selection's centroid. A name the document
+already uses, or one a linked type already holds, is refused naming the
+clash, as is a boundary crossing an unknown-typed placeholder inside the
+selection, naming the node — both leaving the graph untouched. Unpack runs
+once per group instance in the selection: the nodes reappear at their stored
+offsets from where the instance sat, the wires re-attach through the
+bindings, a value typed on an unconnected exposed input lands on the bound
+inner input as its parameter, and the definition leaves with the last
+instance, kept while others remain. The sidebar with a multi-selection
 names the selection by its count and shows only the parameter fields the
 nodes hold in common — an input declared scalar-possible and unconnected
 on every one of them — each at its shared value, marked `mixed` where the
@@ -239,36 +252,12 @@ same inline fields and type colours, and the sidebar edits it like any
 node — the shipped gestures treating it untouched, deletion removing the
 instance, never the group's definition. The palette stays a palette of
 linked plugin types: groups arrive with the document, not the registry.
-
-The packaging itself is a gesture. A non-empty selection packages through
-the context menu or Ctrl+G: a small dialog asks the group's name,
-pre-filled with an available suggestion so Enter alone commits, Esc
-cancelling quietly — and the server derives everything else from the
-definition it holds. The edges crossing the selection's boundary become
-the group's exposed ports, each taking the bound inner port's name (a
-numbered name where two would collide) and declaring that inner port's
-types; the packaged nodes' stored positions move into the body as offsets
-from the selection's centroid; the collapsed instance sits at that
-centroid and takes the selection, every outside wire that touched the
-selection now landing on its ports. A name the document already uses, or
-one a linked type already holds, is refused naming the clash, and a
-boundary crossing an unknown-typed placeholder inside the selection is
-refused naming the node — both leaving the definition untouched. Unpack
-runs the same entries the other way, one operation per group instance in
-the selection: the nodes reappear at their stored offsets from where the
-instance sat, the wires re-attach through the bindings, a value typed on
-an unconnected exposed input lands on the bound inner input as its
-parameter, and the definition leaves with the last instance, kept while
-others remain. Both are single atomic edits under the run lock, and a
-packaged graph saves, reloads, and runs headless like any other.
 While a run is on, the collapsed node's status mark aggregates its
 inside — error when an inner node errors (the report naming the group
-instance and the inner node), completed when every inner node is,
-stopped with the run's closure, running while inner nodes run — and a
-value crossing the boundary animates the boundary port and its wires,
-while the inside's pulses stay inside. The same file runs headless
-unchanged: compiling flattens the groups into one graph, so the headless
-run is the same run the editor watches.
+instance and the inner node), completed when every inner node is, stopped
+with the run's closure, running while inner nodes run — and a value
+crossing the boundary animates the boundary port and its wires, the
+inside's pulses staying inside.
 
 The declared data types carry the graph's type channel: a port declaring
 exactly one type renders its dot in that type's declared colour and shape,

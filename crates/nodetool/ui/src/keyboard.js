@@ -8,7 +8,7 @@
 // keyboard's way around the canvas.
 
 import { inTextField } from './view.js'
-import { groupInstances } from './packaging.js'
+import { groupInstances } from './groups.js'
 
 // The flow position the view's centre names: where a keyboard-created
 // node lands — deterministic given the view, visible by construction.

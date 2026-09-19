@@ -2,7 +2,7 @@
 //! turning a selection into a group definition and one collapsed instance,
 //! the unpack operation dissolving an instance back into its nodes, and
 //! the refusals that leave the definition exactly as it was. The file
-//! operations and the per-node edits are server.rs's; the run lock's
+//! operations and the per-node edits are server/mod.rs's; the run lock's
 //! refusal of these two rides the lock test there.
 
 mod server_common;
@@ -269,6 +269,61 @@ edges:
             { "name": "value 4", "type_refs": ["i32", "f64"], "node": D2, "port": "value" },
         ]),
         "one namespace across the whole new port set, first come keeping the plain name"
+    );
+}
+
+#[test]
+fn one_exposed_output_serves_all_its_external_downstreams() {
+    // A packaged output fanned to two outside nodes: one exposed port, and
+    // both crossing edges rewritten onto the same port name — REQ-20's
+    // fan-out preserved through the boundary.
+    const D0: &str = "00000000-0000-0000-0000-0000000000d0";
+    const D4: &str = "00000000-0000-0000-0000-0000000000d4";
+    const D5: &str = "00000000-0000-0000-0000-0000000000d5";
+    let text = format!(
+        "schema_version: 2
+nodes:
+  - uuid: {D0}
+    type_ref: beta/identity
+    metadata:
+      position: {{ x: 0, y: 0 }}
+  - uuid: {D4}
+    type_ref: beta/identity
+    metadata:
+      position: {{ x: 200, y: -100 }}
+  - uuid: {D5}
+    type_ref: beta/identity
+    metadata:
+      position: {{ x: 200, y: 100 }}
+edges:
+  - from: {D0}
+    from_port: value
+    to: {D4}
+    to_port: value
+  - from: {D0}
+    from_port: value
+    to: {D5}
+    to_port: value"
+    );
+    let editor = editor_holding(&text);
+    let reply = package(&editor, 1, &[D0], "fan");
+    assert_eq!(reply["type"], "group_packaged");
+    let instance = reply["uuid"].as_str().unwrap();
+
+    let definition = held_definition(&editor);
+    let group = group_of(&definition, "fan");
+    assert_eq!(
+        group["outputs"],
+        json!([{ "name": "value", "type_refs": ["i32", "f64"], "node": D0, "port": "value" }]),
+        "one port for the inner output both downstreams shared"
+    );
+    assert_eq!(
+        definition["edges"],
+        json!([
+            { "from": instance, "from_port": "value", "to": D4, "to_port": "value" },
+            { "from": instance, "from_port": "value", "to": D5, "to_port": "value" },
+        ]),
+        "both wires rewritten, landing on the one port's name"
     );
 }
 
@@ -588,6 +643,66 @@ groups:
 }
 
 #[test]
+fn an_edge_at_a_port_the_group_does_not_declare_goes_with_the_instance() {
+    // The loader checks a document's shape, not that a top-level wire's
+    // port names are the instance's declared ports — a hand-written file
+    // can carry such a wire, and compile names it. Unpack dissolves the
+    // instance regardless, and a wire with no binding to land on goes
+    // with it: the gesture always succeeds structurally, a dangling wire
+    // to a removed node is not a state the editor can keep.
+    let text = format!(
+        "schema_version: 2
+nodes:
+  - uuid: {U_ADD_1}
+    type_ref: stage
+    metadata:
+      position: {{ x: 500, y: 0 }}
+  - uuid: {U_SINK}
+    type_ref: alpha/add
+    metadata:
+      position: {{ x: 1000, y: 0 }}
+edges:
+  - from: {U_SINK}
+    from_port: sum
+    to: {U_ADD_1}
+    to_port: a
+  - from: {U_SINK}
+    from_port: sum
+    to: {U_ADD_1}
+    to_port: nope
+  - from: {U_ADD_1}
+    from_port: nope
+    to: {U_SINK}
+    to_port: b
+groups:
+  - name: stage
+    inputs:
+      - name: a
+        type_refs: [i32]
+        node: {U_SINK}
+        port: a
+    outputs: []
+    nodes:
+      - uuid: {U_SINK}
+        type_ref: alpha/add
+        metadata:
+          position: {{ x: 0, y: 0 }}
+    edges: []"
+    );
+    let editor = editor_holding(&text);
+    let reply = unpack(&editor, 1, U_ADD_1);
+    assert_eq!(reply["type"], "group_unpacked");
+    let returned = reply["nodes"].as_array().unwrap();
+
+    let definition = held_definition(&editor);
+    assert_eq!(
+        definition["edges"],
+        json!([{ "from": U_SINK, "from_port": "sum", "to": returned[0], "to_port": "a" }]),
+        "the wire the binding could land re-attached; the strays went with the instance"
+    );
+}
+
+#[test]
 fn the_definition_is_kept_while_other_instances_reference_it() {
     let one = "00000000-0000-0000-0000-0000000000f1";
     let two = "00000000-0000-0000-0000-0000000000f2";
@@ -673,6 +788,100 @@ groups:
             .find(|edge| edge["from"] == returned[0])
             .unwrap(),
         &json!({ "from": returned[0], "from_port": "sum", "to": returned[1], "to_port": "b" })
+    );
+}
+
+#[test]
+fn a_group_instance_inside_the_selection_travels_into_the_body_and_back() {
+    let editor = editor_holding(STAGED);
+    let first = package(&editor, 1, &[U_ADD_1, U_ADD_2], "stage");
+    let inner = first["uuid"].as_str().unwrap().to_owned();
+
+    // The stage instance beside the sink packages again: the instance
+    // travels into the outer body with its offsets, and the outside wire
+    // into its exposed input becomes the outer group's port, typed
+    // through the nested group's own declaration.
+    let second = package(&editor, 2, &[&inner, U_SINK], "outer");
+    assert_eq!(second["type"], "group_packaged");
+    let outer = second["uuid"].as_str().unwrap().to_owned();
+
+    let definition = held_definition(&editor);
+    let group = group_of(&definition, "outer");
+    assert_eq!(node_of(&group, &inner)["type_ref"], "stage");
+    assert_eq!(
+        node_of(&group, &inner)["metadata"]["position"],
+        json!({ "x": -125, "y": 0 })
+    );
+    assert_eq!(
+        node_of(&group, U_SINK)["metadata"]["position"],
+        json!({ "x": 125, "y": 0 })
+    );
+    assert_eq!(
+        group["inputs"],
+        json!([{ "name": "b", "type_refs": ["i32"], "node": inner, "port": "b" }]),
+        "the outer port declares the nested group's exposed input types"
+    );
+    assert_eq!(group["outputs"], json!([]));
+    assert_eq!(
+        group["edges"],
+        json!([{ "from": inner, "from_port": "sum", "to": U_SINK, "to_port": "value" }]),
+        "the wire between the instance and the sink stays internal"
+    );
+    assert_eq!(
+        definition["edges"],
+        json!([{ "from": U_SOURCE, "from_port": "value", "to": outer, "to_port": "b" }])
+    );
+
+    // Unpacking the outer returns both: the inner instance lands where it
+    // sat, the outside wire back on its exposed input — and the inner
+    // group's definition survives, the returned instance still showing it.
+    let reply = unpack(&editor, 3, &outer);
+    assert_eq!(reply["type"], "group_unpacked");
+    assert_eq!(
+        reply["nodes"].as_array().unwrap(),
+        json!([U_SINK, inner]).as_array().unwrap()
+    );
+    let definition = held_definition(&editor);
+    assert_eq!(
+        node_of(&definition, &inner)["metadata"]["position"],
+        json!({ "x": 50, "y": 0 })
+    );
+    assert_eq!(
+        definition["edges"],
+        json!([
+            { "from": U_SOURCE, "from_port": "value", "to": inner, "to_port": "b" },
+            { "from": inner, "from_port": "sum", "to": U_SINK, "to_port": "value" },
+        ])
+    );
+    let groups = definition["groups"].as_array().unwrap();
+    assert_eq!(
+        groups.len(),
+        1,
+        "the outer definition leaves, the inner's stays"
+    );
+    assert_eq!(groups[0]["name"], "stage");
+
+    // Unpacking the inner now takes the last definition with it, the
+    // original nodes back where they were drawn.
+    let reply = unpack(&editor, 4, &inner);
+    assert_eq!(reply["type"], "group_unpacked");
+    let definition = held_definition(&editor);
+    assert!(definition["groups"].is_null());
+    assert_eq!(
+        node_of(&definition, U_ADD_1)["metadata"]["position"],
+        json!({ "x": 0, "y": 0 })
+    );
+    assert_eq!(
+        node_of(&definition, U_ADD_2)["metadata"]["position"],
+        json!({ "x": 100, "y": 0 })
+    );
+    assert_eq!(
+        definition["edges"],
+        json!([
+            { "from": U_SOURCE, "from_port": "value", "to": U_ADD_1, "to_port": "b" },
+            { "from": U_ADD_2, "from_port": "sum", "to": U_SINK, "to_port": "value" },
+            { "from": U_ADD_1, "from_port": "sum", "to": U_ADD_2, "to_port": "b" },
+        ])
     );
 }
 

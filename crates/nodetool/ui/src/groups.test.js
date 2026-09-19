@@ -1,12 +1,21 @@
 // The group composition, client-side: the identity derivation mirrored
 // from the compiler's (pinned against its values), the facts a document's
 // groups compose — boundary emissions, inner identities, ownership, the
-// status aggregate — the collapsed node's rendering by the default class
-// with the group's ports, and the re-keying of the run display's values so
-// an inside pulse stays inside and a boundary emission shows at the port
-// it crosses.
+// status aggregate — the packaging gestures' decisions read off the same
+// definition (the name suggestion the dialog opens with, the group
+// instances unpack acts on), the collapsed node's rendering by the
+// default class with the group's ports, and the re-keying of the run
+// display's values so an inside pulse stays inside and a boundary
+// emission shows at the port it crosses.
 import { describe, expect, it } from 'vitest'
-import { canvasValues, groupFacts, innerIdentity, instanceStatus } from './groups.js'
+import {
+  canvasValues,
+  groupFacts,
+  groupInstances,
+  groupSuggestion,
+  innerIdentity,
+  instanceStatus,
+} from './groups.js'
 import { nodeMarks, toEdges, toNodes } from './view.js'
 
 const INNER = '3f2b8a1c-6d54-4e8a-9b7e-1c2d3e4f5a6b'
@@ -190,6 +199,40 @@ describe('canvasValues', () => {
   it('carries the values of a flat document untouched', () => {
     const values = { [`${PLAIN}/text`]: 'kept' }
     expect(canvasValues(values, null)).toEqual(values)
+  })
+})
+
+describe('groupSuggestion', () => {
+  it('offers Group when nothing is taken', () => {
+    expect(groupSuggestion([])).toBe('Group')
+    expect(groupSuggestion(undefined)).toBe('Group')
+  })
+
+  it('walks the numbered names past the taken ones', () => {
+    expect(groupSuggestion([{ name: 'Group' }])).toBe('Group 2')
+    expect(groupSuggestion([{ name: 'Group' }, { name: 'Group 2' }])).toBe('Group 3')
+  })
+
+  it('unrelated names leave the plain suggestion available', () => {
+    expect(groupSuggestion([{ name: 'stage' }, { name: 'filter' }])).toBe('Group')
+  })
+})
+
+describe('groupInstances', () => {
+  const groups = [{ name: 'stage' }, { name: 'filter' }]
+
+  it('picks the selected nodes whose type reference a document group defines', () => {
+    const selected = [
+      { uuid: 'u1', type_ref: 'alpha/add' },
+      { uuid: 'u2', type_ref: 'stage' },
+      { uuid: 'u3', type_ref: 'filter' },
+    ]
+    expect(groupInstances(selected, groups)).toEqual(['u2', 'u3'])
+  })
+
+  it('a selection without instances, or a document without groups, unpacks nothing', () => {
+    expect(groupInstances([{ uuid: 'u1', type_ref: 'alpha/add' }], groups)).toEqual([])
+    expect(groupInstances([{ uuid: 'u2', type_ref: 'stage' }], [])).toEqual([])
   })
 })
 

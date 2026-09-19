@@ -534,12 +534,8 @@ impl Editor {
         Ok(json!({ "type": "node_deleted" }))
     }
 
-    /// Package the selection into a new group: the message names the
-    /// selection and the group, and packaging derives everything else from
-    /// the held definition — exposed ports, body, offsets, the collapsed
-    /// instance's seat — so the browser never assembles the groups format
-    /// by hand. A refusal names its reason and leaves the definition
-    /// exactly as it was.
+    /// Package the selection the message names; `packaging::package` does
+    /// the work and the reply carries the new instance's uuid.
     fn package_group(
         &self,
         session: &mut Session,
@@ -554,11 +550,9 @@ impl Editor {
         Ok(json!({ "type": "group_packaged", "uuid": uuid, "name": name }))
     }
 
-    /// Unpack one group instance back into its nodes — the selection's
-    /// instances are unpacked one operation each, the way a multi-selection
-    /// move or delete composes the per-node operation. The reply carries
-    /// the uuids the nodes returned under, so the client can hand them the
-    /// selection the instance held.
+    /// Unpack one group instance back into its nodes; the reply carries
+    /// the uuids the nodes returned under, so the client can hand them
+    /// the selection the instance held.
     fn unpack_group(
         &self,
         session: &mut Session,

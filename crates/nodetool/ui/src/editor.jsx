@@ -71,8 +71,7 @@ import { Banner, Toasts } from './chrome.jsx'
 import { ContextMenu } from './menu.jsx'
 import { Palette } from './palette.jsx'
 import { escapeCancel, finalMoves, groupKeys, panIntoView, toggleKey, viewportCenter } from './keyboard.js'
-import { canvasValues, groupFacts, groupType } from './groups.js'
-import { groupInstances, groupSuggestion } from './packaging.js'
+import { canvasValues, groupFacts, groupInstances, groupSuggestion, groupType } from './groups.js'
 import {
   backgroundDrag,
   bannerText,
@@ -497,8 +496,9 @@ export function Editor() {
   // state: it stays live through the lock, exactly as clicking.
   useEffect(() => {
     const onKeyDown = (event) => {
-      // With the context menu open, Escape is the menu's quiet cancel —
-      // the menu closes and the selection stands; the next Escape clears.
+      // While the menu is up, the canvas's keys stand down — the menu is
+      // the gesture in front; its Escape closes it quietly, the selection
+      // standing.
       if (menu !== null) return
       const uuid = toggleKey(event)
       if (uuid !== null) {
@@ -624,59 +624,83 @@ export function Editor() {
   }, [confirmDiscard, editable, file, showToast])
 
   // The packaging gestures: the menu entries and the chords issue the
-  // same operations. Package names the selection and the group and lets
-  // the server derive everything else; the one input the gesture needs —
-  // the name — is asked on 15's pattern, a small dialog pre-filled with
-  // an available suggestion so Enter alone packages, Esc the quiet cancel
-  // that leaves the selection as it was. Unpack is the per-instance
-  // operation, once per group instance in the selection, 20's fan-out.
+  // same operations. Unpack is the per-instance operation, once per
+  // group instance in the selection, 20's fan-out.
+  //
+  // The selection as the held definition holds it: the operations and
+  // the menu's entries address definition nodes, not the drawn ones.
+  const selectedHeld = useCallback(
+    () =>
+      (graphRef.current?.nodes ?? []).filter((node) =>
+        nodesRef.current.some((drawn) => drawn.selected && drawn.id === node.uuid),
+      ),
+    [],
+  )
+
   const packageSelection = useCallback(() => {
     if (!editable || protocol.current === null) return
-    const selected = nodesRef.current.filter((node) => node.selected).map((node) => node.id)
+    const selected = selectedHeld().map((node) => node.uuid)
     if (selected.length === 0) return
-    const name = window.prompt('Package selection as group', groupSuggestion(graphRef.current?.groups))
+    const name = window.prompt('Package into group…', groupSuggestion(graphRef.current?.groups))
     if (name === null || name === '') return
     protocol.current('package_group', { nodes: selected, name }).then(
       (reply) => setHandoff([reply.uuid]),
       showToast,
     )
-  }, [editable, showToast])
+  }, [editable, selectedHeld, showToast])
 
   const unpackSelection = useCallback(() => {
     if (!editable || protocol.current === null) return
-    const selected = (graphRef.current?.nodes ?? []).filter((node) =>
-      nodesRef.current.some((drawn) => drawn.selected && drawn.id === node.uuid),
-    )
-    const instances = groupInstances(selected, graphRef.current?.groups)
+    const instances = groupInstances(selectedHeld(), graphRef.current?.groups)
     if (instances.length === 0) return
+    // One operation per instance, each refusal toasted; a refused or
+    // dropped unpack contributes nothing, so the handoff carries only
+    // nodes that returned — an all-refused fan-out hands over nothing.
     Promise.all(
       instances.map((uuid) =>
-        protocol.current('unpack_group', { uuid }).then((reply) => reply.nodes, showToast),
+        protocol.current('unpack_group', { uuid }).then(
+          (reply) => reply.nodes,
+          (error) => {
+            showToast(error)
+            return []
+          },
+        ),
       ),
     ).then((groups) => {
       const nodes = groups.flat()
       if (nodes.length > 0) setHandoff(nodes)
     })
-  }, [editable, showToast])
+  }, [editable, selectedHeld, showToast])
 
   // The menu's opening moves: a right-click never disturbs the selection
   // it acts on — a node already selected keeps the selection whole, an
   // unselected one is selected alone first, as a plain click does — and
   // the menu itself is an editing gesture, quiet while a run is on,
-  // selection staying live beneath the lock.
+  // selection staying live beneath the lock. A right-click with nothing
+  // to act on opens nothing: the entries ride the state, so `menu` set
+  // is always a menu the render shows and the closers can close.
   const openMenu = useCallback(
-    (event) => {
+    (event, acted) => {
       if (!editable || canvasRef.current === null) return
+      const entries = []
+      if (acted.length > 0) {
+        entries.push({ key: 'package', label: 'Package into group…', onPick: packageSelection })
+      }
+      if (groupInstances(acted, graphRef.current?.groups).length > 0) {
+        entries.push({ key: 'unpack', label: 'Unpack group', onPick: unpackSelection })
+      }
+      if (entries.length === 0) return
       const rect = canvasRef.current.getBoundingClientRect()
-      setMenu({ x: event.clientX - rect.left, y: event.clientY - rect.top })
+      setMenu({ x: event.clientX - rect.left, y: event.clientY - rect.top, entries })
     },
-    [editable],
+    [editable, packageSelection, unpackSelection],
   )
 
   const onNodeContextMenu = useCallback(
     (event, node) => {
       event.preventDefault()
-      if (!nodesRef.current.some((drawn) => drawn.id === node.id && drawn.selected)) {
+      const already = nodesRef.current.some((drawn) => drawn.id === node.id && drawn.selected)
+      if (!already) {
         setNodes((current) =>
           withDraggablePlaceholders(
             current.map((drawn) => ({ ...drawn, selected: drawn.id === node.id })),
@@ -684,29 +708,34 @@ export function Editor() {
           ),
         )
       }
-      openMenu(event)
+      // The selection the menu acts on: the whole one if the node was
+      // already in it, the node alone otherwise — the same selection the
+      // set above writes.
+      const acted = already
+        ? selectedHeld()
+        : (graphRef.current?.nodes ?? []).filter((held) => held.uuid === node.id)
+      openMenu(event, acted)
     },
-    [editable, openMenu],
+    [editable, openMenu, selectedHeld],
   )
 
   const onPaneContextMenu = useCallback(
     (event) => {
       event.preventDefault()
-      openMenu(event)
+      openMenu(event, selectedHeld())
     },
-    [openMenu],
+    [openMenu, selectedHeld],
   )
 
   // The chords: Ctrl+G packages the selection, Ctrl+Shift+G unpacks its
   // group instances — the decisions in groupKeys, the operations here.
+  // The selection handed over is the held definition's, the shape
+  // groupKeys's unpack branch reads. With the menu open the menu is the
+  // gesture in front: the chords stand down with the canvas's own keys.
   useEffect(() => {
     const onKeyDown = (event) => {
-      const gesture = groupKeys(
-        event,
-        editable,
-        nodesRef.current.filter((node) => node.selected),
-        graphRef.current?.groups,
-      )
+      if (menu !== null) return
+      const gesture = groupKeys(event, editable, selectedHeld(), graphRef.current?.groups)
       if (gesture === null) return
       event.preventDefault()
       if (gesture === 'package') packageSelection()
@@ -714,7 +743,7 @@ export function Editor() {
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [editable, packageSelection, unpackSelection])
+  }, [editable, menu, packageSelection, unpackSelection, selectedHeld])
 
   // One save mechanism under both chrome entries: a save always knows its
   // target — the current file — and asks only for the first save of an
@@ -812,21 +841,6 @@ export function Editor() {
   const control = runControl(run, graph, connected)
   const banner = bannerText(connection, mismatch)
 
-  // The menu's entries, read off the selection as it stands when the menu
-  // is open: package for any non-empty selection, unpack when it holds a
-  // group instance. An empty set opens no menu at all.
-  const menuEntries = useMemo(() => {
-    if (menu === null) return []
-    const entries = []
-    if (selectedNodes.length > 0) {
-      entries.push({ key: 'package', label: 'Package into group…', onPick: packageSelection })
-    }
-    if (groupInstances(selectedNodes, graph?.groups).length > 0) {
-      entries.push({ key: 'unpack', label: 'Unpack group', onPick: unpackSelection })
-    }
-    return entries
-  }, [menu, selectedNodes, graph, packageSelection, unpackSelection])
-
   return (
     <EditContext.Provider value={edit}>
       <LockContext.Provider value={!editable}>
@@ -910,11 +924,11 @@ export function Editor() {
                   </div>
                 )}
                 <Toasts toasts={toasts} onDismiss={dismissToast} />
-                {menu !== null && menuEntries.length > 0 && (
+                {menu !== null && (
                   <ContextMenu
                     x={menu.x}
                     y={menu.y}
-                    entries={menuEntries}
+                    entries={menu.entries}
                     onClose={() => setMenu(null)}
                   />
                 )}
