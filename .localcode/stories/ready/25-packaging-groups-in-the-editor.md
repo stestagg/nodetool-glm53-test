@@ -258,3 +258,5 @@ file format (23 wrote it).
   placeholder's port, the only case with nothing honest to declare on the
   boundary, a placeholder outside the selection staying compile's to judge
   exactly as before (REQ-72).
+
+- 2026-09-19: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
