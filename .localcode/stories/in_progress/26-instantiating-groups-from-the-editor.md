@@ -1,6 +1,7 @@
 ---
 title: Instantiating groups from the editor
 date: 2026-09-16
+pr_id: 63
 depends: [25]
 ---
 
