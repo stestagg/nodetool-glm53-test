@@ -68,9 +68,11 @@ import { SelfLoopEdge } from './edges.jsx'
 import { PlaceholderNode, TypeNode } from './nodes.jsx'
 import { Sidebar, SelectionSidebar } from './sidebar.jsx'
 import { Banner, Toasts } from './chrome.jsx'
+import { ContextMenu } from './menu.jsx'
 import { Palette } from './palette.jsx'
-import { escapeCancel, finalMoves, panIntoView, toggleKey, viewportCenter } from './keyboard.js'
+import { escapeCancel, finalMoves, groupKeys, panIntoView, toggleKey, viewportCenter } from './keyboard.js'
 import { canvasValues, groupFacts, groupType } from './groups.js'
+import { groupInstances, groupSuggestion } from './packaging.js'
 import {
   backgroundDrag,
   bannerText,
@@ -167,6 +169,14 @@ export function Editor() {
   // next definition arrival, which brings the view to the graph; a
   // failed gesture disarms it.
   const pendingRefit = useRef(false)
+  // The selection a finished packaging gesture hands its product: the
+  // uuids the reply named, taken once the definition push carrying them
+  // has landed — reply and push race on one socket, and until the nodes
+  // exist the handoff waits.
+  const [handoff, setHandoff] = useState(null)
+  // The context menu's seat, in canvas coordinates, or null: the editor's
+  // first context menu, the selection's gestures where the pointer is.
+  const [menu, setMenu] = useState(null)
   // The page's one bundle table: whatever node UI and value UI the
   // listing's facts name, loaded once each however many nodes and ports
   // ask for them.
@@ -304,16 +314,23 @@ export function Editor() {
     if (graph === null) return
     // Selection, a drag in flight, and the measurement the canvas took
     // are view state: the definition push replaces what is drawn, never
-    // what the user has picked or holds (carriedNode).
+    // what the user has picked or holds (carriedNode). A pending handoff
+    // replaces the carried selection once the nodes it names exist — the
+    // product of a package or an unpack taking the selection.
+    const handed =
+      handoff !== null && handoff.every((uuid) => graph.nodes.some((node) => node.uuid === uuid))
     setNodes((current) => {
       const before = new Map(current.map((node) => [node.id, node]))
-      return withDraggablePlaceholders(
+      const rebuilt = withDraggablePlaceholders(
         toNodes(graph, listing, marks, statuses, values, factsRef.current).map((node) =>
           carriedNode(node, before.get(node.id)),
         ),
         editable,
       )
+      if (!handed) return rebuilt
+      return rebuilt.map((node) => ({ ...node, selected: handoff.includes(node.id) }))
     })
+    if (handed) setHandoff(null)
     // A replacement brings the view to the graph that arrived, the way
     // the launch fit does; the queued fit waits for the new nodes to be
     // measured. An ordinary edit push leaves the view to the user.
@@ -321,7 +338,7 @@ export function Editor() {
       pendingRefit.current = false
       fitView({ maxZoom: 1 })
     }
-  }, [graph, listing, marks, statuses, values, editable, fitView])
+  }, [graph, listing, marks, statuses, values, editable, handoff, fitView])
 
   useEffect(() => () => coalescer.current.dispose(), [])
 
@@ -480,6 +497,9 @@ export function Editor() {
   // state: it stays live through the lock, exactly as clicking.
   useEffect(() => {
     const onKeyDown = (event) => {
+      // With the context menu open, Escape is the menu's quiet cancel —
+      // the menu closes and the selection stands; the next Escape clears.
+      if (menu !== null) return
       const uuid = toggleKey(event)
       if (uuid !== null) {
         event.preventDefault()
@@ -498,7 +518,7 @@ export function Editor() {
     }
     document.addEventListener('keydown', onKeyDown, true)
     return () => document.removeEventListener('keydown', onKeyDown, true)
-  }, [editable])
+  }, [editable, menu])
 
   // The lock takes an in-flight keyboard wire away with the edits.
   useEffect(() => {
@@ -603,6 +623,99 @@ export function Editor() {
       })
   }, [confirmDiscard, editable, file, showToast])
 
+  // The packaging gestures: the menu entries and the chords issue the
+  // same operations. Package names the selection and the group and lets
+  // the server derive everything else; the one input the gesture needs —
+  // the name — is asked on 15's pattern, a small dialog pre-filled with
+  // an available suggestion so Enter alone packages, Esc the quiet cancel
+  // that leaves the selection as it was. Unpack is the per-instance
+  // operation, once per group instance in the selection, 20's fan-out.
+  const packageSelection = useCallback(() => {
+    if (!editable || protocol.current === null) return
+    const selected = nodesRef.current.filter((node) => node.selected).map((node) => node.id)
+    if (selected.length === 0) return
+    const name = window.prompt('Package selection as group', groupSuggestion(graphRef.current?.groups))
+    if (name === null || name === '') return
+    protocol.current('package_group', { nodes: selected, name }).then(
+      (reply) => setHandoff([reply.uuid]),
+      showToast,
+    )
+  }, [editable, showToast])
+
+  const unpackSelection = useCallback(() => {
+    if (!editable || protocol.current === null) return
+    const selected = (graphRef.current?.nodes ?? []).filter((node) =>
+      nodesRef.current.some((drawn) => drawn.selected && drawn.id === node.uuid),
+    )
+    const instances = groupInstances(selected, graphRef.current?.groups)
+    if (instances.length === 0) return
+    Promise.all(
+      instances.map((uuid) =>
+        protocol.current('unpack_group', { uuid }).then((reply) => reply.nodes, showToast),
+      ),
+    ).then((groups) => {
+      const nodes = groups.flat()
+      if (nodes.length > 0) setHandoff(nodes)
+    })
+  }, [editable, showToast])
+
+  // The menu's opening moves: a right-click never disturbs the selection
+  // it acts on — a node already selected keeps the selection whole, an
+  // unselected one is selected alone first, as a plain click does — and
+  // the menu itself is an editing gesture, quiet while a run is on,
+  // selection staying live beneath the lock.
+  const openMenu = useCallback(
+    (event) => {
+      if (!editable || canvasRef.current === null) return
+      const rect = canvasRef.current.getBoundingClientRect()
+      setMenu({ x: event.clientX - rect.left, y: event.clientY - rect.top })
+    },
+    [editable],
+  )
+
+  const onNodeContextMenu = useCallback(
+    (event, node) => {
+      event.preventDefault()
+      if (!nodesRef.current.some((drawn) => drawn.id === node.id && drawn.selected)) {
+        setNodes((current) =>
+          withDraggablePlaceholders(
+            current.map((drawn) => ({ ...drawn, selected: drawn.id === node.id })),
+            editable,
+          ),
+        )
+      }
+      openMenu(event)
+    },
+    [editable, openMenu],
+  )
+
+  const onPaneContextMenu = useCallback(
+    (event) => {
+      event.preventDefault()
+      openMenu(event)
+    },
+    [openMenu],
+  )
+
+  // The chords: Ctrl+G packages the selection, Ctrl+Shift+G unpacks its
+  // group instances — the decisions in groupKeys, the operations here.
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      const gesture = groupKeys(
+        event,
+        editable,
+        nodesRef.current.filter((node) => node.selected),
+        graphRef.current?.groups,
+      )
+      if (gesture === null) return
+      event.preventDefault()
+      if (gesture === 'package') packageSelection()
+      else unpackSelection()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [editable, packageSelection, unpackSelection])
+
   // One save mechanism under both chrome entries: a save always knows its
   // target — the current file — and asks only for the first save of an
   // untitled graph or when saving elsewhere; the answer becomes the file
@@ -656,11 +769,14 @@ export function Editor() {
   // The held definition's group facts, composed once per definition
   // arrival (factsRef): a group instance's type reference resolves
   // against these before the listing's — the same resolution the canvas
-  // draws by.
+  // draws by, the sidebar's single-selection view included.
   const facts = factsRef.current
   const selectedType =
-    facts?.types.get(selected?.type_ref) ??
-    listing?.types.find((type) => type.type_ref === selected?.type_ref)
+    selected === undefined
+      ? undefined
+      : facts?.types.has(selected.type_ref)
+        ? groupType(selected, facts.types.get(selected.type_ref))
+        : listing?.types.find((type) => type.type_ref === selected.type_ref)
   const selectionTypes = new Map()
   for (const node of graph?.nodes ?? []) {
     const group = facts?.types.get(node.type_ref)
@@ -695,6 +811,21 @@ export function Editor() {
     listing.types.length > 0
   const control = runControl(run, graph, connected)
   const banner = bannerText(connection, mismatch)
+
+  // The menu's entries, read off the selection as it stands when the menu
+  // is open: package for any non-empty selection, unpack when it holds a
+  // group instance. An empty set opens no menu at all.
+  const menuEntries = useMemo(() => {
+    if (menu === null) return []
+    const entries = []
+    if (selectedNodes.length > 0) {
+      entries.push({ key: 'package', label: 'Package into group…', onPick: packageSelection })
+    }
+    if (groupInstances(selectedNodes, graph?.groups).length > 0) {
+      entries.push({ key: 'unpack', label: 'Unpack group', onPick: unpackSelection })
+    }
+    return entries
+  }, [menu, selectedNodes, graph, packageSelection, unpackSelection])
 
   return (
     <EditContext.Provider value={edit}>
@@ -738,6 +869,8 @@ export function Editor() {
                     onNodesChange={onNodesChange}
                     onConnect={onConnect}
                     onConnectEnd={onConnectEnd}
+                    onNodeContextMenu={onNodeContextMenu}
+                    onPaneContextMenu={onPaneContextMenu}
                     onDrop={onDrop}
                     onDragOver={onDragOver}
                     fitView
@@ -777,10 +910,18 @@ export function Editor() {
                   </div>
                 )}
                 <Toasts toasts={toasts} onDismiss={dismissToast} />
+                {menu !== null && menuEntries.length > 0 && (
+                  <ContextMenu
+                    x={menu.x}
+                    y={menu.y}
+                    entries={menuEntries}
+                    onClose={() => setMenu(null)}
+                  />
+                )}
               </main>
               <Sidebar
                 node={selected}
-                type={listing?.types.find((type) => type.type_ref === selected?.type_ref)}
+                type={selectedType}
                 wiredInputs={selectedWiredInputs}
                 baseScalars={listing?.baseScalars ?? {}}
               />

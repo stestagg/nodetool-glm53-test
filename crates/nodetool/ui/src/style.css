@@ -697,3 +697,35 @@ body {
   white-space: pre-wrap;
   cursor: pointer;
 }
+
+/* The context menu: the selection's gestures where the pointer is — one
+   panel over the canvas at the right-click's seat, closed by a pick, by
+   Escape, or by a press outside it. */
+
+.menu {
+  position: absolute;
+  z-index: 11;
+  min-width: 170px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(17, 20, 24, 0.2);
+}
+
+.menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu button:hover {
+  background: var(--hover);
+}

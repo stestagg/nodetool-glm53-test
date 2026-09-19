@@ -8,6 +8,7 @@
 // keyboard's way around the canvas.
 
 import { inTextField } from './view.js'
+import { groupInstances } from './packaging.js'
 
 // The flow position the view's centre names: where a keyboard-created
 // node lands — deterministic given the view, visible by construction.
@@ -68,6 +69,19 @@ export function toggleKey(event) {
   if (!event.shiftKey || (event.key !== 'Enter' && event.key !== ' ') || inTextField(event.target))
     return null
   return event.target.closest?.('.react-flow__node')?.getAttribute('data-id') ?? null
+}
+
+// The packaging chords: Ctrl+G (Cmd where the platform uses it) on a
+// non-empty selection is the package gesture, Ctrl+Shift+G on a selection
+// holding a group instance the unpack — the same operations the context
+// menu's entries send. The lock takes both away with every edit, a text
+// field keeps the keys, and a chord with nothing to act on reads as no
+// chord at all.
+export function groupKeys(event, editable, selected, groups) {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'g') return null
+  if (!editable || inTextField(event.target)) return null
+  if (event.shiftKey) return groupInstances(selected, groups).length > 0 ? 'unpack' : null
+  return selected.length > 0 ? 'package' : null
 }
 
 // Escape, the keyboard's quiet cancel: the state the press leaves — an

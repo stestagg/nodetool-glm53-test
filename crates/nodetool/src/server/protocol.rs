@@ -362,6 +362,24 @@ pub fn take_uuid(fields: &mut Map<String, Value>, name: &str) -> Result<Uuid, St
     Uuid::parse_str(&text).map_err(|_| format!("`{name}` must be a uuid"))
 }
 
+/// Take one required list of uuids out of a message's fields — the
+/// selection a packaging gesture names, one uuid string per node.
+pub fn take_uuids(fields: &mut Map<String, Value>, name: &str) -> Result<Vec<Uuid>, String> {
+    let items = match fields.remove(name) {
+        Some(Value::Array(items)) => items,
+        Some(_) => return Err(format!("`{name}` must be an array of uuids")),
+        None => return Err(format!("missing field `{name}`")),
+    };
+    items
+        .iter()
+        .map(|item| match item.as_str() {
+            Some(text) => Uuid::parse_str(text)
+                .map_err(|_| format!("`{name}` carries `{text}`, which is not a uuid")),
+            None => Err(format!("every `{name}` item must be a uuid string")),
+        })
+        .collect()
+}
+
 /// Take one optional parameter commit out of a message's fields. Absent
 /// means the edit clears — an unset input is unset. Present, it is the
 /// typed text carried as a string, and the server reads it by the file
