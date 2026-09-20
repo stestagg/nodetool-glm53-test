@@ -1,9 +1,10 @@
 //! The editor UI, embedded at build time: the Vite build of
 //! `crates/nodetool/ui` is included here and served by the HTTP server, so
-//! one address carries the page and its websocket endpoint alike. Build the
-//! UI (see DEVELOPMENT.md) before building this crate. The plugin-declared
-//! UI bundles travel the same seam — declared through the registry, served
-//! under a per-plugin path.
+//! one address carries the page and its websocket endpoint alike. The
+//! crate's build script runs that build, so compiling the crate builds the
+//! bundle it embeds (see DEVELOPMENT.md). The plugin-declared UI bundles
+//! travel the same seam — declared through the registry, served under a
+//! per-plugin path.
 
 use std::collections::HashMap;
 

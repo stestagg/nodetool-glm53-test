@@ -11,7 +11,8 @@ scalar data types.
 
 - A stable Rust toolchain, via [rustup](https://rustup.rs).
 - A C toolchain for linking (`cc`/gcc).
-- Node.js with npm, for building the editor UI the server embeds.
+- Node.js with npm, for the editor UI the server embeds; cargo drives that
+  build itself, so there is no npm command to run by hand.
 
 ## Layout
 
@@ -38,9 +39,11 @@ scalar data types.
 - `crates/nodetool/ui` — the editor UI the server embeds and serves: a
   React application whose canvas is React Flow under a light Blueprint
   look, with the palette of node types docked on the left and the editing
-  sidebar of the selected node on the right. `npm install && npm run
-  build` in that directory produces `dist/`, which the server's binary
-  includes at build time.
+  sidebar of the selected node on the right. Its Vite build produces
+  `dist/`, which the server's binary includes at build time;
+  `crates/nodetool/build.rs` runs that build as part of compiling the
+  crate, installing the dependencies from the lockfile when they are
+  missing or stale.
 - `crates/nodetool-utility` — the first-party utility node library, a plugin
   crate whose only dependency is `nodetool`: an `If` router and a `Format`
   node, declared through the same `node_type!` registration path and
@@ -126,16 +129,25 @@ scalar data types.
 
 ## Build and check
 
-The editor UI builds first; the server embeds its output, so the Rust
-workspace does not build without it:
+The editor UI builds first — the server embeds its output — and cargo
+carries that step: every `cargo build`, `cargo test`, and `cargo run`
+rebuilds the bundle when a file under `crates/nodetool/ui` has changed,
+so the cargo commands below are the whole Rust-side check. The UI's own
+test suite is not part of a cargo build; run it too.
 
 ```sh
-(cd crates/nodetool/ui && npm install && npm run build && npm test)
 cargo build
 cargo test --workspace
 cargo clippy --workspace --all-targets
 cargo fmt --check
+(cd crates/nodetool/ui && npm test)
 ```
+
+`NODETOOL_SKIP_UI_BUILD=1` leaves an already-built `crates/nodetool/ui/dist`
+alone, for building with no Node toolchain at hand. Only the UI's sources
+are watched, not its output, so a `dist/` removed by hand is not noticed
+until the next UI change — `(cd crates/nodetool/ui && npm run build)`
+puts it back.
 
 ## Run the examples
 
