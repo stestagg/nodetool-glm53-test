@@ -23,7 +23,7 @@ counter: …` and a message naming two feeders prints `counter` twice; in the
 editor a mark points at the node the text means, so the ambiguity never
 reaches the user there. The uuid stays what REQ-41 makes it: the internal
 identity of wire messages, map keys, and marks — structure, never rendered
-text. The one uuid printer today is core's printing observer
+text. Of today's uuid printers, one is deliberate: core's printing observer
 (crates/nodetool/src/engine.rs:639-647), a terminal timeline for embedders
 that adds the uuid only where two nodes share a label — a terminal's
 disambiguation, not the editor's speech — and it stays as is; no debug view
@@ -38,11 +38,15 @@ is built in the editor here.
   by default (REQ-40, REQ-47).
 - Compile errors and warnings name nodes by label or type label: the unknown
   type, missing port, duplicate connection, cycle, and family messages read
-  as `counter instantiates …`, `input `count` of node by three …` — no
+  as `counter instantiates …`, ``input `count` of node by three …`` — no
   parenthesised uuids (REQ-40, REQ-41).
 - Server operation errors that refer to an existing node name it by label; an
   error about a reference that names no node ("no such node in the
-  definition") says so without printing the uuid it was handed (REQ-40, REQ-41).
+  definition") says so without printing the uuid it was handed (REQ-40,
+  REQ-41). One message keeps its uuid: the duplicate-naming complaint (`node
+  … is named twice in the selection`) — its subject is the duplicated
+  reference the client sent, not a node, so it keeps the uuid, exactly as the
+  loader's duplicate-uuid case does.
 - The run failure's message and the failed node's identity stay separable —
   the failure still carries the node's uuid as structure for the mark on the
   canvas, only the *text* is uuid-free (REQ-43).
@@ -54,8 +58,9 @@ is built in the editor here.
   address — never as decoration beside a name (the printing observer's
   terminal timeline excepted, per its recorded decision); the loader's
   cross-check messages included: they keep their YAML-path pointers, name the
-  nodes they know by label or type label, and may quote the uuid the file
-  itself carries (REQ-71).
+  nodes they know by label, else by the type reference the file writes (the
+  group's name where the type is a group in the document), and may quote the
+  uuid the file itself carries (REQ-71).
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets`, and the
   UI test suite pass.
 
@@ -78,10 +83,17 @@ is built in the editor here.
   feeders by uuid (compile.rs:242-245), and the family-wait message
   (compile.rs:857). Both display formatters — `node_name` and `named` —
   speak one rule after this story: the instance's label, else the type's
-  label, else the type reference for a type nothing declares; the helpers
-  stay where they are and the parentheticals go. Each message names what it
-  has: labels for defined nodes, the type's label for unlabelled ones; the
-  loader keeps its YAML path pointer, compile names the edge by the endpoint
+  label, else the type reference for a type nothing declares. The rule lives
+  in one helper both call — a few lines on `NodeInstance` taking the type's
+  label when the caller knows it (`node_name` passes the resolved type's,
+  `named` the registry's) — and the parentheticals go; every later message
+  site calls that one helper, so the speech cannot drift between compile and
+  the server. `named` needs the registry to speak the type's label, so
+  `unpack` (server/packaging.rs:134) takes one too; the straight
+  type-reference fallback remains only for a type nothing declares. Each
+  message names what it has: labels for defined nodes, the type's label for
+  unlabelled ones; the loader keeps its YAML path pointer, compile names the
+  edge by the endpoint
   that exists and its ports, saying which side is undefined. For a dangling
   reference — a node that does not exist — the message also keeps the uuid
   the file itself writes for the missing endpoint: an undefined node has no
@@ -99,8 +111,8 @@ is built in the editor here.
   identity; when the labels read the same — the default, two unlabelled
   counters both read `counter` — the labels cannot point at the nodes, and
   the colliding uuid is the only search key the file offers, so the message
-  names the identity itself: `the nodes `counter` and `counter` claim the
-  same identity 3b60e6f3-…`.
+  names the identity itself: ``the nodes `counter` and `counter` claim the
+  same identity 3b60e6f3-…``.
 - 2026-09-20 — Wire messages keep uuids as keys — that is the protocol's
   structure, addressed by REQ-41 and untouched. The line is rendering: if it
   becomes visible text in the browser, it is a label; if it stays a field in
