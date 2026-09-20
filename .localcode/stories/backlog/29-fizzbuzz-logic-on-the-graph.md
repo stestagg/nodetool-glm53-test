@@ -17,15 +17,16 @@ with the Output node the user hooked up.
 Two changes, one outcome — the Rust is a graph runner and a counter, and the
 app is the graph file:
 
-1. **The graph carries the logic.** `graphs/fizzbuzz.yml` is rebuilt from
-   story 27's and 28's generic nodes: the counter's count streams into two
-   binop/comparison pairs (modulo 3, equal 0 / modulo 5, equal 0) and a
-   `Format` (the plain number); three `Select` nodes pick "Fizz"/"Buzz"/
-   "FizzBuzz" against the formatted count, the constants held as parameter
-   literals on the Select's candidate inputs. The `Case selection` node type
-   and its hardcoded strings are deleted from the plugin; `Counter` and
-   `Output` are the fizzbuzz-specific nodes that remain. The shipped graph
-   gains an Output node, and the headless run prints the same hundred lines.
+1. **The graph carries the logic.** `crates/nodetool-fizzbuzz/graphs/fizzbuzz.yml`
+   is rebuilt from story 27's and 28's generic nodes: the counter's count
+   streams into two binop/comparison pairs (modulo 3, equal 0 / modulo 5,
+   equal 0) and a `Format` (the plain number); three `Select` nodes keyed to
+   the two comparison flags pick "Fizz"/"Buzz"/"FizzBuzz", the constants
+   held as parameter literals on the Select's candidate inputs. The `Case
+   selection` node type and its hardcoded strings are deleted from the
+   plugin; `Counter` and `Output` are the fizzbuzz-specific nodes that
+   remain. The shipped graph gains an Output node, and the headless run
+   prints the same hundred lines.
 
 2. **Output is the run's product.** The binary prints values delivered to
    `fizzbuzz/output` nodes' inputs, as they arrive — headless and in UI mode
@@ -41,8 +42,8 @@ app is the graph file:
   the binary's printing rule, naming its own output type, is the host's, as
   the REQ-73 line below says (REQ-61, REQ-70).
 - The binary's `plain` builds on `nodetool-utility`'s `string_form` — public
-  for it, or hoisted into `nodetool` beside the other shared helpers — and
-  keeps only its non-scalar fallback: the rewiring links the utility plugin
+  in `nodetool-utility`, which the rewiring links anyway — and keeps only
+  its non-scalar fallback: the rewiring links the utility plugin
   (story 28's assignment), so the hand-synced scalar twin and its now-false
   "linking that crate here" comment go (REQ-70).
 - The shipped graph expresses the selection with generic nodes and parameter
@@ -66,8 +67,11 @@ app is the graph file:
   `engine::unconnected_outputs` — this binary and the server's spawn being
   its only two callers — is deleted, and core's `server_host.rs` no longer
   exercises a hook the product no longer supplies: rewritten to the hook the
-  choice leaves, or dropped with the consumer; `Run::consume` stays as the
-  generic mechanism a future host rebuilds on (REQ-73).
+  choice leaves, or dropped with the consumer — the file's unsaved-changes
+  guard test is not the hook's: story 24's process-boundary settlement, so it
+  keeps a home whatever the hook becomes, moved with its concern and never
+  dropped with the file; `Run::consume` stays as the generic mechanism a
+  future host rebuilds on (REQ-73).
 - Nothing in core or the server names or branches on the output node type;
   the printing rule is the binary's, expressed through generic mechanisms
   (REQ-73).
@@ -90,29 +94,28 @@ app is the graph file:
   the value as the input receives it, past the connection's conversion —
   the twin of `Emitted`'s "before any conversion"
   (crates/nodetool/src/engine.rs:567-569) — which the binary filters by its
-  own plugin's output type, named on the events, and prints, and which the
-  run visualisation may later reuse; the run's events naming each node's
-  `type_ref` is the generic carry, core-side once, serving any later host
-  (REQ-13). The alternative is widening the consumer mechanism — a
+  own plugin's output type, named on the events, and prints. The
+  alternative is widening the consumer mechanism — a
   host-named tap on an input instead of an unconnected output, the host
   naming its interest by its own plugin's types, the server resolving the
   instances against the compiled graph at spawn. One property the "touches
   less" rule misses: a consumer keeps the bounded hand-off's backpressure —
   a stalled terminal stalls the graph, memory bounded — while an observer's
   queue is unbounded by design, a stalled terminal buffering without bound.
-  Either keeps REQ-73; choose with that weighed. Do not add a sink flag to
-  node descriptors for this — the host already knows its own plugin's types.
-  Two rules ride the events choice: the run never waits on the observer
-  (engine.rs:197-201 spawns the delivering task and drops the handle;
-  `start` returns once `RunFinished` is *sent*, engine.rs:330-335), so the
-  headless binary's printing observer notes `RunFinished` — the queue is
-  ordered, so everything before it has printed — and the binary awaits that
-  note past `start`, a current-thread runtime that would otherwise exit
-  with the queue undelivered (main.rs:70); and a printer cannot fail into
-  the engine (engine.rs:609-614), so the binary keeps the stop channel it
-  already holds and its printer sends on it when a write fails — a reader
-  gone still ends the run quietly, the same under taps, where the consumer
-  holds the channel today.
+  The weigh resolves to the consumer side. Output is the run's product, and
+  the product belongs on the product channel — `Run::consume`'s bounded
+  hand-off, whose tasks the run joins (engine.rs:140-146), so the binary
+  awaits `start` plainly and no tail is lost — not on the observer's
+  unbounded witness queue, whose tail would need the RunFinished note to
+  survive the current-thread exit. The engine gains nothing new: no
+  `Delivered` variant, no `type_ref` on the event identity. The host names its taps by its own plugin's output type;
+  the server resolves them against the compiled graph at spawn, as the hook
+  widening below already says. Do not add a sink flag to node descriptors
+  for this — the host already knows its own plugin's types. A printer cannot
+  fail into the engine (engine.rs:609-614), so the binary keeps the stop
+  channel it already holds and its printer sends on it when a write fails —
+  a reader gone still ends the run quietly, the consumer holding the stop
+  channel today.
 - 2026-09-20 — The UI door's printer currently rides the server's
   `consume_unconnected` callback (main.rs:155), the one hook a host has into
   the server's runs; the server builds the run itself and subscribes its
@@ -123,20 +126,15 @@ app is the graph file:
   definition between runs, and the binary's launch-time copy — stale, or
   empty when launched with no file — knows nothing of an Output node added
   there, so the host's interest is named by its own plugin's types, never
-  resolved from its own definition: under events the host filters the
-  type_ref-named events; under taps the host names its taps by type and the
-  server resolves them against the compiled graph at spawn. Either mechanism
-  widens that hook, generically: under events the host supplies an observer,
-  which the server composes behind its bridge — the bridge keeping its
-  subscription beside it, the composition `Run::observe` already invites,
-  the events twin of story 24's consumer seam; under taps the hook carries
-  the taps the host names. The unconnected consumer is not left unsupplied
-  but removed, with `engine::unconnected_outputs`, which only it and this
-  binary called — under events outright, under taps its hook surviving
-  widened, the unconnected form gone with the rule — and core's
-  `server_host.rs` rewritten to the replacing hook or dropped with it;
-  `Run::consume` stays as the generic mechanism a future host rebuilds on.
-  The editor's own run surfaces are untouched.
+  resolved from its own definition: the host names its taps by type and the
+  server resolves them against the compiled graph at spawn. The mechanism
+  widens that hook, generically: the hook carries the taps the host names.
+  The unconnected consumer is not left unsupplied but removed, with
+  `engine::unconnected_outputs`, which only it and this binary called — its
+  hook surviving widened, the unconnected form gone with the rule — and
+  core's `server_host.rs` rewritten to the replacing hook or dropped with
+  it; `Run::consume` stays as the generic mechanism a future host rebuilds
+  on. The editor's own run surfaces are untouched.
 - 2026-09-20 — The unfed Output trap, for the record: with printing keyed to
   the Output node, the likeliest accidental silence is an Output node
   dropped but never wired — its single `text` input escapes the hang gate,
@@ -147,9 +145,12 @@ app is the graph file:
   owned; a later story may widen the gate.
 - 2026-09-20 — Graph shape, for the record: `count → (binop mod 3, cmp eq 0)`
   and `count → (binop mod 5, cmp eq 0)` give the two flags; `count → Format`
-  (with `template: ""` — the plain form's literal; left unset the node never
-  fires and the run hangs, crates/nodetool-utility/src/lib.rs:73-76) gives
-  the plain string; `select(buzz, "FizzBuzz", "Fizz")`,
+  (with `template: "{}"` — the plain form through the single substitution,
+  and typeable where the empty-string spelling is not: the editor unsets on
+  an empty commit and cannot store an empty string,
+  crates/nodetool/ui/src/fields.jsx:61-63; left unset the node never fires
+  and the run hangs, crates/nodetool-utility/src/lib.rs:73-76) gives the
+  plain string; `select(buzz, "FizzBuzz", "Fizz")`,
   `select(buzz, "Buzz", formatted)`, and `select(fizz, inner1, inner2)` give
   the text into the Output node. The Selects' lockstep pairing is what makes
   the parallel branches safe — that is story 28's semantics, not new engine
