@@ -18,18 +18,19 @@ bespoke node; nothing retained beside it.
 
 Add a **Select** node: a boolean `choose` input, two value inputs `then` and
 `else` of one type, one output `value` of that type. Per aligned triple — a
-`choose` value with one buffered value from each candidate — it emits the
-matching candidate's value: `then` when the flag holds, `else` when it does
-not.
+`choose` value with one value from each candidate — it emits the matching
+candidate's value: `then` when the flag holds, `else` when it does not.
 
 Its semantics are the alignment the `Case selection` behaviour already
-proves (lib.rs:230-236, the buffering and lockstep pairing): each input's
-arrivals are buffered, and the node emits only when all three hold a value,
-consuming one from each front per emission. Reading the candidates' current
-values instead would pair a choice against whichever neighbour arrived last
-— the race the `Case selection` doc comment warns of. One candidate may be a
-parameter literal (a constant that is always there) and the other a
-connection; literals are simply always pending.
+proves (lib.rs:230-236, the buffering and lockstep pairing): each connected
+input's arrivals are buffered, and the node emits only when all three hold a
+value, consuming one from each front per emission. Reading the candidates'
+current values instead would pair a choice against whichever neighbour
+arrived last — the race the `Case selection` doc comment warns of. One
+candidate may be a parameter literal (a constant that is always there) and
+the other a connection; every parameter-held input — a literal candidate, a
+parameter-held `choose` — is read as its current value when the pairing
+fires, never buffered.
 
 Declared, for now, over `String` — the type the fizzbuzz graph selects
 between — through the ordinary `node_type!` path in `nodetool-utility`, with
@@ -41,8 +42,10 @@ to compile there and for the fizzbuzz editor's palette to offer the node.
 
 ## Definition of done
 
-- The utility plugin declares a Select node, visible in the palette under the
-  utility plugin, wired and runnable like any node (REQ-8, REQ-9).
+- The utility plugin declares a Select node, visible in the palette of an
+  editor linked to it — `cargo run -p visual` until story 29 links the
+  utility crate into the fizzbuzz binary — under the utility header beside
+  `If` and `Format`, wired and runnable like any node (REQ-8, REQ-9).
 - A Select whose candidates mix a literal and a connection pairs each
   `choose` value with the connection's next buffered value, emitting once
   both have arrived, in arrival order; with both candidates connected, each
@@ -60,8 +63,10 @@ to compile there and for the fizzbuzz editor's palette to offer the node.
   candidates keep arriving — the buffered choices still pairing with the
   later candidates in order, the node completing once every input has ended,
   emitting nothing for the candidates left unpaired (REQ-19, REQ-22,
-  REQ-23).
-- `cargo test --workspace` and the UI test suite pass.
+  REQ-23) — and a `choose` held as a parameter literal, each candidate pair
+  emitting once under the held choice, in arrival order (REQ-18).
+- `cargo test --workspace`, `cargo clippy --workspace --all-targets`, and
+  the UI test suite pass.
 
 ## Comments
 
@@ -82,7 +87,8 @@ to compile there and for the fizzbuzz editor's palette to offer the node.
   held-value rule `flag_input` uses (lib.rs:297). The behaviour reads every
   input as buffered-if-connected, current-if-literal, `choose` included: a
   parameter-held `choose` passes the carried check, but buffered it pairs
-  its single arrival once and stalls the run after the first emission; read
-  as current, it is always pending, like a literal candidate. The two faces
-  are REQ-18's — "a new value arrived" against "here's the current value" —
-  and one declared rule carries both.
+  its single arrival once and then falls silent — the run still completes
+  at input-end, the later candidates dropped unpaired — read as current, it
+  is always there, like a literal candidate. The two faces are REQ-18's —
+  "a new value arrived" against "here's the current value" — and one
+  declared rule carries both.
