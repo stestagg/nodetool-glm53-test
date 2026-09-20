@@ -1,7 +1,6 @@
 ---
 title: Select, an aligned chooser node
 date: 2026-09-20
-pr_id: 76
 ---
 
 ## Description
@@ -93,3 +92,5 @@ to compile there and for the fizzbuzz editor's palette to offer the node.
   is always there, like a literal candidate. The two faces are REQ-18's —
   "a new value arrived" against "here's the current value" — and one
   declared rule carries both.
+
+- 2026-09-20: Implementation got stuck at "answer the reviews": opencode run failed (1). Pull request #76 (http://localhost:8080/gitea/localcode/nodetool/pulls/76) was closed. The last review verdicts were tony-tester `merge-after-fix`, review-dev `ready-to-merge`, ux-designer `merge-after-fix`, glen-ba `merge-after-fix`, loc-counter `merge-after-fix`, technical_author `merge-after-fix`. The story went back to ready to be picked up again.
