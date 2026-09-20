@@ -162,3 +162,5 @@ lines as today.
   zero divisor already holds the precedent — a natural arithmetic failure
   reported, not swallowed — and reporting is the answer a user can carry
   across the whole family.
+
+- 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
