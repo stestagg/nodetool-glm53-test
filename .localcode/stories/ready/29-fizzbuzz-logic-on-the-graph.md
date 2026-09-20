@@ -155,3 +155,5 @@ app is the graph file:
   the text into the Output node. The Selects' lockstep pairing is what makes
   the parallel branches safe — that is story 28's semantics, not new engine
   work.
+
+- 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
