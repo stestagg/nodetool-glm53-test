@@ -29,7 +29,8 @@ use nodetool::Value;
 /// The plain string form of a base scalar value: the payload as its Rust
 /// `Display` renders it, a string as itself. `None` for a payload that is not
 /// a base scalar — a value a compiled connection could not have delivered.
-fn string_form(value: &Value) -> Option<String> {
+/// Public for a host rendering values the same way the Format node does.
+pub fn string_form(value: &Value) -> Option<String> {
     macro_rules! scalars {
         ($($ty:ty),* $(,)?) => {$(
             if let Some(form) = value.get::<$ty>().map(ToString::to_string) {
@@ -76,16 +77,23 @@ fn if_behaviour(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviou
 /// Converts each incoming value to a `String`: with a format template, the
 /// value's string form substituted at the template's first `{}` — a template
 /// without one emits itself verbatim, the value going nowhere; an empty
-/// template leaves the value's plain string form. The template's own arrival
-/// fills its held value like any other. The template input must deliver a
-/// first value before any run fires — in a graph file, the `template`
-/// parameter, `""` for the plain form; left unconnected and unset, the node
-/// never fires and the run hangs.
+/// template leaves the value's plain string form. One string per `value`
+/// arrival, paired against the held template: a template arrival emits
+/// nothing, it only changes what the next value formats under. The rule is
+/// the pairing a downstream reads — one result per value, so a formatted
+/// stream stays in lockstep with the stream it came from, and a template
+/// held as a parameter literal does not slip a duplicate into it. The
+/// template input must deliver a first value before any run fires — in a
+/// graph file, the `template` parameter, `""` for the plain form; left
+/// unconnected and unset, the node never fires and the run hangs.
 struct Format;
 
 #[async_trait]
 impl Behaviour for Format {
-    async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+    async fn process(&mut self, trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        if !matches!(trigger, Trigger::Arrival("value")) {
+            return Ok(Flow::Continue);
+        }
         let value = io
             .input("value")
             .current()

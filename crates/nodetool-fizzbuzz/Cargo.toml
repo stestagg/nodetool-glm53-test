@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 nodetool = { path = "../nodetool" }
+nodetool-utility = { path = "../nodetool-utility" }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "sync", "net", "signal"] }
 
 [dev-dependencies]

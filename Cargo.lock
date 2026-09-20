@@ -213,6 +213,7 @@ name = "nodetool-fizzbuzz"
 version = "0.1.0"
 dependencies = [
  "nodetool",
+ "nodetool-utility",
  "serde_json",
  "tokio",
 ]

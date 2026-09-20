@@ -161,3 +161,14 @@ app is the graph file:
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
 
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
+
+- 2026-09-21 — Implemented. Two things the story did not foresee. The
+  engine's tap is a listener joined to whatever feeds the input — the
+  connection's fan-out under its own conversion, or the literal's
+  one-shot stream — not a relay, so it costs no task and keeps the
+  bounded hand-off; `Run::tap` is its whole surface. And `utility/format`
+  emitted a string on its *template's* arrival too, so a template held as
+  a parameter slipped one duplicate into the stream and the shipped
+  graph's Select pairing drifted from count 17 on. Format now answers a
+  `value` arrival alone — the rule the two operator nodes already follow —
+  which is what makes a formatted stream safe to pair against.

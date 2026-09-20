@@ -176,6 +176,60 @@ impl Session {
         }
     }
 
+    /// Create a node of `type_ref` on the canvas, answering its uuid.
+    async fn built(&mut self, id: u64, type_ref: &str) -> String {
+        let created = self
+            .tell(
+                id,
+                json!({
+                    "id": id,
+                    "type": "create_node",
+                    "type_ref": type_ref,
+                    "position": { "x": 0, "y": 0 },
+                }),
+            )
+            .await;
+        created["uuid"]
+            .as_str()
+            .expect("a created node answers its uuid")
+            .to_owned()
+    }
+
+    /// Type a value into a node's input, as the sidebar commits it.
+    async fn set(&mut self, id: u64, uuid: &str, input: &str, value: &str) {
+        let set = self
+            .tell(
+                id,
+                json!({
+                    "id": id,
+                    "type": "set_parameter",
+                    "uuid": uuid,
+                    "input": input,
+                    "value": value,
+                }),
+            )
+            .await;
+        assert_eq!(set["type"], "parameter_set", "{set}");
+    }
+
+    /// Draw one connection, as the canvas gesture does.
+    async fn wire(&mut self, id: u64, from: &str, from_port: &str, to: &str, to_port: &str) {
+        let wired = self
+            .tell(
+                id,
+                json!({
+                    "id": id,
+                    "type": "wire",
+                    "from": from,
+                    "from_port": from_port,
+                    "to": to,
+                    "to_port": to_port,
+                }),
+            )
+            .await;
+        assert_eq!(wired["type"], "wired", "{wired}");
+    }
+
     /// The next printed line.
     async fn line(&mut self) -> String {
         tokio::time::timeout(ARRIVAL, self.lines.recv())
@@ -350,13 +404,13 @@ async fn a_launch_with_a_file_seeds_the_held_definition() {
         "the launch names the file and starts clean"
     );
     let nodes = definition["graph"]["nodes"].as_array().expect("nodes");
-    assert_eq!(nodes.len(), 6, "the shipped graph's six nodes");
+    assert_eq!(nodes.len(), 10, "the shipped graph's ten nodes");
     let types: Vec<&str> = nodes
         .iter()
         .map(|node| node["type_ref"].as_str().expect("a type_ref"))
         .collect();
     assert!(
-        types.contains(&"fizzbuzz/counter") && types.contains(&"fizzbuzz/case"),
+        types.contains(&"fizzbuzz/counter") && types.contains(&"fizzbuzz/output"),
         "the graph loaded through the story 03 loader: {types:?}"
     );
 
@@ -493,6 +547,62 @@ async fn the_next_start_runs_what_was_last_edited() {
     session.interrupt();
     assert_eq!(session.exited().await.code(), Some(0));
     let _ = std::fs::remove_file(&saved_elsewhere);
+}
+
+#[tokio::test]
+async fn an_output_node_built_in_the_browser_prints_and_one_deleted_there_stops() {
+    // The launch carries no graph at all, so nothing but the browser's own
+    // edits decides what prints: the terminal follows the graph the run
+    // compiles, not the definition the launch held.
+    let mut session = Session::launch(&[]).await;
+    session.browser().await;
+
+    let counter = session.built(1, "fizzbuzz/counter").await;
+    for (id, input, value) in [(2, "start", "1"), (3, "stop", "3"), (4, "step", "1")] {
+        session.set(id, &counter, input, value).await;
+    }
+    let format = session.built(5, "utility/format").await;
+    // The sidebar's spelling of a string, the one the file uses and the
+    // one the field shows: the typed text reads as a graph file reads it.
+    session.set(6, &format, "template", r#""{}""#).await;
+    let output = session.built(7, "fizzbuzz/output").await;
+    session.wire(8, &counter, "count", &format, "value").await;
+    session.wire(9, &format, "text", &output, "text").await;
+
+    session
+        .tell(10, json!({ "id": 10, "type": "start_run" }))
+        .await;
+    for want in ["1", "2", "3"] {
+        assert_eq!(
+            &session.line().await,
+            want,
+            "the Output node built here prints"
+        );
+    }
+    assert_eq!(session.run_ending().await["outcome"], json!("completed"));
+
+    let deleted = session
+        .tell(
+            11,
+            json!({ "id": 11, "type": "delete_node", "uuid": output }),
+        )
+        .await;
+    assert_eq!(deleted["type"], "node_deleted");
+    session
+        .tell(12, json!({ "id": 12, "type": "start_run" }))
+        .await;
+    assert_eq!(session.run_ending().await["outcome"], json!("completed"));
+    assert!(
+        session.line_within(SILENCE).await.is_none(),
+        "the Output node deleted here stops: a silent, complete run"
+    );
+
+    // The canvas was built here and never saved, so the guard stands the
+    // first interrupt down and the second is the user's word.
+    session.interrupt();
+    assert!(session.still_running().await);
+    session.interrupt();
+    assert_eq!(session.exited().await.code(), Some(0));
 }
 
 #[tokio::test]

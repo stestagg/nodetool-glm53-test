@@ -32,9 +32,10 @@ scalar data types.
   over one address and speaks a JSON envelope protocol over one websocket
   connection per browser, holding the graph definition and the file being
   edited as the one authoritative state. A binary hosting the server may
-  supply what a run's unconnected outputs deliver to — the engine's
-  consumer mechanism carried through the server — and a host supplying
-  none keeps the engine's discard. Core contains no node types: a node
+  tap the runs it starts, naming a node type of its own plugin and an
+  input port on it — the engine's tap mechanism carried through the
+  server, resolved against each run's compiled graph — and a host naming
+  none leaves the runs untapped. Core contains no node types: a node
   library is always a plugin crate, first-party or not.
 - `crates/nodetool/ui` — the editor UI the server embeds and serves: a
   React application whose canvas is React Flow under a light Blueprint
@@ -46,9 +47,9 @@ scalar data types.
   missing or stale.
 - `crates/nodetool-utility` — the first-party utility node library, a plugin
   crate whose only dependency is `nodetool`: an `If` router, a `Format`
-  node, and a `Select` chooser that emits one of its two `String`
-  candidates per boolean choice, pairing each choice with one value from
-  each candidate. All declared through the same `node_type!` registration
+  node that emits one string per `value` arrival under the held template,
+  and a `Select` chooser that emits one of its two `String` candidates per
+  boolean choice, pairing each choice with one value from each candidate. All declared through the same `node_type!` registration
   path and authoring API as any third-party plugin. Linking the crate into
   a binary is the whole integration step.
 - `crates/nodetool-fizzbuzz` — the first-party fizzbuzz node library, a
@@ -56,11 +57,12 @@ scalar data types.
   nodes whose operation each instance chooses — `Arithmetic` (add,
   subtract, multiply, divide, modulo, over the numeric family) and
   `Comparison` (equal, not equal, less, less or equal, greater, greater or
-  equal, to a `bool`) — the `Case selection` that pairs a count with its
-  two divisibility streams and emits each count's fizzbuzz string, and an
-  `Output` terminus. Both operator nodes answer their `a` arrival alone:
-  one result per `a`, paired against the second operand's held value,
-  whose own arrivals only update what the next `a` pairs against. An
+  equal, to a `bool`) — and an `Output` terminus. Nothing in it knows what
+  fizzbuzz is: the strings and the selection between them live on the
+  graph, so the shipped `graphs/fizzbuzz.yml` is the app. Both operator
+  nodes answer their `a` arrival alone: one result per `a`, paired against
+  the second operand's held value, whose own arrivals only update what the
+  next `a` pairs against. An
   arithmetic the member cannot answer — an integer overflow or underflow,
   a zero divisor — ends the run as a reported failure. It is the reference
   for the generic-port idiom — one node type per node, its numeric ports
@@ -69,22 +71,24 @@ scalar data types.
   written once and stamped per resolved type (`src/numeric.rs` is the
   helper) — and for the choice setting: a node type declares a named
   setting with a fixed set of options, the instance holds the option it
-  chose among its parameters, and the editor renders it as a select.
-  Its binary is the headless
-  runner: given a graph file path it loads, compiles, and runs the graph,
-  and every output the graph leaves unconnected prints to the terminal as
-  it arrives — one line per value, in its plain string form. With `--ui`
-  the same binary hosts the editor over its own linked nodes instead:
+  chose among its parameters, and the editor renders it as a select. Its
+  binary is the headless runner: given a graph file path it loads,
+  compiles, and runs the graph, and every value the graph's `Output` nodes
+  receive prints to the terminal as it arrives — one line per value, in
+  its plain string form. A graph with no `Output` node runs to completion
+  in silence. With `--ui` the same binary hosts the editor over its own
+  linked nodes instead:
   `nodetool-fizzbuzz --ui [graph-file]` loads the file into the editor's
   held definition — the same loader, so a file the headless run takes is
   the file the editor opens — or starts on an empty, untitled canvas,
-  prints the served address, and hands the server the same terminal
-  printer, so a run started from the browser prints the values its graph
-  leaves unconnected exactly as a headless run does. `--address
-  <host:port>` serves somewhere other than the loopback default — port
-  zero takes whichever port is free, and the announcement names the one
-  it got, which is how the tests launch editors without contending for a
-  port. Ctrl-C over unsaved changes warns and stands down; the next
+  prints the served address, and taps the same terminal printer onto the
+  `Output` nodes of whatever graph each run compiles, so a run started
+  from the browser prints exactly as a headless run does — an `Output`
+  node added there prints from the next run, one deleted there stops.
+  `--address <host:port>` serves somewhere other than the loopback default
+  — port zero takes whichever port is free, and the announcement names the
+  one it got, which is how the tests launch editors without contending for
+  a port. Ctrl-C over unsaved changes warns and stands down; the next
   Ctrl-C quits. The shipped graph is `graphs/fizzbuzz.yml`, the classic
   fizzbuzz.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the tests
@@ -475,17 +479,15 @@ cargo run -p run-graph grouped      # the editor's grouped sample, values crossi
 ```
 
 Three things to expect from the `if` samples. The first routed value prints
-more than once — the condition literal's arrival re-runs the held value and
-the template literal's arrival fires its own run, so the first value prints
-three times before later values print once; that is the stream semantics'
-pairing, not a duplication. And a Format's `template` input must be fed for
-the node to fire, `template: ""` being how a graph asks for the plain form,
-while a Format on an unselected branch never fires and must carry no
-template: a fed template there hangs the run instead of completing it.
-So each sample prints one compile warning before it runs — the
-unselected Format's `template` is neither connected nor parameterised
-beside its fed `value` — and the run still completes: a warning advises,
-it changes no outcome.
+twice — the condition literal's arrival re-runs the held value — before
+later values print once; that is the stream semantics' pairing, not a
+duplication. And a Format's `template` input must be fed for the node to
+fire, `template: ""` being how a graph asks for the plain form, while a
+Format on an unselected branch never fires and must carry no template: a
+fed template there hangs the run instead of completing it. So each sample
+prints one compile warning before it runs — the unselected Format's
+`template` is neither connected nor parameterised beside its fed `value` —
+and the run still completes: a warning advises, it changes no outcome.
 
 Adding the `observe` flag subscribes the printing observer, so the
 engine's event timeline prints beside whatever the sample shows — the run

@@ -2,21 +2,23 @@
 //!
 //! Headless — the default — `nodetool-fizzbuzz <graph-file>` loads the
 //! file (the one graph file format), compiles it against the linked
-//! plugin's node types, and runs it. Every output the graph leaves
-//! unconnected is the terminal's: each value arriving on one prints as it
-//! arrives — one line, in its plain string form — nothing held back to the
-//! end. Any graph the linked nodes can express runs the same way; the
-//! shipped proof is `graphs/fizzbuzz.yml`.
+//! plugins' node types, and runs it. The run's product is what its Output
+//! nodes receive: each value arriving on one prints as it arrives — one
+//! line, in its plain string form — nothing held back to the end, and a
+//! graph with no Output node prints nothing at all. Any graph the linked
+//! nodes can express runs the same way; the shipped proof is
+//! `graphs/fizzbuzz.yml`.
 //!
 //! `nodetool-fizzbuzz --ui [graph-file]` hosts the editor instead: the
 //! server starts on its loopback default, the file — when one is given —
 //! is loaded into the held definition through the same loader, so a file
 //! the headless run takes is the file the editor opens, and the served
 //! address is printed; opening it in a browser shows the editor over this
-//! binary's own linked nodes. The terminal keeps its seat: the binary
-//! hands the server the printer for the outputs a run leaves unconnected,
-//! so a run started from the browser prints here exactly as a headless
-//! run does. Quitting is guarded at the process edge: Ctrl-C over unsaved
+//! binary's own linked nodes. The terminal keeps its seat: the binary taps
+//! the Output nodes of whatever graph each run compiles, so a run started
+//! from the browser prints here exactly as a headless run does — an Output
+//! node added in the browser prints from the next run, one deleted there
+//! stops. Quitting is guarded at the process edge: Ctrl-C over unsaved
 //! changes warns and stands down, and the next Ctrl-C quits.
 //!
 //! Values go to stdout. A file that cannot be read or loaded, a graph
@@ -33,13 +35,20 @@ use tokio::signal;
 use tokio::sync::watch;
 
 use nodetool::behaviour::Receiver;
-use nodetool::compile;
-use nodetool::engine::{self, Run};
+use nodetool::compile::{self, CompiledGraph};
+use nodetool::engine::Run;
 use nodetool::graph;
 use nodetool::registry::{self, Registry};
-use nodetool::server::{read_definition, Editor, UnconnectedStream, DEFAULT_ADDRESS};
-use nodetool::Value;
+use nodetool::server::{read_definition, Editor, TapStream, DEFAULT_ADDRESS};
+use nodetool::{Uuid, Value};
 use nodetool_fizzbuzz as _;
+use nodetool_utility::string_form;
+
+/// The terminal's rule, in this binary's own plugin's terms: the run's
+/// product is what its Output nodes receive, and the values arriving on
+/// that input are what prints. Core names neither.
+const OUTPUT_TYPE: &str = "fizzbuzz/output";
+const OUTPUT_INPUT: &str = "text";
 
 const USAGE: &str = "usage: nodetool-fizzbuzz <graph-file>\n       nodetool-fizzbuzz --ui [--address <host:port>] [graph-file]";
 
@@ -132,18 +141,16 @@ async fn headless(path: &str) -> ExitCode {
         }
     };
 
-    // The terminal completes every output the graph leaves unconnected:
-    // one consumer per such output, joined to its fan-out like any other
-    // downstream, printing each value as it arrives. The run ends with the
-    // terminal: a write that fails — the reader went away, `head` or a
-    // pager done — stops the run quietly, not as a failure, and no panic
-    // ever reaches the terminal.
+    // The terminal listens on every Output node's input, printing each
+    // value as it arrives. The run ends with the terminal: a write that
+    // fails — the reader went away, `head` or a pager done — stops the run
+    // quietly, not as a failure, and no panic ever reaches the terminal.
     let mut run = Run::new(&compiled);
     let (stop, stopped) = watch::channel(false);
     run.stop_on(stopped);
-    for (uuid, port) in engine::unconnected_outputs(&compiled) {
+    for uuid in output_nodes(&compiled) {
         let stop = stop.clone();
-        run.consume(uuid, port, move |values| {
+        run.tap(uuid, OUTPUT_INPUT, move |values| {
             print_values(io::stdout(), values, Some(stop))
         });
     }
@@ -173,8 +180,11 @@ async fn ui(file: Option<String>, address: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let editor =
-        Arc::new(Editor::new(definition, file).consume_unconnected(Arc::new(print_stream)));
+    let editor = Arc::new(Editor::new(definition, file).tap(
+        OUTPUT_TYPE,
+        OUTPUT_INPUT,
+        Arc::new(print_stream),
+    ));
     let address = listener.local_addr().expect("the listener is bound");
     let mut serving = tokio::spawn(Arc::clone(&editor).serve(listener));
     println!("fizzbuzz editor on http://{address}");
@@ -207,16 +217,29 @@ async fn quit_guard(editor: &Editor) {
     }
 }
 
+/// This graph's Output node instances — the terminal's taps, resolved
+/// against the graph the run compiles.
+fn output_nodes(compiled: &CompiledGraph) -> Vec<Uuid> {
+    compiled
+        .nodes
+        .iter()
+        .filter(|(_, node)| node.node_type.type_ref == OUTPUT_TYPE)
+        .map(|(uuid, _)| *uuid)
+        .collect()
+}
+
 /// The printer the UI mode supplies to the server: the headless rule
 /// verbatim. A write that fails — the reader went away — ends the
 /// printing; the run itself is the editor's, its outcome the browser's.
-fn print_stream(values: Receiver<Value>) -> UnconnectedStream {
+fn print_stream(values: Receiver<Value>) -> TapStream {
     Box::pin(print_values(io::stdout(), values, None))
 }
 
-/// Story 10's printing rule, one body for both doors: every value the
-/// output delivers, one line per value, in arrival order, in its plain
-/// string form, as it arrives. A write that fails — the reader went away —
+/// Story 10's printing rule, one body for both doors: every value an
+/// Output node receives, one line per value, in arrival order, in its
+/// plain string form, as it arrives. A parameter literal held on that
+/// input is a value it receives too, and prints once. A write that fails —
+/// the reader went away —
 /// ends the printing; headless passes the run's stop channel through
 /// `stop`, the run ending with the terminal, while UI mode passes none,
 /// the run itself the editor's, its outcome the browser's.
@@ -237,25 +260,14 @@ async fn print_values<W: io::Write>(
 }
 
 /// The plain string form of a value — the Format node's without-template
-/// behaviour: the payload as its Rust `Display` renders it, a string as
-/// itself. A value outside the base scalars is named rather than rendered;
-/// rendering a custom type is its plugin's business.
+/// behaviour, borrowed from the utility plugin this binary links anyway. A
+/// value outside the base scalars is named rather than rendered; rendering
+/// a custom type is its plugin's business.
 fn plain(value: &Value) -> String {
-    // The scalar list is the twin of `string_form` in crates/nodetool-utility:
-    // the same twelve base scalars, kept in step by hand — linking that
-    // crate here would register its node types, which this binary does not.
-    macro_rules! scalars {
-        ($($ty:ty),* $(,)?) => {$(
-            if let Some(form) = value.get::<$ty>().map(ToString::to_string) {
-                return form;
-            }
-        )*};
-    }
-    scalars!(String, bool, i8, i16, i32, i64, u8, u16, u32, u64, f32, f64);
-    match registry::data_type_by_id(value.type_id()) {
+    string_form(value).unwrap_or_else(|| match registry::data_type_by_id(value.type_id()) {
         Some(data_type) => format!("a {} value", data_type.name),
         None => format!("a value of id {}", value.type_id()),
-    }
+    })
 }
 
 #[cfg(test)]

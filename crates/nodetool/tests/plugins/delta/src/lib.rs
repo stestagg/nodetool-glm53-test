@@ -1,8 +1,8 @@
 //! Node type fixtures for the engine tests: a self-driving source, a
-//! pairer, an f64 echo, a source over a mixed output, and a failer — chosen
-//! so whole-graph wiring, a literal held across a graph's arrivals, a
-//! conversion riding a connection, and fail-fast are each reachable from a
-//! small graph. The tests observe runs through the run's own consumer
+//! pairer, an f64 echo, a source over a mixed output, a terminus, and a
+//! failer — chosen so whole-graph wiring, a literal held across a graph's
+//! arrivals, a conversion riding a connection, a tapped input, and
+//! fail-fast are each reachable from a small graph. The tests observe runs through the run's own consumer
 //! attachments, so the behaviours only transform and emit.
 
 use nodetool::async_trait;
@@ -98,6 +98,21 @@ fn mixed_source(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviou
     Box::new(MixedSource)
 }
 
+/// A terminus: it takes every value its input delivers and emits nothing,
+/// standing for a hosting plugin's output node — the node a host taps.
+struct Terminus;
+
+#[async_trait]
+impl Behaviour for Terminus {
+    async fn process(&mut self, _trigger: Trigger, _io: &mut Io<'_>) -> Result<Flow, Error> {
+        Ok(Flow::Continue)
+    }
+}
+
+fn terminus(_compiled: &nodetool::compile::CompiledNode) -> Box<dyn Behaviour> {
+    Box::new(Terminus)
+}
+
 struct Failer;
 
 #[async_trait]
@@ -179,6 +194,16 @@ node_type! {
     behaviour: mixed_source,
     inputs: [],
     outputs: [ mixed: ["i32", "String"] ],
+}
+
+node_type! {
+    type_ref: "delta/terminus",
+    label: "Terminus",
+    icon: "<svg/>",
+    plugin: "delta",
+    behaviour: terminus,
+    inputs: [ value: "i32" ],
+    outputs: [],
 }
 
 node_type! {

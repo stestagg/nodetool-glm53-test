@@ -528,7 +528,6 @@ fn the_numeric_ports_span_the_family_s_members() {
     let registry = registry();
     for type_ref in [
         "fizzbuzz/counter",
-        "fizzbuzz/case",
         "fizzbuzz/arithmetic",
         "fizzbuzz/comparison",
     ] {

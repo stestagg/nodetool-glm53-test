@@ -370,14 +370,8 @@ async fn the_format_substitutes_the_values_string_form_at_the_templates_first_pl
         .expect("the node completes");
     assert_eq!(
         drained(text_rx).await,
-        [
-            "count: 1",
-            "count: 1",
-            "count: 2.5",
-            "count: true",
-            "count: hi"
-        ],
-        "the template's own arrival fires a run pairing the held value, like any arrival"
+        ["count: 1", "count: 2.5", "count: true", "count: hi"],
+        "one string per value; the template's own arrival emits nothing"
     );
 }
 
@@ -415,8 +409,59 @@ async fn the_format_without_a_template_yields_the_values_plain_string_form() {
         .expect("the node completes");
     assert_eq!(
         drained(text_rx).await,
-        ["1", "1", "2.5", "true", "hi"],
-        "the empty template's own arrival fires a run pairing the held value, like any arrival"
+        ["1", "2.5", "true", "hi"],
+        "one string per value; the empty template's own arrival emits nothing"
+    );
+}
+
+#[tokio::test]
+async fn a_template_arriving_mid_stream_changes_what_later_values_format_under() {
+    let (template_tx, template) = fed("template");
+    let (value_tx, value) = fed("value");
+    let (text_out, mut text_rx) = collected("text");
+    let mut node = behaviour_of("utility/format");
+    let run = tokio::spawn(async move {
+        let mut inputs = [template, value];
+        let mut outputs = [text_out];
+        drive(node.as_mut(), &mut inputs, &mut outputs).await
+    });
+
+    template_tx
+        .send(Value::new(scalars::STRING, "first: {}".to_owned()))
+        .await
+        .expect("the hand-off takes it");
+    value_tx
+        .send(Value::new(scalars::I32, 1))
+        .await
+        .expect("the hand-off takes it");
+    // Wait for the first string before sending the second template, so
+    // the new template truly lands between the two values.
+    assert_eq!(
+        text_rx
+            .recv()
+            .await
+            .and_then(|v| v.get::<String>().cloned()),
+        Some("first: 1".to_owned())
+    );
+
+    template_tx
+        .send(Value::new(scalars::STRING, "then: {}".to_owned()))
+        .await
+        .expect("the hand-off takes it");
+    value_tx
+        .send(Value::new(scalars::I32, 2))
+        .await
+        .expect("the hand-off takes it");
+    drop(template_tx);
+    drop(value_tx);
+
+    run.await
+        .expect("the node task ran to its end")
+        .expect("the node completes");
+    assert_eq!(
+        drained(text_rx).await,
+        ["then: 2"],
+        "the new template holds from the next value on, and slips no string of its own into the stream"
     );
 }
 

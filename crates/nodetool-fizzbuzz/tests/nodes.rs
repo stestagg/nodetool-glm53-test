@@ -3,8 +3,7 @@
 //! zero step, completion after exhaustion, no restart on later arrivals —
 //! each operation of the two operator nodes across the numeric family,
 //! their shared pairing rule, the arithmetic with no answer ending the run
-//! reported, the case selection's alignment, and the descriptors the
-//! palette lists.
+//! reported, and the descriptors the palette lists.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,10 +16,6 @@ use nodetool::scalars;
 use nodetool::Value;
 use nodetool_fizzbuzz as _;
 use nodetool_fizzbuzz::numeric::{numeric_value, Numeric};
-
-mod common;
-
-use common::fizzbuzz_line;
 
 /// The behaviour of the named fizzbuzz node, stamped for the numeric
 /// family member a compile-time resolution would have handed it and
@@ -509,7 +504,7 @@ async fn an_arithmetic_with_no_answer_ends_the_run_as_a_reported_failure() {
 }
 
 #[test]
-fn the_plugin_declares_a_counter_two_operator_nodes_a_case_and_an_output() {
+fn the_plugin_declares_a_counter_two_operator_nodes_and_an_output() {
     let mut fizzbuzz: Vec<_> = registry::node_types()
         .filter(|node_type| node_type.plugin == "fizzbuzz")
         .map(|node_type| (node_type.type_ref, node_type.sub_group, node_type.label))
@@ -520,7 +515,6 @@ fn the_plugin_declares_a_counter_two_operator_nodes_a_case_and_an_output() {
         fizzbuzz,
         vec![
             ("fizzbuzz/arithmetic", None, "Arithmetic"),
-            ("fizzbuzz/case", None, "Case selection"),
             ("fizzbuzz/comparison", None, "Comparison"),
             ("fizzbuzz/counter", None, "Counter"),
             ("fizzbuzz/output", None, "Output"),
@@ -562,125 +556,5 @@ fn the_operator_nodes_declare_their_operation_as_a_choice() {
     );
     // Every other type of the crate declares no setting at all.
     assert!(choices("fizzbuzz/counter").is_empty());
-    assert!(choices("fizzbuzz/case").is_empty());
     assert!(choices("fizzbuzz/output").is_empty());
-}
-
-/// Drives the case selection with three scripted streams; returns the
-/// strings it emitted, in order. Round-robin sends one value per stream
-/// count by count; stream-by-stream sends each stream whole, in its own
-/// order — the two interleavings the pairing has to survive.
-async fn drive_case(
-    counts: &[i32],
-    fizz: &[bool],
-    buzz: &[bool],
-    stream_by_stream: bool,
-) -> Vec<String> {
-    let mut behaviour = behaviour_of("fizzbuzz/case", "i32", &[]);
-    let (count_tx, count_rx) = handoff();
-    let (fizz_tx, fizz_rx) = handoff();
-    let (buzz_tx, buzz_rx) = handoff();
-    let (text_tx, mut text_rx) = handoff();
-    let driven = tokio::spawn(async move {
-        let mut inputs = [
-            Input::new("count", count_rx),
-            Input::new("fizz", fizz_rx),
-            Input::new("buzz", buzz_rx),
-        ];
-        let mut outputs = [Output::new("text")];
-        outputs[0].connect(text_tx, None);
-        drive(behaviour.as_mut(), &mut inputs, &mut outputs).await
-    });
-    if stream_by_stream {
-        for count in counts {
-            count_tx
-                .send(Value::new(scalars::I32, *count))
-                .await
-                .expect("the stream takes the value");
-        }
-        for flag in fizz {
-            fizz_tx
-                .send(Value::new(scalars::BOOL, *flag))
-                .await
-                .expect("the stream takes the value");
-        }
-        for flag in buzz {
-            buzz_tx
-                .send(Value::new(scalars::BOOL, *flag))
-                .await
-                .expect("the stream takes the value");
-        }
-    } else {
-        for (count, fizz, buzz) in round_robin(counts, fizz, buzz) {
-            count_tx
-                .send(Value::new(scalars::I32, count))
-                .await
-                .expect("the stream takes the value");
-            fizz_tx
-                .send(Value::new(scalars::BOOL, fizz))
-                .await
-                .expect("the stream takes the value");
-            buzz_tx
-                .send(Value::new(scalars::BOOL, buzz))
-                .await
-                .expect("the stream takes the value");
-        }
-    }
-    drop(count_tx);
-    drop(fizz_tx);
-    drop(buzz_tx);
-    driven
-        .await
-        .expect("the node task ran")
-        .expect("the case selection completed");
-    let mut strings = Vec::new();
-    while let Some(value) = text_rx.recv().await {
-        strings.push(
-            value
-                .get::<String>()
-                .expect("the text port is a String")
-                .clone(),
-        );
-    }
-    strings
-}
-
-/// The three streams' values as one send at a time, count by count.
-fn round_robin<'a>(
-    counts: &'a [i32],
-    fizz: &'a [bool],
-    buzz: &'a [bool],
-) -> impl Iterator<Item = (i32, bool, bool)> + 'a {
-    counts
-        .iter()
-        .zip(fizz)
-        .zip(buzz)
-        .map(|((&count, &fizz), &buzz)| (count, fizz, buzz))
-}
-
-#[tokio::test]
-async fn the_case_selection_emits_one_string_per_count_in_count_order() {
-    let counts: Vec<i32> = (1..=15).collect();
-    let fizz: Vec<bool> = counts.iter().map(|&count| count % 3 == 0).collect();
-    let buzz: Vec<bool> = counts.iter().map(|&count| count % 5 == 0).collect();
-
-    let strings = drive_case(&counts, &fizz, &buzz, false).await;
-
-    let expected: Vec<String> = counts.iter().map(|&count| fizzbuzz_line(count)).collect();
-    assert_eq!(strings, expected);
-}
-
-#[tokio::test]
-async fn the_case_selection_pairs_whole_streams_arriving_stream_by_stream() {
-    // Each stream arrives whole, in its own order; only the interleaving
-    // across streams differs from the round-robin drive. The k-th arrival
-    // of each stream still pairs.
-    let counts: Vec<i32> = (1..=15).collect();
-    let fizz: Vec<bool> = counts.iter().map(|&count| count % 3 == 0).collect();
-    let buzz: Vec<bool> = counts.iter().map(|&count| count % 5 == 0).collect();
-
-    let strings = drive_case(&counts, &fizz, &buzz, true).await;
-
-    let expected: Vec<String> = counts.iter().map(|&count| fizzbuzz_line(count)).collect();
-    assert_eq!(strings, expected);
 }

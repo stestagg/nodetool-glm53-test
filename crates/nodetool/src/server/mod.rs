@@ -34,9 +34,9 @@
 //! arrives, the one rule covering every editing operation. Starting a run
 //! compiles the held definition afresh — every start compiles, nothing
 //! compiled survives a run — and the run's endings come back through the
-//! engine's event stream. The values a run delivers on outputs the graph
-//! leaves unconnected are the host's: the consumer the host may supply,
-//! defined at `UnconnectedConsumer`. Opening and saving go through the one
+//! engine's event stream. What a run's values reach beyond the canvas is
+//! the host's: the taps a hosting binary names by its own plugin's node
+//! types, defined at `TapConsumer`. Opening and saving go through the one
 //! file format's loader and dump, so a file the headless run takes is the
 //! file the editor edits.
 //!
@@ -70,7 +70,7 @@ mod run;
 mod ws;
 
 pub use protocol::{greeting, PROTOCOL_VERSION};
-pub use run::{Outcome, RunState, UnconnectedConsumer, UnconnectedStream};
+pub use run::{Outcome, RunState, TapConsumer, TapStream};
 
 /// The address the editor serves on by default: loopback only — this is a
 /// local tool.
@@ -112,7 +112,7 @@ pub struct Editor {
     data_types: serde_json::Map<String, Value>,
     plugin_assets: Vec<assets::PluginAsset>,
     pushes: broadcast::Sender<String>,
-    unconnected: Option<UnconnectedConsumer>,
+    taps: Vec<run::Tap>,
 }
 
 /// The message types that edit the held definition — the node operations
@@ -165,7 +165,7 @@ impl Editor {
             data_types,
             plugin_assets,
             pushes,
-            unconnected: None,
+            taps: Vec::new(),
         }
     }
 
@@ -177,11 +177,26 @@ impl Editor {
             .expect("the session lock is never poisoned")
     }
 
-    /// Supply the consumer of the values the runs started from here
-    /// deliver on outputs the graph leaves unconnected — the host's seam,
-    /// `UnconnectedConsumer`'s contract.
-    pub fn consume_unconnected(mut self, consumer: UnconnectedConsumer) -> Editor {
-        self.unconnected = Some(consumer);
+    /// Listen to the runs started from here: every value an instance of
+    /// `type_ref` receives on its `port` input reaches a stream `consumer`
+    /// builds, one stream per instance, resolved afresh against each run's
+    /// compiled graph. The host's seam — `TapConsumer`'s contract — and the
+    /// host names its interest by its own plugin's types, core naming none.
+    /// Taps accumulate; a host naming none leaves the runs unlistened to.
+    ///
+    /// A `port` the named node type does not declare as an input is a bug
+    /// in the hosting binary, and the run it builds panics naming it.
+    pub fn tap(
+        mut self,
+        type_ref: &'static str,
+        port: &'static str,
+        consumer: TapConsumer,
+    ) -> Editor {
+        self.taps.push(run::Tap {
+            type_ref,
+            port,
+            consumer,
+        });
         self
     }
 
@@ -689,7 +704,7 @@ impl Editor {
             Arc::clone(&self.registry),
             compiled,
             stop_requested,
-            self.unconnected.clone(),
+            self.taps.clone(),
         );
         Ok(json!({ "type": "run_started" }))
     }

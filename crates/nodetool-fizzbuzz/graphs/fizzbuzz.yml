@@ -3,7 +3,7 @@ name: fizzbuzz
 nodes:
   - uuid: 00000000-0000-0000-0000-100000000001
     type_ref: fizzbuzz/counter
-    label: counter
+    label: count 1 to 100
     parameters:
       start: 1
       stop: 100
@@ -11,54 +11,89 @@ nodes:
     metadata:
       position:
         x: 60
-        y: 170
+        y: 300
   - uuid: 00000000-0000-0000-0000-100000000002
     type_ref: fizzbuzz/arithmetic
-    label: count mod three
+    label: mod 3
     parameters:
       op: modulo
       b: 3
     metadata:
       position:
-        x: 420
-        y: 40
+        x: 400
+        y: 60
   - uuid: 00000000-0000-0000-0000-100000000005
     type_ref: fizzbuzz/comparison
-    label: divisible by three
+    label: is zero
     parameters:
       cmp: equal
       b: 0
     metadata:
       position:
-        x: 780
-        y: 40
+        x: 700
+        y: 60
   - uuid: 00000000-0000-0000-0000-100000000003
     type_ref: fizzbuzz/arithmetic
-    label: count mod five
+    label: mod 5
     parameters:
       op: modulo
       b: 5
     metadata:
       position:
-        x: 420
+        x: 400
         y: 300
   - uuid: 00000000-0000-0000-0000-100000000006
     type_ref: fizzbuzz/comparison
-    label: divisible by five
+    label: is zero
     parameters:
       cmp: equal
       b: 0
     metadata:
       position:
-        x: 780
+        x: 700
         y: 300
-  - uuid: 00000000-0000-0000-0000-100000000004
-    type_ref: fizzbuzz/case
-    label: case selection
+  - uuid: 00000000-0000-0000-0000-100000000007
+    type_ref: utility/format
+    label: the plain number
+    parameters:
+      template: "{}"
     metadata:
       position:
-        x: 1140
-        y: 170
+        x: 700
+        y: 540
+  - uuid: 00000000-0000-0000-0000-100000000008
+    type_ref: utility/select
+    label: pick FizzBuzz
+    parameters:
+      then: FizzBuzz
+      else: Fizz
+    metadata:
+      position:
+        x: 1020
+        y: 120
+  - uuid: 00000000-0000-0000-0000-100000000009
+    type_ref: utility/select
+    label: pick Buzz
+    parameters:
+      then: Buzz
+    metadata:
+      position:
+        x: 1020
+        y: 420
+  - uuid: 00000000-0000-0000-0000-10000000000a
+    type_ref: utility/select
+    label: pick by fizz
+    metadata:
+      position:
+        x: 1340
+        y: 270
+  - uuid: 00000000-0000-0000-0000-100000000004
+    type_ref: fizzbuzz/output
+    label: output
+    metadata:
+      position:
+        x: 1660
+        y: 270
 edges:
   - from: 00000000-0000-0000-0000-100000000001
     from_port: count
@@ -70,8 +105,8 @@ edges:
     to_port: a
   - from: 00000000-0000-0000-0000-100000000001
     from_port: count
-    to: 00000000-0000-0000-0000-100000000004
-    to_port: count
+    to: 00000000-0000-0000-0000-100000000007
+    to_port: value
   - from: 00000000-0000-0000-0000-100000000002
     from_port: result
     to: 00000000-0000-0000-0000-100000000005
@@ -80,11 +115,31 @@ edges:
     from_port: result
     to: 00000000-0000-0000-0000-100000000006
     to_port: a
-  - from: 00000000-0000-0000-0000-100000000005
-    from_port: result
-    to: 00000000-0000-0000-0000-100000000004
-    to_port: fizz
   - from: 00000000-0000-0000-0000-100000000006
     from_port: result
+    to: 00000000-0000-0000-0000-100000000008
+    to_port: choose
+  - from: 00000000-0000-0000-0000-100000000006
+    from_port: result
+    to: 00000000-0000-0000-0000-100000000009
+    to_port: choose
+  - from: 00000000-0000-0000-0000-100000000007
+    from_port: text
+    to: 00000000-0000-0000-0000-100000000009
+    to_port: else
+  - from: 00000000-0000-0000-0000-100000000005
+    from_port: result
+    to: 00000000-0000-0000-0000-10000000000a
+    to_port: choose
+  - from: 00000000-0000-0000-0000-100000000008
+    from_port: value
+    to: 00000000-0000-0000-0000-10000000000a
+    to_port: then
+  - from: 00000000-0000-0000-0000-100000000009
+    from_port: value
+    to: 00000000-0000-0000-0000-10000000000a
+    to_port: else
+  - from: 00000000-0000-0000-0000-10000000000a
+    from_port: value
     to: 00000000-0000-0000-0000-100000000004
-    to_port: buzz
+    to_port: text

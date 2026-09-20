@@ -229,7 +229,7 @@ fn the_if_true_sample_prints_the_then_branchs_formatted_strings_and_completes() 
     );
     assert_eq!(
         out,
-        "consumed: words: alpha, beta, gamma\nconsumed: words: alpha, beta, gamma\nconsumed: words: alpha, beta, gamma\nconsumed: words: one, one, one\nthe run completed\n",
+        "consumed: words: alpha, beta, gamma\nconsumed: words: alpha, beta, gamma\nconsumed: words: one, one, one\nthe run completed\n",
         "every routed string reached the then branch's Format, the template substituting at its first placeholder"
     );
 }
@@ -245,7 +245,7 @@ fn the_if_false_sample_prints_the_else_branchs_plain_strings_and_completes() {
     );
     assert_eq!(
         out,
-        "consumed: alpha, beta, gamma\nconsumed: alpha, beta, gamma\nconsumed: alpha, beta, gamma\nconsumed: one, one, one\nthe run completed\n",
+        "consumed: alpha, beta, gamma\nconsumed: alpha, beta, gamma\nconsumed: one, one, one\nthe run completed\n",
         "the same graph steered to the else branch, the empty template leaving the plain string form"
     );
 }

@@ -1,12 +1,12 @@
 //! The headless binary's terminal behaviour: the shipped graph prints the
-//! classic sequence, exactly one hundred lines — the case selection's
-//! output, the one stream the graph leaves unconnected — and a count left
-//! unconnected prints in the same plain form. A longer-range variant
-//! prints its first line long before the run could end, and a reader that
-//! goes away early ends the run quietly. A missing file, a load error, a
-//! compile error — a required input nothing carries among them — and a run
-//! that ends in an error each end printed on the error stream with a
-//! non-zero exit.
+//! classic sequence, exactly one hundred lines — what its Output node
+//! receives — while a graph with no Output node runs to completion in
+//! silence, and a literal held on an Output node's input prints once. A
+//! longer-range variant prints its first line long before the run could
+//! end, and a reader that goes away early ends the run quietly. A missing
+//! file, a load error, a compile error — a required input nothing carries
+//! among them — and a run that ends in an error each end printed on the
+//! error stream with a non-zero exit.
 
 mod common;
 
@@ -41,8 +41,9 @@ fn the_shipped_graph_prints_the_classic_sequence_as_its_only_output() {
         .expect("stdout is text")
         .lines()
         .collect();
-    // Exactly one hundred lines: the connected streams — the counter's
-    // count, the two conditions' booleans — print nothing.
+    // Exactly one hundred lines: what the Output node received. Every
+    // other stream the graph carries — the count, the two flags, the
+    // formatted number, the selections — prints nothing.
     let expected: Vec<String> = (1..=100).map(fizzbuzz_line).collect();
     assert_eq!(lines, expected);
 }
@@ -78,10 +79,10 @@ fn a_longer_range_prints_its_first_line_long_before_the_run_could_end() {
 }
 
 #[test]
-fn a_count_left_unconnected_prints_in_its_plain_form() {
-    // One counter, its `count` the only output the graph leaves
-    // unconnected: the terminal rule prints each value raw — the numeric
-    // rendering path beside the String one the shipped graph exercises.
+fn a_graph_with_no_output_node_prints_nothing_and_still_runs_to_completion() {
+    // A bare counter: fifty values with nowhere to go. Printing is keyed
+    // to the Output node, so this run is silent and correct — not a graph
+    // whose unwired streams leak to the terminal.
     let path = std::env::temp_dir().join("nodetool-fizzbuzz-count.yml");
     std::fs::write(
         &path,
@@ -109,11 +110,39 @@ fn a_count_left_unconnected_prints_in_its_plain_form() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(output.stderr.is_empty(), "nothing on the error stream");
-    let lines: Vec<&str> = std::str::from_utf8(&output.stdout)
-        .expect("stdout is text")
-        .lines()
-        .collect();
-    assert_eq!(lines, ["1", "2", "3", "4", "5"]);
+    assert!(output.stdout.is_empty(), "no Output node, no stdout");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_literal_held_on_an_output_nodes_input_prints_once() {
+    // A parameter literal is a value the input receives like any other:
+    // the stream that yields once and completes prints its one line.
+    let path = std::env::temp_dir().join("nodetool-fizzbuzz-held-output.yml");
+    std::fs::write(
+        &path,
+        concat!(
+            "schema_version: 1\n",
+            "name: a held greeting\n",
+            "nodes:\n",
+            "  - uuid: 00000000-0000-0000-0000-300000000005\n",
+            "    type_ref: fizzbuzz/output\n",
+            "    label: output\n",
+            "    parameters:\n",
+            "      text: hello\n",
+            "edges: []\n",
+        ),
+    )
+    .expect("the file is written");
+
+    let output = binary().arg(&path).output().expect("the binary runs");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "hello\n");
     let _ = std::fs::remove_file(&path);
 }
 
@@ -255,12 +284,12 @@ fn a_load_error_ends_non_zero_naming_what_and_where() {
 
 #[test]
 fn a_compile_error_ends_non_zero_naming_the_type() {
-    // `utility/format` is not linked: this binary carries only what its
-    // graphs need, and the compiler refuses what no linked plugin declares.
+    // This binary carries only the plugins its graphs need, and the
+    // compiler refuses a type no linked plugin declares.
     let path = std::env::temp_dir().join("nodetool-fizzbuzz-uncompilable.yml");
     std::fs::write(
         &path,
-        "schema_version: 1\nnodes:\n  - uuid: 00000000-0000-0000-0000-200000000001\n    type_ref: utility/format\nedges: []\n",
+        "schema_version: 1\nnodes:\n  - uuid: 00000000-0000-0000-0000-200000000001\n    type_ref: nowhere/nothing\nedges: []\n",
     )
     .expect("the file is written");
 
@@ -270,7 +299,7 @@ fn a_compile_error_ends_non_zero_naming_the_type() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("compile error"), "{stderr}");
-    assert!(stderr.contains("utility/format"), "{stderr}");
+    assert!(stderr.contains("nowhere/nothing"), "{stderr}");
     assert!(stderr.contains("no linked plugin declares"), "{stderr}");
     let _ = std::fs::remove_file(&path);
 }

@@ -2,9 +2,10 @@
 //! nodes, a literal held across a graph's arrivals, a connection's
 //! conversion applied as values cross, completion only when every node is
 //! done, fail-fast, the stop that ends a run beside its natural ends,
-//! values consumed as they arrive, the empty graph, and runs starting
-//! clean — every run observed through the run's own consumer attachments,
-//! which are just one more downstream.
+//! values consumed as they arrive, a tapped input reading what the
+//! behaviour will read, the empty graph, and runs starting clean — every
+//! run observed through the run's own consumer attachments, which are just
+//! one more downstream.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -513,6 +514,63 @@ async fn a_connection_riding_a_conversion_delivers_converted_values() {
         (1..=50).map(f64::from).collect::<Vec<_>>(),
         "the echo received the counter's whole stream, converted as it crossed"
     );
+}
+
+#[tokio::test]
+async fn a_tap_reads_the_values_its_input_receives_past_the_connections_conversion() {
+    // The counter emits i32 and the echo's input is f64: what a tap on
+    // that input reads is what the behaviour will read, not what the
+    // upstream emitted.
+    let compiled = compiled(
+        vec![
+            node(COUNTER, "delta/counter"),
+            node(F64_ECHO, "delta/echo_f64"),
+        ],
+        vec![edge(COUNTER, "out", F64_ECHO, "value")],
+    );
+    let mut run = Run::new(compiled);
+    let (forward, received) = mpsc::unbounded_channel();
+    let node: Uuid = F64_ECHO.parse().unwrap();
+    run.tap(node, "value", move |mut values| async move {
+        while let Some(value) = values.recv().await {
+            let value = value
+                .get::<f64>()
+                .copied()
+                .expect("the input is declared f64");
+            forward
+                .send(value)
+                .expect("the test reads what it forwarded");
+        }
+        Ok(())
+    });
+
+    run.start().await.expect("the run completes");
+
+    assert_eq!(
+        drained(received).await,
+        (1..=50).map(f64::from).collect::<Vec<_>>(),
+        "every value the input received, converted as it crossed"
+    );
+}
+
+#[tokio::test]
+async fn a_tap_on_an_input_nothing_feeds_ends_with_the_run_delivering_nothing() {
+    // The degenerate stream the node itself holds: the tap must end with
+    // it, or the run would wait forever on a listener nothing can feed.
+    let compiled = compiled(vec![node(F64_ECHO, "delta/echo_f64")], vec![]);
+    let mut run = Run::new(compiled);
+    let (forward, received) = mpsc::unbounded_channel();
+    let node: Uuid = F64_ECHO.parse().unwrap();
+    run.tap(node, "value", move |mut values| async move {
+        while values.recv().await.is_some() {
+            forward.send(()).expect("the test reads what it forwarded");
+        }
+        Ok(())
+    });
+
+    run.start().await.expect("the run completes");
+
+    assert!(drained(received).await.is_empty());
 }
 
 #[tokio::test]

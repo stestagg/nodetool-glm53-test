@@ -21,20 +21,29 @@ use uuid::Uuid;
 
 use crate::behaviour::Receiver;
 
-/// The consumer of one unconnected output's values, supplied by the binary
-/// hosting the server: built over the stream the output delivers to it.
-/// The engine's consumer mechanism carried through the server — the server
-/// attaches the consumer to every output a run leaves unconnected, one
-/// more downstream of the same fan-out — and what the consumer does with
-/// the values is the host's, core naming nothing of any node, port, or
-/// plugin. A host supplying none keeps the engine's discard.
-pub type UnconnectedConsumer =
-    Arc<dyn Fn(Receiver<crate::Value>) -> UnconnectedStream + Send + Sync>;
+/// The consumer of one tapped input's values, supplied by the binary
+/// hosting the server: built over the stream the input delivers to it, one
+/// stream per tapped node instance. The engine's tap mechanism carried
+/// through the server, and what the consumer does with the values is the
+/// host's — core names no node type, port, or plugin of its own.
+pub type TapConsumer = Arc<dyn Fn(Receiver<crate::Value>) -> TapStream + Send + Sync>;
 
-/// One consumer's stream: every value the output delivers, in order, then
-/// the stream's end. Its error ends the run like any downstream's.
-pub type UnconnectedStream =
-    Pin<Box<dyn Future<Output = Result<(), crate::behaviour::Error>> + Send>>;
+/// One tap's stream: every value the input receives, in order, then the
+/// stream's end. Its error ends the run like any downstream's.
+pub type TapStream = Pin<Box<dyn Future<Output = Result<(), crate::behaviour::Error>> + Send>>;
+
+/// What a host listens to in the runs the editor starts: the node type
+/// whose instances carry the input, the input port on them, and the
+/// consumer built over each instance's stream. The host names its interest
+/// by its own plugin's types; the server resolves the instances against
+/// the graph each run compiles, so a node added, wired, or deleted in the
+/// browser is tapped, or not, by the very next run.
+#[derive(Clone)]
+pub(super) struct Tap {
+    pub(super) type_ref: &'static str,
+    pub(super) port: &'static str,
+    pub(super) consumer: TapConsumer,
+}
 
 /// How the last run ended: every node complete, a stop asked from the
 /// chrome, or the first error, named — with the node instance whose
@@ -76,28 +85,33 @@ impl RunState {
 
 /// Spawn the run of `compiled` the editor just started, with the channel a
 /// stop arrives on attached and the bridge subscribed as the run's one
-/// observer. The host's unconnected-output consumer, when the hosting
-/// binary supplied one, attaches as one more downstream of every output
-/// the run leaves unconnected. The compiled graph moves into the task and
-/// dies with the run — no compiled graph is kept between runs. The run's
-/// ending comes back through the bridge.
+/// observer. Each tap the hosting binary named attaches to every instance
+/// of its node type this graph carries. The compiled graph moves into the
+/// task and dies with the run — no compiled graph is kept between runs.
+/// The run's ending comes back through the bridge.
 pub(super) fn spawn(
     session: Arc<Mutex<super::Session>>,
     pushes: tokio::sync::broadcast::Sender<String>,
     registry: std::sync::Arc<crate::registry::Registry>,
     compiled: crate::compile::CompiledGraph,
     stop_requested: watch::Receiver<bool>,
-    unconnected: Option<UnconnectedConsumer>,
+    taps: Vec<Tap>,
 ) {
     let bridge = Arc::new(super::bridge::Bridge::new(session, pushes, registry));
     tokio::spawn(async move {
         let mut run = crate::engine::Run::new(&compiled);
         run.stop_on(stop_requested);
         run.observe(bridge);
-        if let Some(consumer) = unconnected {
-            for (uuid, port) in crate::engine::unconnected_outputs(&compiled) {
-                run.consume(uuid, port, {
-                    let consumer = Arc::clone(&consumer);
+        for tap in &taps {
+            let instances: Vec<Uuid> = compiled
+                .nodes
+                .iter()
+                .filter(|(_, node)| node.node_type.type_ref == tap.type_ref)
+                .map(|(uuid, _)| *uuid)
+                .collect();
+            for uuid in instances {
+                run.tap(uuid, tap.port, {
+                    let consumer = Arc::clone(&tap.consumer);
                     move |values| consumer(values)
                 });
             }

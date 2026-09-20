@@ -72,8 +72,9 @@ use crate::{ConvertFn, Value};
 
 /// A run of a compiled graph: the engine's one entry point.
 ///
-/// Build it with [`Run::new`], attach consumers with [`Run::consume`], an
-/// events observer with [`Run::observe`], and a stop channel with
+/// Build it with [`Run::new`], attach consumers with [`Run::consume`],
+/// input listeners with [`Run::tap`], an events observer with
+/// [`Run::observe`], and a stop channel with
 /// [`Run::stop_on`] while it is still being built — wiring is fixed at
 /// start — and run it with [`Run::start`]. The run borrows its compiled
 /// graph, mutates nothing, and leaves nothing behind: run it again and it
@@ -81,12 +82,13 @@ use crate::{ConvertFn, Value};
 pub struct Run<'g> {
     graph: &'g CompiledGraph,
     consumers: Vec<ConsumerWiring>,
+    taps: Vec<ConsumerWiring>,
     observer: Option<Arc<dyn Observer>>,
     stop: Option<watch::Receiver<bool>>,
 }
 
-/// One attached consumer: the node output it joins, and the future built
-/// over the stream's receiver.
+/// One attached consumer or tap: the node port it joins, and the future
+/// built over the stream's receiver.
 struct ConsumerWiring {
     node: Uuid,
     port: &'static str,
@@ -109,6 +111,7 @@ impl<'g> Run<'g> {
         Run {
             graph,
             consumers: Vec::new(),
+            taps: Vec::new(),
             observer: None,
             stop: None,
         }
@@ -170,6 +173,42 @@ impl<'g> Run<'g> {
         });
     }
 
+    /// Listen on a node *input*: every value it receives, in order, as it
+    /// receives it — past the conversion its connection rides, the value
+    /// the behaviour will read — then the stream's end. The listener joins
+    /// whatever feeds the input as one more downstream beside the node
+    /// itself, so it rides the same bounded hand-off: a slow listener
+    /// stalls the upstream exactly as a slow node does, and the run does
+    /// not end while it is still listening. An input nothing feeds hands
+    /// its listeners the degenerate stream the node gets: it ends at once,
+    /// delivering nothing. `with`'s error ends the run like any downstream
+    /// failure. Attaching is for building: past [`Run::start`] the wiring
+    /// is fixed.
+    ///
+    /// A node or port the graph does not declare is a bug in the program
+    /// building the run, as in [`Run::consume`]: it panics naming the miss.
+    pub fn tap<F, Fut>(&mut self, node: Uuid, port: &'static str, with: F)
+    where
+        F: FnOnce(Receiver<Value>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<(), behaviour::Error>> + Send + 'static,
+    {
+        let node_type = &self
+            .graph
+            .nodes
+            .get(&node)
+            .unwrap_or_else(|| panic!("this graph has no node {node}"))
+            .node_type;
+        assert!(
+            node_type.inputs.iter().any(|input| input.name == port),
+            "node {node} declares no input port `{port}`",
+        );
+        self.taps.push(ConsumerWiring {
+            node,
+            port,
+            with: Box::new(move |receiver| Box::pin(with(receiver))),
+        });
+    }
+
     /// Run the graph: every node's behaviour driven as its own task, values
     /// propagating as they become available. `Ok(())` is the run ended
     /// without an error — every node complete, wired consumers included, or
@@ -186,6 +225,7 @@ impl<'g> Run<'g> {
         let Run {
             graph,
             consumers,
+            taps,
             observer,
             mut stop,
         } = self;
@@ -228,26 +268,44 @@ impl<'g> Run<'g> {
             }
         }
 
+        // An attached consumer or tap joins a fan-out: one more sender
+        // beside the wiring's own, its receiver the attachment's stream. A
+        // consumer joins the output it names; a tap joins whatever feeds
+        // the input it names, resolved with that input below.
+        let mut consumer_streams = Vec::new();
+        let mut listeners: HashMap<(Uuid, &'static str), Vec<Sender<Value>>> = HashMap::new();
+        for tap in taps {
+            let (sender, receiver) = handoff();
+            listeners
+                .entry((tap.node, tap.port))
+                .or_default()
+                .push(sender);
+            consumer_streams.push((tap, receiver));
+        }
+
         // Each connection rides one bounded hand-off: the sender the
         // upstream output holds, the receiver the downstream input holds,
-        // and the connection's conversion applied as values cross.
+        // and the connection's conversion applied as values cross. A tap on
+        // the input rides the same conversion, so it reads what the input
+        // receives.
         let mut senders: HashMap<(Uuid, &'static str), Downstream> = HashMap::new();
         let mut receivers: HashMap<(Uuid, &'static str), Receiver<Value>> = HashMap::new();
         for connection in &graph.connections {
             let (sender, receiver) = handoff();
-            senders
+            let convert = connection.conversion.map(|conversion| conversion.convert);
+            let downstream = senders
                 .entry((connection.from, connection.from_port))
-                .or_default()
-                .push((
-                    sender,
-                    connection.conversion.map(|conversion| conversion.convert),
-                ));
+                .or_default();
+            downstream.push((sender, convert));
+            for listener in listeners
+                .remove(&(connection.to, connection.to_port))
+                .unwrap_or_default()
+            {
+                downstream.push((listener, convert));
+            }
             receivers.insert((connection.to, connection.to_port), receiver);
         }
 
-        // An attached consumer joins the fan-out: one more sender on the
-        // output it attaches to, its receiver the consumer's stream.
-        let mut consumer_streams = Vec::new();
         for consumer in consumers {
             let (sender, receiver) = handoff();
             senders
@@ -266,14 +324,28 @@ impl<'g> Run<'g> {
                     None => match node.parameters.get(port.name) {
                         // A literal fixed input is driven exactly as the
                         // behaviour promised: a stream that yields once and
-                        // completes.
+                        // completes — and a tap on it is driven the same
+                        // stream, so a literal is a value the input receives
+                        // like any other.
                         Some(parameter) => {
                             let (sender, receiver) = handoff();
                             let value = parameter.value.clone();
+                            for listener in
+                                listeners.remove(&(*uuid, port.name)).unwrap_or_default()
+                            {
+                                set.spawn(parameter_stream(value.clone(), listener));
+                            }
                             set.spawn(parameter_stream(value, sender));
                             Input::new(port.name, receiver)
                         }
-                        None => Input::unconnected(port.name),
+                        // Nothing feeds this input, so nothing feeds a tap
+                        // on it: dropping the sender ends the listener's
+                        // stream at once, the degenerate stream the node
+                        // itself holds.
+                        None => {
+                            listeners.remove(&(*uuid, port.name));
+                            Input::unconnected(port.name)
+                        }
                     },
                 };
                 inputs.push(input);
@@ -369,26 +441,6 @@ impl<'g> Run<'g> {
             }
         }
     }
-}
-
-/// The outputs the compiled graph leaves unconnected — no connection
-/// carries their values anywhere: the streams [`Run::consume`] may join,
-/// each attached consumer one more downstream on that output's fan-out.
-/// Nodes in uuid order, each node's ports in declaration order.
-pub fn unconnected_outputs(graph: &CompiledGraph) -> Vec<(Uuid, &'static str)> {
-    let mut unconnected = Vec::new();
-    for (uuid, node) in &graph.nodes {
-        for port in node.node_type.outputs {
-            let fed = graph
-                .connections
-                .iter()
-                .any(|connection| connection.from == *uuid && connection.from_port == port.name);
-            if !fed {
-                unconnected.push((*uuid, port.name));
-            }
-        }
-    }
-    unconnected
 }
 
 /// Await a stop on the attached channel, if any. A channel whose sender is
@@ -491,8 +543,9 @@ struct TaskFailure {
     node: Option<Node>,
 }
 
-/// One consumer's stream, run to its end. Every error it can end on — its
-/// own or a panic caught here — is told naming the attachment it failed on.
+/// One consumer's or tap's stream, run to its end. Every error it can end
+/// on — its own or a panic caught here — is told naming the attachment it
+/// failed on.
 async fn consume_stream(
     uuid: Uuid,
     label: String,

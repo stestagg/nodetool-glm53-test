@@ -1,8 +1,9 @@
 //! The fizzbuzz node library: a counter source, the arithmetic and
-//! comparison nodes whose operation each instance chooses, the case
-//! selection that turns the count and its two divisibility streams into
-//! the fizzbuzz string, and the output terminus — the nodes the fizzbuzz
-//! graph runs on.
+//! comparison nodes whose operation each instance chooses, and the output
+//! terminus. Nothing here knows what fizzbuzz is: the strings, the
+//! divisors, and the selection between them live on the graph, held as
+//! parameter literals on generic nodes, where a reader can see them and an
+//! editor can change them.
 //!
 //! The library is the first written against the generic-port idiom: one
 //! node type per node, its numeric ports declared as one port family —
@@ -25,7 +26,6 @@
 //! rule. The collected vec is the output node's own state, for a program
 //! that wants the run's product collected.
 
-use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 use nodetool::async_trait;
@@ -253,91 +253,6 @@ node_type! {
     choices: [ cmp: ["equal", "not equal", "less", "less or equal", "greater", "greater or equal"] ],
     inputs: [ a: ["numeric", NUMERICS], b: ["numeric", NUMERICS] ],
     outputs: [ result: "bool" ],
-}
-
-/// The case selection's alignment. Its three inputs each arrive one value
-/// per count, in count order — the k-th arrival of each belongs to the
-/// same count — so the node buffers each stream's arrivals and, the moment
-/// all three hold a value, pairs their fronts and emits that count's
-/// fizzbuzz string. The pairing is the node's own, not the driver's
-/// held-value rule: reading the other inputs' current values would pair a
-/// count against whichever neighbours happened to arrive last.
-struct CaseSelection<T: Numeric> {
-    _member: PhantomData<T>,
-    counts: VecDeque<T>,
-    fizz: VecDeque<bool>,
-    buzz: VecDeque<bool>,
-}
-
-#[async_trait]
-impl<T: Numeric> Behaviour for CaseSelection<T> {
-    async fn process(&mut self, trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
-        match trigger {
-            Trigger::Arrival("count") => self.counts.push_back(numeric_input::<T>(io, "count")),
-            Trigger::Arrival("fizz") => self.fizz.push_back(flag_input(io, "fizz")),
-            Trigger::Arrival("buzz") => self.buzz.push_back(flag_input(io, "buzz")),
-            Trigger::Arrival(_) | Trigger::Start => {}
-        }
-        while self.counts.front().is_some()
-            && self.fizz.front().is_some()
-            && self.buzz.front().is_some()
-        {
-            let count = self.counts.pop_front().expect("the front holds a value");
-            let fizz = self.fizz.pop_front().expect("the front holds a value");
-            let buzz = self.buzz.pop_front().expect("the front holds a value");
-            io.output("text")
-                .emit(Value::new(scalars::STRING, case_text(count, fizz, buzz)))
-                .await;
-        }
-        Ok(Flow::Continue)
-    }
-}
-
-fn case_selection<T: Numeric>(_compiled: &CompiledNode) -> Box<dyn Behaviour> {
-    Box::new(CaseSelection {
-        _member: PhantomData::<T>,
-        counts: VecDeque::new(),
-        fizz: VecDeque::new(),
-        buzz: VecDeque::new(),
-    })
-}
-
-fn case_behaviour(compiled: &CompiledNode) -> Box<dyn Behaviour> {
-    for_numeric!(compiled, case_selection)
-}
-
-fn case_check(compiled: &CompiledNode) -> Vec<String> {
-    carried_check(compiled, &["count", "fizz", "buzz"])
-}
-
-fn case_text<T: Numeric>(count: T, fizz: bool, buzz: bool) -> String {
-    match (fizz, buzz) {
-        (true, true) => "FizzBuzz".to_owned(),
-        (true, false) => "Fizz".to_owned(),
-        (false, true) => "Buzz".to_owned(),
-        (false, false) => count.to_string(),
-    }
-}
-
-/// The input's current value as its declared `bool` — the run is gated on
-/// the input's first value, and the compiler type-checks the port against
-/// its declaration.
-fn flag_input(io: &mut Io<'_>, name: &str) -> bool {
-    io.input(name)
-        .current()
-        .and_then(|value| value.get::<bool>().copied())
-        .expect("the run is gated on this input's first value")
-}
-
-node_type! {
-    type_ref: "fizzbuzz/case",
-    label: "Case selection",
-    icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M2 4h4l6 4M2 8h10M2 12h4l6-4" stroke="#333" stroke-width="1.5" fill="none"/></svg>"##,
-    plugin: "fizzbuzz",
-    behaviour: case_behaviour,
-    check_parameters: case_check,
-    inputs: [ count: ["numeric", NUMERICS], fizz: "bool", buzz: "bool" ],
-    outputs: [ text: "String" ],
 }
 
 /// The output's collection: every string that arrives, in arrival order,
