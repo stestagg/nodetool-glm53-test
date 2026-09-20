@@ -1,7 +1,6 @@
 ---
 title: DEVELOPMENT.md back to a minimal guide
 date: 2026-09-20
-pr_id: 71
 ---
 
 ## Description
@@ -65,3 +64,5 @@ only what a newcomer needs to get the code running and find the rest.
   way — story 29 falsifies the crate prose this cut removes
   (DEVELOPMENT.md:60-63), so cutting first leaves nothing stale. Nothing in
   the earlier stories depends on this file's shape.
+
+- 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
