@@ -87,6 +87,27 @@ fn the_listing_matches_the_registry() {
         add["outputs"],
         json!([{ "name": "sum", "type_refs": ["i32"] }])
     );
+    assert_eq!(add["choices"], json!([]), "a type declaring no setting");
+
+    // A declared choice reaches the browser as its name and its options —
+    // what the editor renders as a select. No port carries it.
+    let dial = reply["node_types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node_type| node_type["type_ref"] == "beta/dial")
+        .unwrap();
+    assert_eq!(
+        dial["choices"],
+        json!([{ "name": "mode", "options": ["up", "down"] }])
+    );
+    assert_eq!(
+        dial["inputs"],
+        json!([
+            { "name": "value", "type_refs": ["i32"] },
+            { "name": "offset", "type_refs": ["i32"] }
+        ])
+    );
 }
 
 #[test]

@@ -12,6 +12,13 @@
 // unknown, so no fields, but the label is the one attribute its sidebar
 // can still edit, and the unknown-type problem it carries explains why.
 //
+// A type's declared choices — its per-instance settings, each one of a
+// fixed set of options — render as selects in the middle of the node,
+// between the title bar and the ports, where a Blender-style node keeps
+// its controls. The chosen option is on the canvas, so a graph of them
+// reads without opening each node; the sidebar shows the same selects, the
+// two views of one stored value every parameter keeps.
+//
 // A type that declares custom node UI renders its bundle's component once
 // the bundle loads, owning the body between the title bar and the ports:
 // the shell — the title bar with its label, icon, and status, and the
@@ -50,7 +57,7 @@
 
 import { useContext } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { commitParameter, Field, useEdit, useLocked, WireContext } from './fields.jsx'
+import { commitParameter, Field, Select, useEdit, useLocked, WireContext } from './fields.jsx'
 import { portKey } from './keyboard.js'
 import { PluginUiContext, UiBoundary } from './pluginui.jsx'
 import { portAppearance } from './types.js'
@@ -186,6 +193,30 @@ function OutputPort({ port, appearance, value, dataTypes, nodeUuid, title }) {
   )
 }
 
+// The declared choices, as the node shows them: one select per setting,
+// named beside it, committing through the same parameter edit every field
+// commits through.
+function NodeChoices({ choices, node, title }) {
+  const edit = useEdit()
+  if (choices.length === 0) return null
+  return (
+    <div className="node-choices">
+      {choices.map((choice) => (
+        <div className="node-choice" key={choice.name}>
+          <span className="choice-name">{choice.name}</span>
+          <Select
+            className="choice-select"
+            value={node.parameters?.[choice.name]}
+            options={choice.options}
+            aria-label={`${title} ${choice.name}`}
+            onCommit={(text) => commitParameter(edit, node.uuid, choice.name, text)}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function TypeNode({ data, selected }) {
   const { node, type, wiredInputs, scalarInputs, marks, status, portValues, dataTypes } = data
   const plugin = useContext(PluginUiContext)
@@ -218,6 +249,7 @@ export function TypeNode({ data, selected }) {
         </span>
         <NodeStatus status={status} />
       </div>
+      <NodeChoices choices={type.choices ?? []} node={node} title={title} />
       {Body && (
         <UiBoundary onFail={(error) => plugin.failBody(type.type_ref, error)}>
           <div className="node-body">

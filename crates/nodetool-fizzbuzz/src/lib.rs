@@ -1,7 +1,8 @@
-//! The fizzbuzz node library: a counter source, the six condition
-//! comparisons beside the divisibility condition, the case selection that
-//! turns the count and its divisibility streams into the fizzbuzz string,
-//! and the output terminus — the nodes the fizzbuzz graph runs on.
+//! The fizzbuzz node library: a counter source, the arithmetic and
+//! comparison nodes whose operation each instance chooses, the case
+//! selection that turns the count and its two divisibility streams into
+//! the fizzbuzz string, and the output terminus — the nodes the fizzbuzz
+//! graph runs on.
 //!
 //! The library is the first written against the generic-port idiom: one
 //! node type per node, its numeric ports declared as one port family —
@@ -12,6 +13,13 @@
 //! with no dispatch on values. Core branches on nothing about which nodes
 //! these are: they are ordinary node types through and through,
 //! registered through the one `node_type!` path.
+//!
+//! The two operator nodes are the first written against the choice
+//! setting core declares beside the ports: one node type per operation
+//! family, its operation a per-instance choice the editor shows as a
+//! select. Both answer the `a` arrival alone — one result per `a`, paired
+//! against the second operand's held value — so a chain of them carries
+//! one value per count, whatever form the second operand takes.
 //!
 //! Nothing here prints a run's product: printing is the binary's terminal
 //! rule. The collected vec is the output node's own state, for a program
@@ -117,112 +125,145 @@ fn counter_step_check<T: Numeric>(compiled: &CompiledNode) -> Vec<String> {
         .collect()
 }
 
-/// The condition's comparison logic, generic over the family member the
-/// compiler resolved: each arrival is paired against the other input's
-/// held value, the comparison emits its boolean, and the node completes by
-/// the default rule. One shared behaviour; the six condition node types
-/// carry the six operations.
-struct ConditionLogic<T: Numeric> {
-    _member: PhantomData<T>,
-    op: fn(T, T) -> bool,
+/// The comparison's logic, generic over the family member the compiler
+/// resolved: one boolean per `a` arrival, paired against the held `b`,
+/// under the operation the instance's `cmp` choice named. A `b` arrival
+/// emits nothing — it only updates the value the next `a` pairs against.
+/// The rule is the pairing the node's consumers read: one result per `a`,
+/// whatever form the second operand takes. Were an operand's own arrival
+/// to emit too — a parameter literal's delivery is an arrival like any
+/// other — the stream would carry a result no downstream pairing could
+/// tell from an `a`'s own.
+struct CompareLogic<T: Numeric> {
+    compare: fn(T, T) -> bool,
 }
 
 #[async_trait]
-impl<T: Numeric> Behaviour for ConditionLogic<T> {
-    async fn process(&mut self, _trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
-        let a = numeric_input::<T>(io, "a");
-        let b = numeric_input::<T>(io, "b");
-        let result = (self.op)(a, b);
-        io.output("result")
-            .emit(Value::new(scalars::BOOL, result))
-            .await;
-        Ok(Flow::Continue)
-    }
-}
-
-/// One condition per operation, each stamped from the one shared
-/// behaviour: the macro carries the operation in the closure it stamps
-/// into the logic, and declares the node type under the condition
-/// sub-group. A per-instance operation *setting* would be a new descriptor
-/// concept with one consumer; the six declarations carry it instead.
-macro_rules! conditions {
-    ($($ctor:ident, $behaviour:ident : $type_ref:literal, $label:literal, $compare:expr;)*) => {$(
-        fn $ctor<T: Numeric>(_compiled: &CompiledNode) -> Box<dyn Behaviour> {
-            Box::new(ConditionLogic { _member: PhantomData::<T>, op: $compare })
-        }
-        fn $behaviour(compiled: &CompiledNode) -> Box<dyn Behaviour> {
-            for_numeric!(compiled, $ctor)
-        }
-        node_type! {
-            type_ref: $type_ref,
-            label: $label,
-            icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M2 8h12M4 4l-3 4 3 4M12 4l3 4-3 4" stroke="#333" stroke-width="1.5" fill="none"/></svg>"##,
-            plugin: "fizzbuzz",
-            sub_group: "condition",
-            behaviour: $behaviour,
-            inputs: [ a: ["numeric", NUMERICS], b: ["numeric", NUMERICS] ],
-            outputs: [ result: "bool" ],
-        }
-    )*};
-}
-
-conditions! {
-    eq_of, condition_eq: "fizzbuzz/eq", "Equal", |a, b| a == b;
-    ne_of, condition_ne: "fizzbuzz/ne", "Not equal", |a, b| a != b;
-    lt_of, condition_lt: "fizzbuzz/lt", "Less", |a, b| a < b;
-    le_of, condition_le: "fizzbuzz/le", "Less or equal", |a, b| a <= b;
-    gt_of, condition_gt: "fizzbuzz/gt", "Greater", |a, b| a > b;
-    ge_of, condition_ge: "fizzbuzz/ge", "Greater or equal", |a, b| a >= b;
-}
-
-/// The divisibility comparison: one boolean per `a` arrival, the count's,
-/// paired against the held `b`, the divisor. A `b` arrival only resets the
-/// held divisor. The general condition's pairing would re-emit on that
-/// arrival too — a duplicate no downstream pairing could tell from a
-/// count's own boolean — while this node's consumers pair its stream with
-/// the `a` stream one value per count. One boolean per count, then,
-/// whatever form the divisor takes.
-struct DivisibleLogic<T: Numeric> {
-    _member: PhantomData<T>,
-}
-
-#[async_trait]
-impl<T: Numeric> Behaviour for DivisibleLogic<T> {
+impl<T: Numeric> Behaviour for CompareLogic<T> {
     async fn process(&mut self, trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
         if let Trigger::Arrival("a") = trigger {
-            let a = numeric_input::<T>(io, "a");
-            let b = numeric_input::<T>(io, "b");
-            let divisible = b != T::zero() && a % b == T::zero();
+            let result = (self.compare)(numeric_input::<T>(io, "a"), numeric_input::<T>(io, "b"));
             io.output("result")
-                .emit(Value::new(scalars::BOOL, divisible))
+                .emit(Value::new(scalars::BOOL, result))
                 .await;
         }
         Ok(Flow::Continue)
     }
 }
 
-fn divisible_of<T: Numeric>(_compiled: &CompiledNode) -> Box<dyn Behaviour> {
-    Box::new(DivisibleLogic {
-        _member: PhantomData::<T>,
+/// The comparison each declared `cmp` option names, stamped for the
+/// resolved member. Compile refuses an option outside the declaration, so
+/// there is no fallback operation to pick.
+fn comparison<T: Numeric>(cmp: &str) -> fn(T, T) -> bool {
+    match cmp {
+        "equal" => |a, b| a == b,
+        "not equal" => |a, b| a != b,
+        "less" => |a, b| a < b,
+        "less or equal" => |a, b| a <= b,
+        "greater" => |a, b| a > b,
+        "greater or equal" => |a, b| a >= b,
+        other => panic!("the `cmp` choice compiled as `{other}`, which it does not offer"),
+    }
+}
+
+fn comparison_of<T: Numeric>(compiled: &CompiledNode) -> Box<dyn Behaviour> {
+    Box::new(CompareLogic::<T> {
+        compare: comparison::<T>(compiled.choice("cmp")),
     })
 }
 
-fn divisible_behaviour(compiled: &CompiledNode) -> Box<dyn Behaviour> {
-    for_numeric!(compiled, divisible_of)
+fn comparison_behaviour(compiled: &CompiledNode) -> Box<dyn Behaviour> {
+    for_numeric!(compiled, comparison_of)
 }
 
-fn divisible_check(compiled: &CompiledNode) -> Vec<String> {
+/// The arithmetic's logic, the comparison's twin: one result per `a`
+/// arrival, paired against the held `b`, under the operation the
+/// instance's `op` choice named — the same pairing rule, so a chain of the
+/// two carries one value per count.
+struct ArithmeticLogic<T: Numeric> {
+    op: String,
+    apply: fn(T, T) -> Option<T>,
+}
+
+#[async_trait]
+impl<T: Numeric> Behaviour for ArithmeticLogic<T> {
+    async fn process(&mut self, trigger: Trigger, io: &mut Io<'_>) -> Result<Flow, Error> {
+        if let Trigger::Arrival("a") = trigger {
+            let a = numeric_input::<T>(io, "a");
+            let b = numeric_input::<T>(io, "b");
+            let result = (self.apply)(a, b).ok_or_else(|| no_result(&self.op, a, b))?;
+            io.output("result").emit(numeric_value(result)).await;
+        }
+        Ok(Flow::Continue)
+    }
+}
+
+/// The arithmetic each declared `op` option names, in its checked form:
+/// where the member has no answer the option is reported, never wrapped or
+/// left to the build profile.
+fn arithmetic<T: Numeric>(op: &str) -> fn(T, T) -> Option<T> {
+    match op {
+        "add" => T::add_checked,
+        "subtract" => T::sub_checked,
+        "multiply" => T::mul_checked,
+        "divide" => T::div_checked,
+        "modulo" => T::rem_checked,
+        other => panic!("the `op` choice compiled as `{other}`, which it does not offer"),
+    }
+}
+
+/// An arithmetic with no answer, as the run's failure: the operation, its
+/// operands, the member they ran over, and which of the two natural ends
+/// it met. A zero divisor and an overflow are the same kind of answer —
+/// one the type does not have — and both end the run reported.
+fn no_result<T: Numeric>(op: &str, a: T, b: T) -> Error {
+    let end = if b == T::zero() {
+        "the divisor is zero"
+    } else {
+        "the result is outside the type"
+    };
+    format!("`{op}` of {a} and {b} over {}: {end}", T::TYPE_REF).into()
+}
+
+fn arithmetic_of<T: Numeric>(compiled: &CompiledNode) -> Box<dyn Behaviour> {
+    let op = compiled.choice("op");
+    Box::new(ArithmeticLogic::<T> {
+        op: op.to_owned(),
+        apply: arithmetic::<T>(op),
+    })
+}
+
+fn arithmetic_behaviour(compiled: &CompiledNode) -> Box<dyn Behaviour> {
+    for_numeric!(compiled, arithmetic_of)
+}
+
+/// The compile-time form of the operand the behaviour gates on and the one
+/// it pairs against: neither fires without a value, so a node carrying
+/// neither a connection nor a literal for either is refused before the run.
+fn operands_check(compiled: &CompiledNode) -> Vec<String> {
     carried_check(compiled, &["a", "b"])
 }
 
 node_type! {
-    type_ref: "fizzbuzz/divisible",
-    label: "Divisible",
-    icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M12 4 4 12" stroke="#333" stroke-width="1.5" fill="none"/><circle cx="5" cy="5" r="2" stroke="#333" stroke-width="1.5" fill="none"/><circle cx="11" cy="11" r="2" stroke="#333" stroke-width="1.5" fill="none"/></svg>"##,
+    type_ref: "fizzbuzz/arithmetic",
+    label: "Arithmetic",
+    icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M2 5h6M5 2v6M8 12h6M2 11l3 3M5 11l-3 3" stroke="#333" stroke-width="1.5" fill="none"/></svg>"##,
     plugin: "fizzbuzz",
-    sub_group: "condition",
-    behaviour: divisible_behaviour,
-    check_parameters: divisible_check,
+    behaviour: arithmetic_behaviour,
+    check_parameters: operands_check,
+    choices: [ op: ["add", "subtract", "multiply", "divide", "modulo"] ],
+    inputs: [ a: ["numeric", NUMERICS], b: ["numeric", NUMERICS] ],
+    outputs: [ result: ["numeric", NUMERICS] ],
+}
+
+node_type! {
+    type_ref: "fizzbuzz/comparison",
+    label: "Comparison",
+    icon: r##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M2 8h12M4 4l-3 4 3 4M12 4l3 4-3 4" stroke="#333" stroke-width="1.5" fill="none"/></svg>"##,
+    plugin: "fizzbuzz",
+    behaviour: comparison_behaviour,
+    check_parameters: operands_check,
+    choices: [ cmp: ["equal", "not equal", "less", "less or equal", "greater", "greater or equal"] ],
     inputs: [ a: ["numeric", NUMERICS], b: ["numeric", NUMERICS] ],
     outputs: [ result: "bool" ],
 }

@@ -1,7 +1,8 @@
 //! The compiler: structure validation, type resolution across declared
-//! unions, conversion wiring, and the literal rules. The unknown-instance
-//! and doubled-input cases are built as in-memory definitions — a file
-//! loaded per the graph format can never carry either.
+//! unions, conversion wiring, the literal rules, and the declared choices
+//! an instance must hold one option of. The unknown-instance and
+//! doubled-input cases are built as in-memory definitions — a file loaded
+//! per the graph format can never carry either.
 
 use std::collections::BTreeMap;
 
@@ -31,6 +32,7 @@ const SINK_U64: &str = "00000000-0000-0000-0000-0000000000b7";
 const SINK_F32: &str = "00000000-0000-0000-0000-0000000000b8";
 const PASS_1: &str = "00000000-0000-0000-0000-0000000000c1";
 const PASS_2: &str = "00000000-0000-0000-0000-0000000000c2";
+const DIAL: &str = "00000000-0000-0000-0000-0000000000d1";
 const MISSING: &str = "00000000-0000-0000-0000-0000000000ff";
 
 fn registry() -> Registry {
@@ -364,7 +366,7 @@ fn an_input_holding_a_parameter_and_a_connection_is_an_error() {
 }
 
 #[test]
-fn a_parameter_not_naming_an_input_port_is_an_error() {
+fn a_parameter_naming_neither_an_input_port_nor_a_choice_is_an_error() {
     let messages = compile_errors(&definition(
         vec![with_parameter(
             node(SINK, "gamma/int_sink"),
@@ -379,6 +381,83 @@ fn a_parameter_not_naming_an_input_port_is_an_error() {
         error.contains(SINK) && error.contains("parameter `nope`"),
         "{error}"
     );
+}
+
+#[test]
+fn a_declared_choice_compiles_to_the_option_the_instance_named() {
+    // The choice rides the parameter map under its own name, beside the
+    // port-named literals, and the compiled node reads it back as the
+    // option — nothing else about it is core's business.
+    let compiled = compile_ok(&definition(
+        vec![with_parameter(
+            node(DIAL, "beta/dial"),
+            "mode",
+            ParameterValue::Str("down".to_owned()),
+        )],
+        vec![],
+    ));
+
+    let dial = &compiled.nodes[&parse(DIAL)];
+    assert_eq!(dial.choice("mode"), "down");
+    // Never a port: no connection can land on a setting.
+    assert!(dial.node_type.inputs.iter().all(|port| port.name != "mode"));
+}
+
+#[test]
+fn a_choice_takes_no_part_in_the_hang_gate() {
+    // A dial whose choice and one input are set, the other input left
+    // bare: the gate warns about the bare input alone. The choice is
+    // carriage for no input, so it neither silences the warning nor earns
+    // one of its own.
+    let dialled = with_parameter(
+        with_parameter(
+            node(DIAL, "beta/dial"),
+            "mode",
+            ParameterValue::Str("up".to_owned()),
+        ),
+        "value",
+        ParameterValue::Int(1),
+    );
+    let warnings = compile_warnings(&definition(vec![dialled], vec![]));
+
+    let warning = single_error(warnings);
+    assert!(warning.contains("`offset`"), "{warning}");
+    assert!(!warning.contains("mode"), "{warning}");
+}
+
+#[test]
+fn a_choice_left_unset_is_an_error_naming_the_node_the_choice_and_its_options() {
+    let error = single_error(compile_errors(&definition(
+        vec![node(DIAL, "beta/dial")],
+        vec![],
+    )));
+
+    assert!(error.contains(DIAL), "{error}");
+    assert!(
+        error.contains("`mode`") && error.contains("holds no value"),
+        "{error}"
+    );
+    assert!(error.contains("up, down"), "{error}");
+}
+
+#[test]
+fn a_choice_outside_its_options_is_an_error_naming_the_value() {
+    for stray in [
+        ParameterValue::Str("sideways".to_owned()),
+        ParameterValue::Int(1),
+    ] {
+        let error = single_error(compile_errors(&definition(
+            vec![with_parameter(node(DIAL, "beta/dial"), "mode", stray)],
+            vec![],
+        )));
+
+        assert!(error.contains(DIAL), "{error}");
+        assert!(
+            error.contains("`mode`") && error.contains("outside its options"),
+            "{error}"
+        );
+        assert!(error.contains("up, down"), "{error}");
+    }
 }
 
 #[test]

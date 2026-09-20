@@ -5,7 +5,9 @@
 // scalar-possible on every one, and connected on none — the only edit
 // that can land on every node at once; a plugin's node joins for free by
 // declaring scalar ports, and a placeholder, its ports unknown,
-// contributes nothing.
+// contributes nothing. The common fields keep to inputs: a declared
+// choice is a per-node setting, edited node by node in either of its own
+// two views.
 
 import { commitParameter, scalarPossible, scalarText } from './fields.jsx'
 import { byName } from './types.js'

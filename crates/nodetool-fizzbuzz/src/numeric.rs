@@ -15,15 +15,14 @@ use nodetool::{Uuid, Value};
 /// The arithmetic, identity, and text form every member of the numeric
 /// family shares. Comparisons ride the standard `PartialEq`/`PartialOrd`
 /// and rendering the standard `Display` the base scalars already carry.
+///
+/// Every operation is checked: it answers none where this member's
+/// arithmetic has no answer — an integer overflow or underflow, a zero
+/// divisor — so its caller reports the failure. Left to Rust's plain
+/// operators the answer would depend on the build profile, an overflowing
+/// release binary answering with a silent wrap.
 pub trait Numeric:
-    Copy
-    + Send
-    + Sync
-    + PartialEq
-    + PartialOrd
-    + std::fmt::Display
-    + std::ops::Rem<Output = Self>
-    + 'static
+    Copy + Send + Sync + PartialEq + PartialOrd + std::fmt::Display + 'static
 {
     /// The data type reference this member is registered under.
     const TYPE_REF: &'static str;
@@ -31,9 +30,15 @@ pub trait Numeric:
     const TYPE_ID: Uuid;
     /// The member's zero.
     fn zero() -> Self;
-    /// The next step of the sequence, or none when the arithmetic runs out
-    /// of room — an exhausted accumulator has passed any stop.
-    fn add_checked(self, step: Self) -> Option<Self>;
+    /// The sum — the counter's next step among its callers, where none
+    /// means the accumulation ran out of room and has passed any stop.
+    fn add_checked(self, other: Self) -> Option<Self>;
+    fn sub_checked(self, other: Self) -> Option<Self>;
+    fn mul_checked(self, other: Self) -> Option<Self>;
+    /// The quotient, none for a zero divisor.
+    fn div_checked(self, other: Self) -> Option<Self>;
+    /// The remainder, none for a zero divisor.
+    fn rem_checked(self, other: Self) -> Option<Self>;
 }
 
 macro_rules! integers {
@@ -42,7 +47,14 @@ macro_rules! integers {
             const TYPE_REF: &'static str = stringify!($ty);
             const TYPE_ID: Uuid = $id;
             fn zero() -> Self { 0 }
-            fn add_checked(self, step: Self) -> Option<Self> { self.checked_add(step) }
+            // The standard checked arithmetic is exactly this contract:
+            // none where the answer does not fit, and none for the zero
+            // divisor.
+            fn add_checked(self, other: Self) -> Option<Self> { self.checked_add(other) }
+            fn sub_checked(self, other: Self) -> Option<Self> { self.checked_sub(other) }
+            fn mul_checked(self, other: Self) -> Option<Self> { self.checked_mul(other) }
+            fn div_checked(self, other: Self) -> Option<Self> { self.checked_div(other) }
+            fn rem_checked(self, other: Self) -> Option<Self> { self.checked_rem(other) }
         }
     )*};
 }
@@ -64,10 +76,23 @@ macro_rules! floats {
             const TYPE_REF: &'static str = stringify!($ty);
             const TYPE_ID: Uuid = $id;
             fn zero() -> Self { 0.0 }
-            fn add_checked(self, step: Self) -> Option<Self> {
-                // An overflowing float accumulates to an infinity, which no
+            // Float arithmetic runs out of room into an infinity, which is
+            // an answer of the type and the same one in every build
+            // profile: no overflow to report. The zero divisor is refused
+            // as it is for the integers, so one rule spans the family
+            // rather than an infinity here and a failure there.
+            fn add_checked(self, other: Self) -> Option<Self> {
+                // An overflowing accumulation reaches an infinity, which no
                 // stop in either direction contains; the sequence test ends it.
-                Some(self + step)
+                Some(self + other)
+            }
+            fn sub_checked(self, other: Self) -> Option<Self> { Some(self - other) }
+            fn mul_checked(self, other: Self) -> Option<Self> { Some(self * other) }
+            fn div_checked(self, other: Self) -> Option<Self> {
+                (other != 0.0).then(|| self / other)
+            }
+            fn rem_checked(self, other: Self) -> Option<Self> {
+                (other != 0.0).then(|| self % other)
             }
         }
     )*};

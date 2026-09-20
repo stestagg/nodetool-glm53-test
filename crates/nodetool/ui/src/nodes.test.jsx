@@ -113,6 +113,69 @@ describe('the port key dispatch', () => {
   })
 })
 
+// A declared choice renders in the middle of the node — the controls' place
+// on a Blender-style node — showing the chosen option on the canvas and
+// committing through the same parameter edit the inline fields commit
+// through.
+describe('the node’s declared choices', () => {
+  const dial = {
+    type_ref: 'beta/dial',
+    label: 'Dial',
+    icon: null,
+    choices: [{ name: 'mode', options: ['up', 'down'] }],
+    inputs: [{ name: 'value', type_refs: ['i32'] }],
+    outputs: [{ name: 'value', type_refs: ['i32'] }],
+  }
+
+  function renderDial(parameters, edit = vi.fn()) {
+    render(
+      <EditContext.Provider value={edit}>
+        <LockContext.Provider value={false}>
+          <WireContext.Provider value={{ wire: null, setWire: vi.fn() }}>
+            <ReactFlowProvider>
+              <TypeNode
+                selected={false}
+                data={{
+                  node: { uuid: 'd1', type_ref: 'beta/dial', parameters },
+                  type: dial,
+                  wiredInputs: [],
+                  scalarInputs: ['value'],
+                  marks: [],
+                  portValues: {},
+                  dataTypes: { i32: { color: '#2d72d2', shape: 'square' } },
+                }}
+              />
+            </ReactFlowProvider>
+          </WireContext.Provider>
+        </LockContext.Provider>
+      </EditContext.Provider>,
+    )
+    return { edit, select: screen.getByLabelText('Dial mode') }
+  }
+
+  it('the chosen option shows on the node, between the title bar and the ports', () => {
+    const { select } = renderDial({ mode: 'down' })
+    expect(select.value).toBe('down')
+    expect(document.querySelector('.node-choices')).toBeTruthy()
+    expect(document.querySelector('.node-title ~ .node-choices')).toBeTruthy()
+  })
+
+  it('a pick sends the parameter edit under the choice’s name', () => {
+    const { edit, select } = renderDial({ mode: 'down' })
+    fireEvent.change(select, { target: { value: 'up' } })
+    expect(edit).toHaveBeenCalledWith('set_parameter', {
+      uuid: 'd1',
+      input: 'mode',
+      value: 'up',
+    })
+  })
+
+  it('a node whose type declares none shows no choice row', () => {
+    node()
+    expect(document.querySelector('.node-choices')).toBeNull()
+  })
+})
+
 // A collapsed group renders by the same default node class as any type:
 // the group's ports, the type channel, an inline field on a scalar
 // exposed input — and no icon in the title bar, where every ordinary node

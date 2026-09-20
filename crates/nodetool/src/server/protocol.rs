@@ -17,7 +17,7 @@ use super::run::{Outcome, RunState};
 use crate::engine::{Event, RunOutcome};
 use crate::graph::{GraphDefinition, Mapping, ParameterValue, SCHEMA_VERSION};
 use crate::registry;
-use crate::{DataType, MetaValue, NodeType, Port};
+use crate::{Choice, DataType, MetaValue, NodeType, Port};
 
 /// The protocol version this server speaks; the greeting names it so a
 /// mismatch is visible rather than silent.
@@ -147,11 +147,24 @@ pub fn node_type_json(node_type: &NodeType) -> Value {
         "sub_group": node_type.sub_group,
         "inputs": ports_json(node_type.inputs),
         "outputs": ports_json(node_type.outputs),
+        "choices": choices_json(node_type.choices),
     });
     if let Some(ui) = node_type.ui {
         fact["ui"] = ui_fact(ui.contract, ui.entry);
     }
     fact
+}
+
+/// The declared choices a type carries: each setting's name and the
+/// options it offers, in declaration order — what the editor renders as a
+/// select. Core says nothing about what an option means.
+fn choices_json(choices: &[Choice]) -> Value {
+    Value::Array(
+        choices
+            .iter()
+            .map(|choice| json!({ "name": choice.name, "options": choice.options }))
+            .collect(),
+    )
 }
 
 fn ports_json(ports: &[Port]) -> Value {

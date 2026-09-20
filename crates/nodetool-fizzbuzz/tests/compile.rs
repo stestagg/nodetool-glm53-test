@@ -2,7 +2,10 @@
 //! agreement, a declared conversion bridging, the declaration-order
 //! tiebreak, conflicting and source-less families, family literals, the
 //! compile-time zero-step rejection, and a family output feeding another
-//! node's family — whose resolution waits on the upstream's.
+//! node's family — whose resolution waits on the upstream's. Beside them
+//! the operator nodes' operation setting: the choice compiles to the
+//! option the instance named, and an absent or out-of-set one is refused
+//! before any run.
 
 use std::collections::BTreeMap;
 
@@ -65,7 +68,8 @@ node_type! {
 }
 
 const COUNTER: &str = "00000000-0000-0000-0000-0000000000f1";
-const CONDITION: &str = "00000000-0000-0000-0000-0000000000f2";
+const COMPARISON: &str = "00000000-0000-0000-0000-0000000000f2";
+const ARITHMETIC: &str = "00000000-0000-0000-0000-0000000000f7";
 const OUTPUT: &str = "00000000-0000-0000-0000-0000000000f3";
 const SOURCE_A: &str = "00000000-0000-0000-0000-0000000000f4";
 const SOURCE_B: &str = "00000000-0000-0000-0000-0000000000f5";
@@ -149,6 +153,15 @@ fn parameter_of<'a>(compiled: &'a CompiledGraph, uuid: &str, port: &str) -> &'a 
         .name
 }
 
+/// A comparison under the given operation — the choice every instance of
+/// the type carries.
+fn comparison(uuid: &str, cmp: &str) -> NodeInstance {
+    with_parameters(
+        node(uuid, "fizzbuzz/comparison"),
+        &[("cmp", ParameterValue::Str(cmp.to_owned()))],
+    )
+}
+
 /// A counter whose start, stop, and step are the given literals.
 fn counter(
     uuid: &str,
@@ -168,15 +181,15 @@ fn a_family_of_agreeing_connections_resolves_to_their_type() {
         vec![
             node(SOURCE_A, "tests/int32_source"),
             node(SOURCE_B, "tests/int32_source"),
-            node(CONDITION, "fizzbuzz/eq"),
+            comparison(COMPARISON, "equal"),
         ],
         vec![
-            edge(SOURCE_A, "value", CONDITION, "a"),
-            edge(SOURCE_B, "value", CONDITION, "b"),
+            edge(SOURCE_A, "value", COMPARISON, "a"),
+            edge(SOURCE_B, "value", COMPARISON, "b"),
         ],
     ));
 
-    assert_eq!(family_of(&compiled, CONDITION), "i32");
+    assert_eq!(family_of(&compiled, COMPARISON), "i32");
     for connection in &compiled.connections {
         assert_eq!(connection.resolved_type.name, "i32");
         assert!(connection.conversion.is_none());
@@ -190,15 +203,15 @@ fn a_declared_conversion_bridges_a_family_source() {
         vec![
             node(SOURCE_A, "tests/int16_source"),
             node(SOURCE_B, "tests/int32_source"),
-            node(CONDITION, "fizzbuzz/eq"),
+            comparison(COMPARISON, "equal"),
         ],
         vec![
-            edge(SOURCE_A, "value", CONDITION, "a"),
-            edge(SOURCE_B, "value", CONDITION, "b"),
+            edge(SOURCE_A, "value", COMPARISON, "a"),
+            edge(SOURCE_B, "value", COMPARISON, "b"),
         ],
     ));
 
-    assert_eq!(family_of(&compiled, CONDITION), "i32");
+    assert_eq!(family_of(&compiled, COMPARISON), "i32");
     let bridged = &compiled.connections[0];
     assert_eq!(bridged.resolved_type.name, "i32");
     assert!(bridged.conversion.is_some());
@@ -327,7 +340,7 @@ fn a_zero_step_literal_fails_at_compile_time() {
 
 #[test]
 fn a_family_output_feeds_another_node_s_family() {
-    // The condition's inputs are fed by the counter's family output: its
+    // The comparison's inputs are fed by the counter's family output: its
     // resolution waits on the counter's, then agrees with it.
     let compiled = compile_ok(&definition(
         vec![
@@ -337,16 +350,16 @@ fn a_family_output_feeds_another_node_s_family() {
                 ParameterValue::Int(100),
                 ParameterValue::Int(1),
             ),
-            node(CONDITION, "fizzbuzz/lt"),
+            comparison(COMPARISON, "less"),
         ],
         vec![
-            edge(COUNTER, "count", CONDITION, "a"),
-            edge(COUNTER, "count", CONDITION, "b"),
+            edge(COUNTER, "count", COMPARISON, "a"),
+            edge(COUNTER, "count", COMPARISON, "b"),
         ],
     ));
 
     assert_eq!(family_of(&compiled, COUNTER), "i8");
-    assert_eq!(family_of(&compiled, CONDITION), "i8");
+    assert_eq!(family_of(&compiled, COMPARISON), "i8");
     for connection in &compiled.connections {
         assert_eq!(connection.resolved_type.name, "i8");
         assert!(connection.conversion.is_none());
@@ -369,22 +382,25 @@ fn a_family_output_feeds_a_downstream_through_the_compiled_connection() {
                     ("step", ParameterValue::Float(1.0)),
                 ],
             ),
-            node(CONDITION, "fizzbuzz/ge"),
+            with_parameters(
+                comparison(COMPARISON, "greater or equal"),
+                &[("b", ParameterValue::Float(0.0))],
+            ),
         ],
         vec![
             edge(SOURCE_A, "value", COUNTER, "start"),
-            edge(COUNTER, "count", CONDITION, "a"),
+            edge(COUNTER, "count", COMPARISON, "a"),
         ],
     ));
 
     assert_eq!(family_of(&compiled, COUNTER), "f64");
-    assert_eq!(family_of(&compiled, CONDITION), "f64");
+    assert_eq!(family_of(&compiled, COMPARISON), "f64");
     let into_counter = &compiled.connections[0];
     assert_eq!(into_counter.resolved_type.name, "f64");
     assert!(into_counter.conversion.is_none());
-    let into_condition = &compiled.connections[1];
-    assert_eq!(into_condition.resolved_type.name, "f64");
-    assert!(into_condition.conversion.is_none());
+    let into_comparison = &compiled.connections[1];
+    assert_eq!(into_comparison.resolved_type.name, "f64");
+    assert!(into_comparison.conversion.is_none());
 }
 
 #[test]
@@ -431,6 +447,81 @@ fn a_parameter_and_a_connection_on_one_family_input_is_still_an_error() {
 }
 
 #[test]
+fn an_operation_choice_compiles_to_the_option_the_instance_named() {
+    let compiled = compile_ok(&definition(
+        vec![
+            node(SOURCE_A, "tests/int32_source"),
+            with_parameters(
+                node(ARITHMETIC, "fizzbuzz/arithmetic"),
+                &[
+                    ("op", ParameterValue::Str("modulo".to_owned())),
+                    ("b", ParameterValue::Int(3)),
+                ],
+            ),
+        ],
+        vec![edge(SOURCE_A, "value", ARITHMETIC, "a")],
+    ));
+
+    let node = &compiled.nodes[&ARITHMETIC.parse().unwrap()];
+    assert_eq!(node.choice("op"), "modulo");
+    // The choice rides the parameter map beside the port-named literal,
+    // and no port carries it: nothing connects to an operation.
+    assert_eq!(parameter_of(&compiled, ARITHMETIC, "b"), "i32");
+    assert!(node.node_type.inputs.iter().all(|port| port.name != "op"));
+}
+
+#[test]
+fn a_choice_left_unset_fails_compile_naming_the_node_and_the_choice() {
+    // A node fresh off the palette carries no operation: a compile error
+    // the problems recomputed beside every edit show, not a run-start
+    // surprise.
+    let messages = compile_errors(&definition(
+        vec![
+            node(SOURCE_A, "tests/int32_source"),
+            node(COMPARISON, "fizzbuzz/comparison"),
+        ],
+        vec![
+            edge(SOURCE_A, "value", COMPARISON, "a"),
+            edge(SOURCE_A, "value", COMPARISON, "b"),
+        ],
+    ));
+
+    let error = single_error(messages);
+    assert!(error.contains(COMPARISON), "{error}");
+    assert!(
+        error.contains("`cmp`") && error.contains("holds no value"),
+        "{error}"
+    );
+    assert!(
+        error.contains("equal") && error.contains("greater or equal"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_choice_outside_its_options_fails_compile_naming_the_value() {
+    let messages = compile_errors(&definition(
+        vec![
+            node(SOURCE_A, "tests/int32_source"),
+            comparison(COMPARISON, "roughly equal"),
+        ],
+        vec![
+            edge(SOURCE_A, "value", COMPARISON, "a"),
+            edge(SOURCE_A, "value", COMPARISON, "b"),
+        ],
+    ));
+
+    let error = single_error(messages);
+    assert!(error.contains(COMPARISON), "{error}");
+    assert!(
+        error.contains("`cmp`")
+            && error.contains("roughly equal")
+            && error.contains("outside its options"),
+        "{error}"
+    );
+}
+
+#[test]
 fn the_numeric_ports_span_the_family_s_members() {
     // The listing shows the members, not a marker: every numeric port of
     // every fizzbuzz node declares exactly the family's member list.
@@ -438,13 +529,8 @@ fn the_numeric_ports_span_the_family_s_members() {
     for type_ref in [
         "fizzbuzz/counter",
         "fizzbuzz/case",
-        "fizzbuzz/divisible",
-        "fizzbuzz/eq",
-        "fizzbuzz/ne",
-        "fizzbuzz/lt",
-        "fizzbuzz/le",
-        "fizzbuzz/gt",
-        "fizzbuzz/ge",
+        "fizzbuzz/arithmetic",
+        "fizzbuzz/comparison",
     ] {
         let node_type = registry.node_type(type_ref).unwrap();
         for port in node_type

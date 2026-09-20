@@ -13,29 +13,51 @@ nodes:
         x: 60
         y: 170
   - uuid: 00000000-0000-0000-0000-100000000002
-    type_ref: fizzbuzz/divisible
-    label: by three
+    type_ref: fizzbuzz/arithmetic
+    label: count mod three
     parameters:
+      op: modulo
       b: 3
     metadata:
       position:
         x: 420
         y: 40
-  - uuid: 00000000-0000-0000-0000-100000000003
-    type_ref: fizzbuzz/divisible
-    label: by five
+  - uuid: 00000000-0000-0000-0000-100000000005
+    type_ref: fizzbuzz/comparison
+    label: divisible by three
     parameters:
+      cmp: equal
+      b: 0
+    metadata:
+      position:
+        x: 780
+        y: 40
+  - uuid: 00000000-0000-0000-0000-100000000003
+    type_ref: fizzbuzz/arithmetic
+    label: count mod five
+    parameters:
+      op: modulo
       b: 5
     metadata:
       position:
         x: 420
+        y: 300
+  - uuid: 00000000-0000-0000-0000-100000000006
+    type_ref: fizzbuzz/comparison
+    label: divisible by five
+    parameters:
+      cmp: equal
+      b: 0
+    metadata:
+      position:
+        x: 780
         y: 300
   - uuid: 00000000-0000-0000-0000-100000000004
     type_ref: fizzbuzz/case
     label: case selection
     metadata:
       position:
-        x: 780
+        x: 1140
         y: 170
 edges:
   - from: 00000000-0000-0000-0000-100000000001
@@ -52,9 +74,17 @@ edges:
     to_port: count
   - from: 00000000-0000-0000-0000-100000000002
     from_port: result
+    to: 00000000-0000-0000-0000-100000000005
+    to_port: a
+  - from: 00000000-0000-0000-0000-100000000003
+    from_port: result
+    to: 00000000-0000-0000-0000-100000000006
+    to_port: a
+  - from: 00000000-0000-0000-0000-100000000005
+    from_port: result
     to: 00000000-0000-0000-0000-100000000004
     to_port: fizz
-  - from: 00000000-0000-0000-0000-100000000003
+  - from: 00000000-0000-0000-0000-100000000006
     from_port: result
     to: 00000000-0000-0000-0000-100000000004
     to_port: buzz

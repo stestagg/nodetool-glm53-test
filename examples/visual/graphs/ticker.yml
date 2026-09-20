@@ -11,18 +11,20 @@ nodes:
         x: 480
         y: 40
   - uuid: 2f7c1a94-5d30-4e8b-9c26-7a1e4f0b3d58
-    type_ref: fizzbuzz/eq
+    type_ref: fizzbuzz/comparison
     label: Hits seven
     parameters:
+      cmp: equal
       b: 7
     metadata:
       position:
         x: 880
         y: 40
   - uuid: 8b3e5c71-9a24-4d6f-b1c8-0e5a7f2d4c93
-    type_ref: fizzbuzz/gt
+    type_ref: fizzbuzz/comparison
     label: Past hundred
     parameters:
+      cmp: greater
       b: 100
     metadata:
       position:

@@ -1,5 +1,8 @@
 /** @vitest-environment jsdom */
-// The multi-selection's sidebar: the header naming the selection by its
+// The sidebar's two views. The single node's carries a select per declared
+// choice beside the field per scalar input — the second view of the value
+// the node itself shows. The multi-selection's: the header naming the
+// selection by its
 // count, the common fields only — shared value, or the mixed marker —
 // and the commit fanning out to the existing per-node parameter edit,
 // one operation per node, an empty commit unsetting on every one. The
@@ -8,7 +11,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { EditContext } from './fields.jsx'
-import { SelectionSidebar } from './sidebar.jsx'
+import { Sidebar, SelectionSidebar } from './sidebar.jsx'
 
 afterEach(cleanup)
 
@@ -111,5 +114,64 @@ describe('SelectionSidebar', () => {
     expect(screen.getByText('2 nodes selected')).toBeTruthy()
     expect(screen.getByText('no shared parameters')).toBeTruthy()
     expect(screen.queryByText('Label')).toBeNull()
+  })
+})
+
+// The single node's sidebar, over a type that declares a choice: the
+// select is the same control the node shows, committing the same edit, and
+// the selection's common fields leave it out — a choice is a per-node
+// setting, edited node by node.
+describe('Sidebar', () => {
+  const dial = {
+    type_ref: 'beta/dial',
+    label: 'Dial',
+    choices: [{ name: 'mode', options: ['up', 'down'] }],
+    inputs: [{ name: 'value', type_refs: ['i32'] }],
+    outputs: [],
+  }
+
+  function single(node, edit = vi.fn()) {
+    render(
+      <EditContext.Provider value={edit}>
+        <Sidebar node={node} type={dial} wiredInputs={[]} baseScalars={{ i32: true }} />
+      </EditContext.Provider>,
+    )
+    return edit
+  }
+
+  it('shows the chosen option and commits a pick as the parameter edit', () => {
+    const edit = single({ uuid: 'd1', type_ref: 'beta/dial', parameters: { mode: 'up' } })
+    const select = screen.getByLabelText('Dial mode')
+    expect(select.value).toBe('up')
+    fireEvent.change(select, { target: { value: 'down' } })
+    expect(edit).toHaveBeenCalledWith('set_parameter', {
+      uuid: 'd1',
+      input: 'mode',
+      value: 'down',
+    })
+  })
+
+  it('the choice sits beside the input fields, not in place of them', () => {
+    single({ uuid: 'd1', type_ref: 'beta/dial', parameters: { mode: 'up', value: 7 } })
+    expect(screen.getByLabelText('Dial value').value).toBe('7')
+  })
+
+  it('the multi-selection keeps to inputs: no choice row', () => {
+    const types = new Map([['beta/dial', dial]])
+    render(
+      <EditContext.Provider value={vi.fn()}>
+        <SelectionSidebar
+          nodes={[
+            { uuid: 'd1', type_ref: 'beta/dial', parameters: { mode: 'up' } },
+            { uuid: 'd2', type_ref: 'beta/dial', parameters: { mode: 'down' } },
+          ]}
+          types={types}
+          baseScalars={{ i32: true }}
+          edges={[]}
+        />
+      </EditContext.Provider>,
+    )
+    expect(screen.queryByLabelText('mode')).toBeNull()
+    expect(screen.getByLabelText('value')).toBeTruthy()
   })
 })

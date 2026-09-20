@@ -50,16 +50,25 @@ scalar data types.
   authoring API as any third-party plugin. Linking the crate into a binary
   is the whole integration step.
 - `crates/nodetool-fizzbuzz` — the first-party fizzbuzz node library, a
-  plugin crate like the utility one: a `Counter` source, the seven
-  `Condition` operations (one node type per operation, under a condition
-  sub-group — the six comparisons beside the `Divisible` divisibility
-  test), the `Case selection` that pairs a count with its two divisibility
-  streams and emits each count's fizzbuzz string, and an `Output`
-  terminus. It is the reference for the generic-port idiom — one node type
-  per node, its numeric ports declared as one port family (the base
-  numeric set) that the compiler resolves to a single concrete type per
-  instance, with the numeric logic written once and stamped per resolved
-  type (`src/numeric.rs` is the helper). Its binary is the headless
+  plugin crate like the utility one: a `Counter` source, the two operator
+  nodes whose operation each instance chooses — `Arithmetic` (add,
+  subtract, multiply, divide, modulo, over the numeric family) and
+  `Comparison` (equal, not equal, less, less or equal, greater, greater or
+  equal, to a `bool`) — the `Case selection` that pairs a count with its
+  two divisibility streams and emits each count's fizzbuzz string, and an
+  `Output` terminus. Both operator nodes answer their `a` arrival alone:
+  one result per `a`, paired against the second operand's held value,
+  whose own arrivals only update what the next `a` pairs against. An
+  arithmetic the member cannot answer — an integer overflow or underflow,
+  a zero divisor — ends the run as a reported failure. It is the reference
+  for the generic-port idiom — one node type per node, its numeric ports
+  declared as one port family (the base numeric set) that the compiler
+  resolves to a single concrete type per instance, with the numeric logic
+  written once and stamped per resolved type (`src/numeric.rs` is the
+  helper) — and for the choice setting: a node type declares a named
+  setting with a fixed set of options, the instance holds the option it
+  chose among its parameters, and the editor renders it as a select.
+  Its binary is the headless
   runner: given a graph file path it loads, compiles, and runs the graph,
   and every output the graph leaves unconnected prints to the terminal as
   it arrives — one line per value, in its plain string form. With `--ui`
@@ -179,10 +188,14 @@ row creates one at the centre of the view — the same create operation,
 at a position the view names. Dragging a node moves it; a click selects,
 opening the editing sidebar on the right — the node's label editable to
 any name, an empty field returning the type's default, the type reference
-and uuid read-only beneath, and below them a field per scalar-possible
-input; the same values show as small editable fields on the nodes
-themselves, an edit in either appearing in the other, committing on Enter
-or on leaving the field. A wire over an input replaces its field with the
+and uuid read-only beneath, and below them a select per declared choice
+and a field per scalar-possible input; the same values show on the nodes
+themselves, the selects in the middle of the node and the inputs' small
+editable fields beside their ports, an edit in either view appearing in
+the other. A field commits on Enter or on leaving it; a select commits the
+option as it is picked, offering exactly the options the type declared and
+showing an unset or unoffered value as itself until one of them replaces
+it — a choice no instance has made is a compile error the canvas marks. A wire over an input replaces its field with the
 declared types in both views; unhooking returns it empty, a replaced
 literal not remembered. A committed value is stored as the plain scalar
 its text reads as — boolean, integer, float, else string — and a connected
@@ -223,7 +236,8 @@ inner input as its parameter, and the definition leaves with the last
 instance, kept while others remain. The sidebar with a multi-selection
 names the selection by its count and shows only the parameter fields the
 nodes hold in common — an input declared scalar-possible and unconnected
-on every one of them — each at its shared value, marked `mixed` where the
+on every one of them, a declared choice being a per-node setting edited
+node by node — each at its shared value, marked `mixed` where the
 values differ; a commit lands on every node, an empty commit unsets the
 parameter everywhere, a field left untouched commits nothing, and where
 nothing is common the sidebar says so plainly. No label editing in a
@@ -388,7 +402,9 @@ cargo run -p visual-badui  # the editor with one deliberately unknown-contract b
 ```
 
 The ticker sample is the one to watch. A `Ticker` counts to 100000 at
-one value every 100ms and fans out to two condition nodes; a `Counter`
+one value every 100ms and fans out to two `Comparison` nodes — one set to
+`equal` against 7, one to `greater` against 100, the operation showing on
+each node; a `Counter`
 counts to a hundred and completes at once; and a `Drip` feeds a `Split`
 into a `Check` whose `forbidden` parameter reads `never` by default. On
 Start the nodes mark running, the pulses travel the wires, and the

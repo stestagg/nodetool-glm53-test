@@ -1,9 +1,9 @@
 //! The listing a node type renders: what the registry hands to users.
 
-use nodetool::{NodeType, Port};
+use nodetool::{Choice, NodeType, Port};
 
 #[test]
-fn display_shows_the_grouping_and_every_port_with_its_type_references() {
+fn display_shows_the_grouping_every_port_and_every_choice() {
     let node = NodeType {
         type_ref: "shapes/circle",
         label: "Circle",
@@ -20,6 +20,10 @@ fn display_shows_the_grouping_and_every_port_with_its_type_references() {
             name: "shape",
             type_refs: &["shapes/shape"],
             family: None,
+        }],
+        choices: &[Choice {
+            name: "fill",
+            options: &["solid", "outline"],
         }],
         behaviour: None,
         check_parameters: None,
@@ -46,10 +50,14 @@ fn display_shows_the_grouping_and_every_port_with_its_type_references() {
         listing.contains("shape: shapes/shape"),
         "output missing: {listing}"
     );
+    assert!(
+        listing.contains("choice fill: solid, outline"),
+        "choice missing: {listing}"
+    );
 }
 
 #[test]
-fn display_omits_an_absent_sub_group() {
+fn display_omits_an_absent_sub_group_and_an_undeclared_choice() {
     let node = NodeType {
         type_ref: "beta/tick",
         label: "Tick",
@@ -63,8 +71,11 @@ fn display_omits_an_absent_sub_group() {
             type_refs: &["bool"],
             family: None,
         }],
+        choices: &[],
         behaviour: None,
         check_parameters: None,
     };
-    assert!(!node.to_string().contains("sub-group"));
+    let listing = node.to_string();
+    assert!(!listing.contains("sub-group"));
+    assert!(!listing.contains("choice"));
 }

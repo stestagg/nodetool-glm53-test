@@ -175,6 +175,41 @@ fn an_edit_that_introduces_a_problem_pushes_it_to_every_connection_and_a_fix_cle
 }
 
 #[test]
+fn a_fresh_node_s_unset_choice_is_a_problem_the_pick_clears() {
+    // A node dropped from the palette has made no choice yet, so its
+    // state is a compile error the canvas marks at once — never a
+    // surprise at the next start. The select's commit is an ordinary
+    // parameter edit, and the recompute beside it clears the mark.
+    let editor = editor();
+    let mut watcher = editor.subscribe();
+    let dial = create(&editor, 1, "beta/dial");
+
+    let pushed = push_definition(&mut watcher);
+    let listed = pushed["problems"].as_array().unwrap();
+    let unset = listed
+        .iter()
+        .find(|problem| problem["message"].as_str().unwrap().contains("`mode`"))
+        .expect("the unset choice is a problem");
+    assert!(
+        unset["message"].as_str().unwrap().contains("up, down"),
+        "the problem names the options: {unset}"
+    );
+    assert_eq!(unset["nodes"], json!([dial]), "{unset}");
+
+    let edited = edit_parameter(&editor, 2, &dial, "mode", Some("down"));
+    assert_eq!(edited["type"], "parameter_set");
+    let pushed = push_definition(&mut watcher);
+    assert!(
+        !pushed["problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|problem| problem["message"].as_str().unwrap().contains("`mode`")),
+        "the pick cleared the mark: {pushed}"
+    );
+}
+
+#[test]
 fn an_open_recomputes_the_problems_the_opened_definition_carries() {
     let editor = editor();
     let file = written_graph("problems-open", PROBLEMATIC);

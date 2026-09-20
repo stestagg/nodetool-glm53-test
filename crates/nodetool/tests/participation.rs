@@ -10,8 +10,14 @@ fn linked_plugins_contribute_without_being_referenced() {
     let refs: Vec<&str> = nodetool::registry::node_types()
         .map(|node_type| node_type.type_ref)
         .collect();
-    assert_eq!(refs.len(), 4);
-    for expected in ["alpha/add", "alpha/concat", "beta/identity", "beta/tick"] {
+    assert_eq!(refs.len(), 5);
+    for expected in [
+        "alpha/add",
+        "alpha/concat",
+        "beta/dial",
+        "beta/identity",
+        "beta/tick",
+    ] {
         assert!(refs.contains(&expected), "missing {expected} in {refs:?}");
     }
 }

@@ -623,6 +623,37 @@ body {
   cursor: default;
 }
 
+/* The declared choices in the middle of the node: a named select per
+   setting, stacked between the title bar and the ports — the controls a
+   Blender-style node keeps in the middle. The select is narrow enough to
+   leave the node its shape and wide enough to read the chosen option
+   off the canvas. */
+
+.node-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 8px;
+}
+
+.node-choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.choice-name {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.choice-select {
+  flex: 1;
+  min-width: 90px;
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
 /* An input's small field on the node itself, under its name. */
 
 .port-field {

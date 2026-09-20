@@ -6,6 +6,10 @@
 // base-scalar fact — an input whose declared types include a core base
 // scalar, whatever union it declares; an input declared only on plugin
 // custom types is opaque to the editor and gets none.
+//
+// A declared choice — a setting whose value is one of a fixed set the
+// listing carries — renders as the select below instead, in the same two
+// views and through the same commit seam.
 
 import { createContext, useContext, useEffect, useState } from 'react'
 
@@ -107,5 +111,35 @@ export function Field({ value, mixed = false, placeholder = '', onCommit, classN
       }}
       {...rest}
     />
+  )
+}
+
+// The choice select: the field a declared setting gets, offering exactly
+// the options the type declared. There is no half-typed draft to keep, so
+// no commit cycle either — a pick commits at once — and the select shows
+// what is stored rather than what is declared: a stored value outside the
+// options, an unset choice included, sits as its own row until one of them
+// replaces it, so the control never claims a value the definition does not
+// hold. A run's lock disables it with every other field.
+export function Select({ value, options, onCommit, className = '', ...rest }) {
+  const stored = scalarText(value)
+  const locked = useLocked()
+  return (
+    <select
+      className={`field nodrag ${className}`}
+      value={stored}
+      disabled={locked}
+      onChange={(event) => onCommit(event.target.value)}
+      {...rest}
+    >
+      {!options.includes(stored) && (
+        <option value={stored}>{stored === '' ? '—' : stored}</option>
+      )}
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
   )
 }

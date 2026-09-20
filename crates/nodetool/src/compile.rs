@@ -22,8 +22,12 @@
 //! be a DAG — a cycle is an error naming the cycle — every edge must land on
 //! ports that exist on its node types, and an input takes at most one
 //! upstream connection while an output may fan out freely. A node instance
-//! carries a unique uuid, a parameter must name an input port, and an input
-//! carries a parameter or a connection — never both. An input left with
+//! carries a unique uuid, a parameter must name an input port or one of the
+//! type's declared choices, and an input carries a parameter or a
+//! connection — never both. A declared choice must hold one of its options
+//! on every instance: absent or outside the set is a compile error, so a
+//! behaviour reads its setting knowing compile guaranteed it, and nothing
+//! connects to a choice or waits on it. An input left with
 //! neither a connection nor a parameter value is *not* of itself an error:
 //! it compiles unconnected, and whether that is a fault only the node type
 //! can say — one whose behaviour gates on the input declares it through
@@ -100,7 +104,7 @@ pub use flatten::inner_identity;
 use crate::graph::{Edge, GraphDefinition, NodeInstance, ParameterValue};
 use crate::registry::Registry;
 use crate::value::Value;
-use crate::{Conversion, DataType, NodeType, Port};
+use crate::{Choice, Conversion, DataType, NodeType, Port};
 
 /// Compile a graph definition into a runnable graph, or report every compile
 /// error found, with the non-fatal warnings beside either.
@@ -290,14 +294,29 @@ fn compile_flat(
         let mut parameters = BTreeMap::new();
         for (name, literal) in &instance.parameters {
             let Some(input) = port(node_type.inputs, name) else {
-                errors.push(error(
-                    format!(
-                        "node {}: parameter `{}` does not name an input port",
-                        node_name(instance, Some(node_type)),
-                        name
-                    ),
-                    vec![*uuid],
-                ));
+                // A declared choice's name is a parameter key beside the
+                // port-named ones: the setting rides the parameter map, so
+                // it is read here, against the options the declaration
+                // offers.
+                match declared_choice(node_type, name) {
+                    Some(choice) => match choice_parameter(choice, literal, registry) {
+                        Ok(chosen) => {
+                            parameters.insert(choice.name, chosen);
+                        }
+                        Err(message) => errors.push(error(
+                            format!("node {}: {message}", node_name(instance, Some(node_type))),
+                            vec![*uuid],
+                        )),
+                    },
+                    None => errors.push(error(
+                        format!(
+                            "node {}: parameter `{}` names neither an input port nor a declared choice",
+                            node_name(instance, Some(node_type)),
+                            name
+                        ),
+                        vec![*uuid],
+                    )),
+                }
                 continue;
             };
             if fed_by.contains_key(&(*uuid, input.name)) {
@@ -328,6 +347,19 @@ fn compile_flat(
                         vec![*uuid],
                     )),
                 }
+            }
+        }
+        for choice in node_type.choices {
+            if !instance.parameters.contains_key(choice.name) {
+                errors.push(error(
+                    format!(
+                        "node {}: choice `{}` holds no value — it must be one of {}",
+                        node_name(instance, Some(node_type)),
+                        choice.name,
+                        choice.options.join(", ")
+                    ),
+                    vec![*uuid],
+                ));
             }
         }
         parameters_of.insert(*uuid, parameters);
@@ -699,7 +731,9 @@ pub struct CompiledNode {
     /// instance, or the type's default label when it gave none.
     pub label: String,
     /// Values fixed for input ports as literals, by port name, each type
-    /// resolved — and already converted where a declared conversion bridged.
+    /// resolved — and already converted where a declared conversion bridged
+    /// — and beside them the option each declared choice holds, by the
+    /// choice's name ([`CompiledNode::choice`] reads one).
     pub parameters: BTreeMap<&'static str, CompiledParameter>,
     /// The concrete type each of the instance's port families resolved to,
     /// by family name. A behaviour built over a family-declared node reads
@@ -710,9 +744,24 @@ pub struct CompiledNode {
     pub fed: BTreeSet<&'static str>,
 }
 
+impl CompiledNode {
+    /// The option one of the type's declared choices holds on this
+    /// instance. Compile refuses an instance whose choice is absent or
+    /// outside its options, so a behaviour reads its setting here without a
+    /// fallback to invent.
+    pub fn choice(&self, name: &str) -> &str {
+        self.parameters
+            .get(name)
+            .and_then(|chosen| chosen.value.get::<String>())
+            .map(String::as_str)
+            .expect("compile refuses an instance whose declared choice holds no option")
+    }
+}
+
 /// A parameter value that compiled: the data type the literal resolved to,
 /// and the runtime value the engine feeds that input as a stream that yields
-/// once and completes.
+/// once and completes. A declared choice's value rides the same shape: the
+/// chosen option as text.
 #[derive(Clone, Debug)]
 pub struct CompiledParameter {
     pub resolved_type: &'static DataType,
@@ -736,6 +785,37 @@ pub struct Connection {
 
 fn port<'p>(ports: &'p [Port], name: &str) -> Option<&'p Port> {
     ports.iter().find(|port| port.name == name)
+}
+
+fn declared_choice(node_type: &NodeType, name: &str) -> Option<&'static Choice> {
+    node_type.choices.iter().find(|choice| choice.name == name)
+}
+
+/// One declared choice's compiled value: the option the instance named,
+/// carried as text — the shape every choice's value takes. Anything the
+/// declaration does not offer, a value that is not text among it, is the
+/// message the caller reports against the options.
+fn choice_parameter(
+    choice: &Choice,
+    literal: &ParameterValue,
+    registry: &Registry,
+) -> Result<CompiledParameter, String> {
+    let chosen = match literal {
+        ParameterValue::Str(text) if choice.options.contains(&text.as_str()) => text,
+        _ => {
+            return Err(format!(
+                "choice `{}` holds {literal}, which is outside its options ({})",
+                choice.name,
+                choice.options.join(", ")
+            ))
+        }
+    };
+    Ok(CompiledParameter {
+        resolved_type: registry
+            .data_type_by_id(crate::scalars::STRING)
+            .expect("core ships the String scalar every choice's value is carried as"),
+        value: Value::new(crate::scalars::STRING, chosen.clone()),
+    })
 }
 
 /// What a compile error names a node instance by: the label the run would

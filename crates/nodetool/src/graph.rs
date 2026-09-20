@@ -166,9 +166,10 @@ pub struct NodeInstance {
     /// A user-chosen label overriding the type's default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Values fixed for input ports as literals, by port name. Whether a
-    /// name is a port of the type, and whether the literal suits it, is
-    /// compile time's business.
+    /// Values fixed for input ports as literals, by port name, and the
+    /// option each of the type's declared choices holds, under the choice's
+    /// name. Whether a name is a port or a choice of the type, and whether
+    /// the literal suits it, is compile time's business.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub parameters: BTreeMap<String, ParameterValue>,
     /// Visual bookkeeping — layout position and the like — carried

@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
-// The scalar fields. The single field's commit cycle is story 14's core
+// The scalar fields, and the choice select beside them. The single field's
+// commit cycle is story 14's core
 // interactive behaviour — Enter or blur commits, Escape discards, an
 // unchanged commit sends nothing, and a definition push re-seeds the
 // draft — so it is pinned on the real component here; the same field,
@@ -9,7 +10,14 @@
 // against the loader itself.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { commitParameter, Field, scalarPossible, scalarText } from './fields.jsx'
+import {
+  commitParameter,
+  Field,
+  LockContext,
+  scalarPossible,
+  scalarText,
+  Select,
+} from './fields.jsx'
 
 afterEach(cleanup)
 
@@ -207,5 +215,53 @@ describe('Field, mixed', () => {
     expect(field().placeholder).toBe('')
     fireEvent.blur(field())
     expect(onCommit).not.toHaveBeenCalled()
+  })
+})
+
+describe('Select', () => {
+  const options = ['add', 'subtract']
+
+  function select() {
+    return screen.getByRole('combobox')
+  }
+
+  it('shows the stored option and offers exactly the declared ones', () => {
+    render(<Select value="subtract" options={options} onCommit={vi.fn()} />)
+    expect(select().value).toBe('subtract')
+    expect([...select().options].map((option) => option.value)).toEqual(options)
+  })
+
+  it('a pick commits at once — there is no draft to hold', () => {
+    const onCommit = vi.fn()
+    render(<Select value="add" options={options} onCommit={onCommit} />)
+    fireEvent.change(select(), { target: { value: 'subtract' } })
+    expect(onCommit).toHaveBeenCalledWith('subtract')
+  })
+
+  it('an unset choice shows as unset, not as the first option', () => {
+    render(<Select value={undefined} options={options} onCommit={vi.fn()} />)
+    expect(select().value).toBe('')
+    expect([...select().options].map((option) => option.textContent)).toEqual([
+      '—',
+      ...options,
+    ])
+  })
+
+  it('a stored value the options do not offer shows itself until one replaces it', () => {
+    render(<Select value="exponent" options={options} onCommit={vi.fn()} />)
+    expect(select().value).toBe('exponent')
+    expect([...select().options].map((option) => option.value)).toEqual([
+      'exponent',
+      ...options,
+    ])
+  })
+
+  it('a run’s lock makes it inert, like every other field', () => {
+    render(
+      <LockContext.Provider value={true}>
+        <Select value="add" options={options} onCommit={vi.fn()} />
+      </LockContext.Provider>,
+    )
+    expect(select().disabled).toBe(true)
   })
 })

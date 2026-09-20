@@ -49,6 +49,10 @@ pub struct NodeType {
     pub inputs: &'static [Port],
     /// Output ports, on the right of the node.
     pub outputs: &'static [Port],
+    /// The settings each instance chooses from a fixed set of options —
+    /// rendered in the middle of the node, between the ports it sits
+    /// among. Declaring none is the ordinary case.
+    pub choices: &'static [Choice],
     /// Builds the behaviour each instance runs — the authoring API's half of
     /// the declaration. A type declared without one is a descriptor alone:
     /// the compiler accepts it, but nothing runs it.
@@ -60,6 +64,22 @@ pub struct NodeType {
     /// families resolved; every returned line is a compile error. A type
     /// declared without one has nothing to add.
     pub check_parameters: Option<ParameterCheck>,
+}
+
+/// A named setting whose value is one of a fixed set of options: the node
+/// type declares the name and the options, each instance holds its chosen
+/// option as an ordinary parameter value under that name, and the compiler
+/// refuses an instance whose choice is absent or outside the set — so a
+/// behaviour reads the setting through [`CompiledNode::choice`] knowing
+/// compile guaranteed it ([`crate::compile`]). A choice is not a port:
+/// nothing connects to it, no value flows into it, and it takes no part in
+/// the hang gate. What a choice *means* is the declaring plugin's business
+/// — core knows only the name and the options.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Choice {
+    pub name: &'static str,
+    /// The options the setting offers, in the order the editor lists them.
+    pub options: &'static [&'static str],
 }
 
 /// One input or output port of a [`NodeType`].
@@ -99,6 +119,14 @@ impl fmt::Display for NodeType {
         for port in self.outputs {
             write!(f, "\n  out {}: {}", port.name, port.type_refs.join(", "))?;
         }
+        for choice in self.choices {
+            write!(
+                f,
+                "\n  choice {}: {}",
+                choice.name,
+                choice.options.join(", ")
+            )?;
+        }
         Ok(())
     }
 }
@@ -128,6 +156,7 @@ impl fmt::Display for NodeType {
 ///         entry: "shapes/circle-node.js",
 ///         source: r#"export default function CircleNode() { ... }"#,
 ///     },
+///     choices: [ fill: ["solid", "outline"] ],   // optional
 ///     inputs:  [ radius: ["i32", "f64"] ],
 ///     outputs: [ shape: "shapes/shape" ],
 /// }
@@ -151,6 +180,12 @@ impl fmt::Display for NodeType {
 /// programs against live in [`nodetool::behaviour`](crate::behaviour). The
 /// optional `check_parameters` arm names a [`ParameterCheck`] the compiler
 /// consults once the instance's parameters and families resolved.
+///
+/// The optional `choices` arm declares the type's [`Choice`] settings —
+/// `name: [option, ...]` apiece. A choice is not a port: the instance holds
+/// its chosen option among its parameters, under the choice's name, and the
+/// behaviour reads it back with
+/// [`CompiledNode::choice`](crate::compile::CompiledNode::choice).
 #[macro_export]
 macro_rules! node_type {
     (
@@ -162,6 +197,7 @@ macro_rules! node_type {
         $(, behaviour: $behaviour:path)?
         $(, check_parameters: $check:path)?
         $(, ui: $ui:expr)?
+        $(, choices: [ $($choice_name:ident : [$($option:literal),+ $(,)?]),* $(,)? ])?
         ,
         inputs: [ $($input_name:ident : $input_types:tt),* $(,)? ]
         ,
@@ -180,6 +216,10 @@ macro_rules! node_type {
                 ui: $crate::node_type!(@ui $($ui)?),
                 inputs: &[$($crate::node_type!(@port $input_name : $input_types)),*],
                 outputs: &[$($crate::node_type!(@port $output_name : $output_types)),*],
+                choices: &[$($($crate::Choice {
+                    name: stringify!($choice_name),
+                    options: &[$($option),*],
+                }),*)?],
             }
         }
     };

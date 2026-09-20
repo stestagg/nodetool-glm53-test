@@ -359,7 +359,7 @@ async fn a_launch_with_a_file_seeds_the_held_definition() {
         "the launch names the file and starts clean"
     );
     let nodes = definition["graph"]["nodes"].as_array().expect("nodes");
-    assert_eq!(nodes.len(), 4, "the shipped graph's four nodes");
+    assert_eq!(nodes.len(), 6, "the shipped graph's six nodes");
     let types: Vec<&str> = nodes
         .iter()
         .map(|node| node["type_ref"].as_str().expect("a type_ref"))
