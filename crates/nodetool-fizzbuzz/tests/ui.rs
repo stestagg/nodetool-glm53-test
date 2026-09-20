@@ -9,17 +9,15 @@
 //! quit answers the first interrupt, unsaved changes stand down with a
 //! warning while the session carries on, and the second interrupt quits.
 //!
-//! The tests take turns over the one loopback address the binary serves:
-//! the turn is a std lock guarding the *process*, not the runtime, so its
-//! guard rides the whole session across every await — the two places that
-//! hold it carry their own `allow`, leaving the lint live everywhere else.
+//! Every launch asks for port zero and reads the port it got off the
+//! announcement, so the tests neither collide with each other nor with
+//! whatever else is on the machine — an editor of one's own included.
 
 mod common;
 
 use std::io::{BufRead, Read};
 use std::net::SocketAddr;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use common::{fizzbuzz_line, long_counter};
@@ -28,9 +26,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use nodetool::server::DEFAULT_ADDRESS;
-
 const GRAPH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/graphs/fizzbuzz.yml");
+
+/// What every launch binds: loopback on whichever port is free. The
+/// announcement names the one it got.
+const EPHEMERAL: &str = "127.0.0.1:0";
 
 /// How long the tests wait on a value they expect to arrive: the shipped
 /// run is a burst long past finished inside it, so only a run printing as
@@ -42,10 +42,6 @@ const ARRIVAL: Duration = Duration::from_secs(10);
 const QUIT: Duration = Duration::from_secs(10);
 const SILENCE: Duration = Duration::from_millis(500);
 
-/// One editor server at a time: the binary serves its loopback default
-/// address, so the tests that launch it take turns.
-static SERVER: Mutex<()> = Mutex::new(());
-
 fn binary() -> Command {
     Command::new(env!("CARGO_BIN_EXE_nodetool-fizzbuzz"))
 }
@@ -55,29 +51,25 @@ fn binary() -> Command {
 const HANDSHAKE: &[u8] =
     b"GET /ws HTTP/1.1\r\nHost: editor\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
 
-/// One launched editor: the process, its served address, the protocol
-/// over one websocket, and the lines it prints. The turn rides along —
-/// the binary serves its fixed address, so the tests take turns — and the
-/// child is killed on the way out, so no test leaves a server behind.
+/// One launched editor: the process, the address it ended up serving,
+/// the protocol over one websocket, and the lines it prints. The child is
+/// killed on the way out, so no test leaves a server behind.
 struct Session {
     child: Child,
     address: SocketAddr,
     writer: Option<WriteHalf<TcpStream>>,
     frames: Option<UnboundedReceiver<String>>,
     lines: UnboundedReceiver<String>,
-    _turn: MutexGuard<'static, ()>,
 }
 
 impl Session {
     /// Launch `--ui` and join its announcement: the printed address is
-    /// both the launch's word and the proof the server is up.
-    #[allow(clippy::await_holding_lock)]
+    /// both the launch's word and the proof the server is up. Port zero
+    /// leaves the choice to the OS, so no two launches can contend.
     async fn launch(args: &[&str]) -> Session {
-        let turn = SERVER
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut child = binary()
             .arg("--ui")
+            .args(["--address", EPHEMERAL])
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -113,7 +105,6 @@ impl Session {
             writer: None,
             frames: None,
             lines,
-            _turn: turn,
         }
     }
 
@@ -389,30 +380,26 @@ async fn a_launch_without_a_file_starts_empty_and_untitled() {
 }
 
 #[tokio::test]
-#[allow(clippy::await_holding_lock)]
 async fn a_launch_load_error_ends_non_zero_naming_the_fault_without_a_server() {
-    let _turn = SERVER
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-
     let output = binary()
         .arg("--ui")
+        .args(["--address", EPHEMERAL])
         .arg("/no/such/graph.yml")
         .output()
         .expect("the binary runs");
     assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
+    assert!(
+        output.stdout.is_empty(),
+        "no server started: a launch that serves announces its address, and this one said nothing"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("/no/such/graph.yml"), "{stderr}");
-    assert!(
-        TcpStream::connect(DEFAULT_ADDRESS).await.is_err(),
-        "no server started: the loopback default answers nothing"
-    );
 
     let path = std::env::temp_dir().join("nodetool-fizzbuzz-ui-broken.yml");
     std::fs::write(&path, "schema_version: 1\nsurprise: true\n").expect("the file is written");
     let output = binary()
         .arg("--ui")
+        .args(["--address", EPHEMERAL])
         .arg(&path)
         .output()
         .expect("the binary runs");

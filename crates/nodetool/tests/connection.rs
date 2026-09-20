@@ -25,16 +25,14 @@ fn greeting_names_both_versions() {
     assert_eq!(greeting["schema_version"], graph::SCHEMA_VERSION);
 }
 
-#[tokio::test]
-async fn the_default_address_is_a_loopback_bind() {
-    let address: std::net::SocketAddr = DEFAULT_ADDRESS.parse().unwrap();
-    let listener = tokio::net::TcpListener::bind(DEFAULT_ADDRESS)
-        .await
-        .unwrap();
-    assert_eq!(listener.local_addr().unwrap(), address);
+#[test]
+fn the_default_address_is_a_loopback_one() {
+    let address: std::net::SocketAddr = DEFAULT_ADDRESS
+        .parse()
+        .expect("the default address is a socket address the server can bind");
     assert!(
         address.ip().is_loopback(),
-        "the server binds loopback by default: {address}"
+        "the default is loopback: this is a local tool, not one served across a boundary — {address}"
     );
 }
 

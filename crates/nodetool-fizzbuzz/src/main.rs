@@ -41,24 +41,23 @@ use nodetool::server::{read_definition, Editor, UnconnectedStream, DEFAULT_ADDRE
 use nodetool::Value;
 use nodetool_fizzbuzz as _;
 
-const USAGE: &str =
-    "usage: nodetool-fizzbuzz <graph-file>\n       nodetool-fizzbuzz --ui [graph-file]";
+const USAGE: &str = "usage: nodetool-fizzbuzz <graph-file>\n       nodetool-fizzbuzz --ui [--address <host:port>] [graph-file]";
 
 /// What the invocation asked for: the headless run of a file, or the
-/// editor over a file — or over nothing, an empty canvas.
+/// editor over a file — or over nothing, an empty canvas — at the address
+/// it serves.
 #[derive(Debug, PartialEq)]
 enum Mode {
     Headless(String),
-    Ui(Option<String>),
+    Ui {
+        file: Option<String>,
+        address: String,
+    },
 }
 
 fn mode(args: &mut impl Iterator<Item = String>) -> Result<Mode, &'static str> {
     match args.next().as_deref() {
-        Some("--ui") => match (args.next(), args.next()) {
-            (Some(file), None) => Ok(Mode::Ui(Some(file))),
-            (None, None) => Ok(Mode::Ui(None)),
-            _ => Err(USAGE),
-        },
+        Some("--ui") => ui_mode(args),
         Some(path) => match args.next() {
             None => Ok(Mode::Headless(path.to_owned())),
             Some(_) => Err(USAGE),
@@ -67,11 +66,36 @@ fn mode(args: &mut impl Iterator<Item = String>) -> Result<Mode, &'static str> {
     }
 }
 
+/// The editor invocation's tail: an optional address to serve, and an
+/// optional file, in either order but once each. `--address` names a
+/// host and port to bind instead of the loopback default — port zero for
+/// whichever port is free, which the announcement then names.
+fn ui_mode(args: &mut impl Iterator<Item = String>) -> Result<Mode, &'static str> {
+    let mut address = None;
+    let mut file = None;
+    while let Some(arg) = args.next() {
+        if arg == "--address" {
+            if address.is_some() {
+                return Err(USAGE);
+            }
+            address = Some(args.next().ok_or(USAGE)?);
+        } else if file.is_none() {
+            file = Some(arg);
+        } else {
+            return Err(USAGE);
+        }
+    }
+    Ok(Mode::Ui {
+        file,
+        address: address.unwrap_or_else(|| DEFAULT_ADDRESS.to_owned()),
+    })
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     match mode(&mut std::env::args().skip(1)) {
         Ok(Mode::Headless(path)) => headless(&path).await,
-        Ok(Mode::Ui(file)) => ui(file).await,
+        Ok(Mode::Ui { file, address }) => ui(file, &address).await,
         Err(usage) => {
             eprintln!("{usage}");
             ExitCode::from(2)
@@ -133,7 +157,7 @@ async fn headless(path: &str) -> ExitCode {
     }
 }
 
-async fn ui(file: Option<String>) -> ExitCode {
+async fn ui(file: Option<String>, address: &str) -> ExitCode {
     let definition = match file.as_deref().map(read_definition) {
         Some(Ok(definition)) => definition,
         Some(Err(error)) => {
@@ -142,12 +166,10 @@ async fn ui(file: Option<String>) -> ExitCode {
         }
         None => graph::GraphDefinition::empty(),
     };
-    let listener = match tokio::net::TcpListener::bind(DEFAULT_ADDRESS).await {
+    let listener = match tokio::net::TcpListener::bind(address).await {
         Ok(listener) => listener,
         Err(error) => {
-            eprintln!(
-                "cannot bind {DEFAULT_ADDRESS}: {error}; another editor is probably already running"
-            );
+            eprintln!("cannot bind {address}: {error}; another editor is probably already running");
             return ExitCode::FAILURE;
         }
     };
@@ -244,20 +266,53 @@ mod tests {
         mode(&mut args.iter().map(|arg| arg.to_string()))
     }
 
+    fn ui_over(file: Option<&str>, address: &str) -> Result<Mode, &'static str> {
+        Ok(Mode::Ui {
+            file: file.map(str::to_owned),
+            address: address.to_owned(),
+        })
+    }
+
     #[test]
     fn the_invocations_parse() {
         assert_eq!(mode_of(&["g.yml"]), Ok(Mode::Headless("g.yml".into())));
-        assert_eq!(mode_of(&["--ui"]), Ok(Mode::Ui(None)));
+        assert_eq!(mode_of(&["--ui"]), ui_over(None, DEFAULT_ADDRESS));
         assert_eq!(
             mode_of(&["--ui", "g.yml"]),
-            Ok(Mode::Ui(Some("g.yml".into())))
+            ui_over(Some("g.yml"), DEFAULT_ADDRESS)
         );
     }
 
     #[test]
-    fn a_bare_invocation_and_a_doubled_file_argument_are_usage_errors() {
+    fn an_address_replaces_the_default_on_either_side_of_the_file() {
+        assert_eq!(
+            mode_of(&["--ui", "--address", "127.0.0.1:0"]),
+            ui_over(None, "127.0.0.1:0")
+        );
+        assert_eq!(
+            mode_of(&["--ui", "--address", "127.0.0.1:9000", "g.yml"]),
+            ui_over(Some("g.yml"), "127.0.0.1:9000")
+        );
+        assert_eq!(
+            mode_of(&["--ui", "g.yml", "--address", "127.0.0.1:9000"]),
+            ui_over(Some("g.yml"), "127.0.0.1:9000")
+        );
+    }
+
+    #[test]
+    fn a_bare_invocation_and_a_doubled_argument_are_usage_errors() {
         assert_eq!(mode_of(&[]), Err(USAGE));
         assert_eq!(mode_of(&["--ui", "a.yml", "b.yml"]), Err(USAGE));
+        assert_eq!(
+            mode_of(&["--ui", "--address", "a:1", "--address", "b:2"]),
+            Err(USAGE),
+            "a second address is a usage error, not the last one quietly winning"
+        );
+        assert_eq!(
+            mode_of(&["--ui", "--address"]),
+            Err(USAGE),
+            "the address flag needs its value"
+        );
     }
 
     #[test]

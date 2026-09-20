@@ -80,9 +80,13 @@ scalar data types.
   the file the editor opens — or starts on an empty, untitled canvas,
   prints the served address, and hands the server the same terminal
   printer, so a run started from the browser prints the values its graph
-  leaves unconnected exactly as a headless run does. Ctrl-C over unsaved
-  changes warns and stands down; the next Ctrl-C quits. The shipped graph
-  is `graphs/fizzbuzz.yml`, the classic fizzbuzz.
+  leaves unconnected exactly as a headless run does. `--address
+  <host:port>` serves somewhere other than the loopback default — port
+  zero takes whichever port is free, and the announcement names the one
+  it got, which is how the tests launch editors without contending for a
+  port. Ctrl-C over unsaved changes warns and stands down; the next
+  Ctrl-C quits. The shipped graph is `graphs/fizzbuzz.yml`, the classic
+  fizzbuzz.
 - `crates/nodetool/tests/plugins` — plugin crates that exist for the tests
   (`alpha` is sub-grouped, `beta` is flat, `gamma` supplies the compiler
   tests' node types, `delta` supplies the engine tests' node types, `epsilon`
@@ -171,6 +175,7 @@ cargo run -p run-node          # drive one behaviour-ful node with scripted stre
 cargo run -p run-graph         # run the pipeline sample headless, values as they arrive
 cargo run -p nodetool-fizzbuzz -- crates/nodetool-fizzbuzz/graphs/fizzbuzz.yml  # one hundred lines, as they arrive
 cargo run -p nodetool-fizzbuzz -- --ui crates/nodetool-fizzbuzz/graphs/fizzbuzz.yml  # the editor over the same graph, the terminal keeping the output
+cargo run -p nodetool-fizzbuzz -- --ui --address 127.0.0.1:0 crates/nodetool-fizzbuzz/graphs/fizzbuzz.yml  # the same, on a free port it names
 cargo run -p visual            # the editor on http://127.0.0.1:8420
 cargo run -p visual -- examples/visual/graphs/sample.yml  # the editor on a graph file
 ```
