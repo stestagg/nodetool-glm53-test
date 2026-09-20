@@ -81,3 +81,5 @@ its declared types.
   tooltip is empty. Adding a family word is a listing change, server work
   this story does not count; a family display name, if ever wanted, is a
   protocol story of its own.
+
+- 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
