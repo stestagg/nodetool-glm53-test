@@ -176,6 +176,70 @@ describe('the node’s declared choices', () => {
   })
 })
 
+// A port never spells out a list of types: one declared type shows its
+// name, a union or a family shows none, and a wired input reads
+// `connected` rather than standing in for the type it carries.
+describe('the type text a port shows', () => {
+  const spread = {
+    type_ref: 'beta/spread',
+    label: 'Spread',
+    icon: null,
+    inputs: [
+      { name: 'one', type_refs: ['i32'] },
+      { name: 'many', type_refs: ['i8', 'i16', 'i32', 'i64'] },
+      { name: 'unknown', type_refs: ['gone/missing'] },
+    ],
+    outputs: [{ name: 'many', type_refs: ['i8', 'i16', 'i32', 'i64'] }],
+  }
+
+  function renderSpread(wiredInputs = []) {
+    render(
+      <EditContext.Provider value={vi.fn()}>
+        <LockContext.Provider value={false}>
+          <WireContext.Provider value={{ wire: null, setWire: vi.fn() }}>
+            <ReactFlowProvider>
+              <TypeNode
+                selected={false}
+                data={{
+                  node: { uuid: 's1', type_ref: 'beta/spread', parameters: {} },
+                  type: spread,
+                  wiredInputs,
+                  scalarInputs: ['one', 'many', 'unknown'],
+                  marks: [],
+                  portValues: {},
+                  dataTypes: { i32: { color: '#2d72d2', shape: 'square' } },
+                }}
+              />
+            </ReactFlowProvider>
+          </WireContext.Provider>
+        </LockContext.Provider>
+      </EditContext.Provider>,
+    )
+    const titleOf = (name) =>
+      screen.getByLabelText(`Spread ${name} input`).closest('.port').getAttribute('title')
+    return { titleOf }
+  }
+
+  it('a single declared type shows its name, listing fact or not', () => {
+    const { titleOf } = renderSpread()
+    expect(titleOf('one')).toBe('i32')
+    expect(titleOf('unknown')).toBe('gone/missing')
+  })
+
+  it('a union or family port shows no type text at all', () => {
+    const { titleOf } = renderSpread()
+    expect(titleOf('many')).toBeNull()
+    expect(document.querySelector('.port.out').getAttribute('title')).toBeNull()
+  })
+
+  it('a wired input reads `connected`, with no type names appended', () => {
+    renderSpread(['one', 'many'])
+    const indicators = [...document.querySelectorAll('.port-connected')]
+    expect(indicators.map((span) => span.textContent)).toEqual(['connected', 'connected'])
+    expect(indicators.every((span) => span.getAttribute('title') === null)).toBe(true)
+  })
+})
+
 // A collapsed group renders by the same default node class as any type:
 // the group's ports, the type channel, an inline field on a scalar
 // exposed input — and no icon in the title bar, where every ordinary node

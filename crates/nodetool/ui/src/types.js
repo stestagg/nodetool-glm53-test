@@ -16,13 +16,22 @@ export const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 
 const SHAPES = new Set(['circle', 'square'])
 
+// The one type reference a port declares, or null where it declares more
+// than one — a union, a family — which no single name answers for. Every
+// view that shows or hides a port's type asks here: the dot's appearance,
+// the text a tooltip carries, and the value-UI lookups, which want the
+// same classification for a different purpose.
+export function declaredRef(port) {
+  return port?.type_refs.length === 1 ? port.type_refs[0] : null
+}
+
 // What a port renders: its single declared type's appearance, or the
 // neutral — a port no type declares (a wire's source the listing cannot
 // produce) reads as the neutral too. `dataTypes` is the listing's
 // colour-and-shape fact, keyed by type reference.
 export function portAppearance(port, dataTypes = {}) {
-  const fact =
-    port?.type_refs.length === 1 ? dataTypes[port.type_refs[0]] : undefined
+  const ref = declaredRef(port)
+  const fact = ref === null ? undefined : dataTypes[ref]
   if (!fact) return NEUTRAL
   return {
     color: fact.color,

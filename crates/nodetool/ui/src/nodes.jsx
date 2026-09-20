@@ -1,12 +1,12 @@
 // The node renderings. The default node class draws a node from its type
 // definition alone — a title bar carrying the node's current label,
 // named input ports down the left, named output ports down the right,
-// each port's declared type available as a tooltip rather than printed
-// on the node, because space is at a premium. A scalar-possible input
-// also carries a small editable field on the node itself — the second
-// view of the input's stored value, the sidebar the first; a wire
-// reaching the input replaces the field with the declared types, since a
-// connected input holds no literal to type into. It works when a plugin
+// each port's one declared type available as a tooltip rather than
+// printed on the node, because space is at a premium. A scalar-possible
+// input also carries a small editable field on the node itself — the
+// second view of the input's stored value, the sidebar the first; a wire
+// reaching the input replaces the field with the word `connected`, since
+// a connected input holds no literal to type into. It works when a plugin
 // provides nothing but the definition. A node whose type reference is
 // missing from the listing renders as a placeholder instead — ports
 // unknown, so no fields, but the label is the one attribute its sidebar
@@ -52,15 +52,17 @@
 // ports carry the type channel: a port declaring exactly one type renders
 // its dot in that type's declared colour and shape, everything else — a
 // union declaration, a reference the listing does not know — in the
-// neutral pair. The declared types remain readable in the port's
-// tooltip.
+// neutral pair. A port declaring exactly one type keeps that name in its
+// tooltip, listing fact or not; a union or family port shows no type text
+// at all, a list of names being neither the type the port carries nor an
+// answer anybody asked for.
 
 import { useContext } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { commitParameter, Field, Select, useEdit, useLocked, WireContext } from './fields.jsx'
 import { portKey } from './keyboard.js'
 import { PluginUiContext, UiBoundary } from './pluginui.jsx'
-import { portAppearance } from './types.js'
+import { declaredRef, portAppearance } from './types.js'
 
 // The status state in the title bar, right of the label: one word, the
 // bridge's own vocabulary.
@@ -112,7 +114,7 @@ function InputPort({ port, node, wired, scalar, appearance, title }) {
   return (
     <div
       className={`port in${wired ? ' connected' : ''}`}
-      title={port.type_refs.join(', ')}
+      title={declaredRef(port)}
     >
       <Handle
         type="target"
@@ -129,9 +131,7 @@ function InputPort({ port, node, wired, scalar, appearance, title }) {
       <span className="port-name">{port.name}</span>
       {scalar &&
         (wired ? (
-          <span className="port-connected" title="connected">
-            {port.type_refs.join(', ')}
-          </span>
+          <span className="port-connected">connected</span>
         ) : (
           <Field
             className="port-field"
@@ -152,7 +152,7 @@ function InputPort({ port, node, wired, scalar, appearance, title }) {
 function PortValue({ port, dataTypes, value }) {
   const plugin = useContext(PluginUiContext)
   if (value === undefined) return null
-  const ref = port.type_refs.length === 1 ? port.type_refs[0] : null
+  const ref = declaredRef(port)
   if (!ref || !dataTypes?.[ref]?.ui) {
     return (
       <span className="port-value" title={value}>
@@ -174,7 +174,7 @@ function PortValue({ port, dataTypes, value }) {
 function OutputPort({ port, appearance, value, dataTypes, nodeUuid, title }) {
   const { act: onPortKey, wireFrom } = usePortKeys()
   return (
-    <div className="port out" title={port.type_refs.join(', ')}>
+    <div className="port out" title={declaredRef(port)}>
       <Handle
         type="source"
         position={Position.Right}

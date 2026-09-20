@@ -130,14 +130,25 @@ describe('Sidebar', () => {
     outputs: [],
   }
 
-  function single(node, edit = vi.fn()) {
+  function single(node, edit = vi.fn(), wiredInputs = []) {
     render(
       <EditContext.Provider value={edit}>
-        <Sidebar node={node} type={dial} wiredInputs={[]} baseScalars={{ i32: true }} />
+        <Sidebar
+          node={node}
+          type={dial}
+          wiredInputs={wiredInputs}
+          baseScalars={{ i32: true }}
+        />
       </EditContext.Provider>,
     )
     return edit
   }
+
+  it('a wired input reads `connected`, never the types its port declares', () => {
+    single({ uuid: 'd1', type_ref: 'beta/dial', parameters: {} }, vi.fn(), ['value'])
+    expect(screen.getByText('connected').textContent).toBe('connected')
+    expect(screen.queryByText(/i32/)).toBeNull()
+  })
 
   it('shows the chosen option and commits a pick as the parameter edit', () => {
     const edit = single({ uuid: 'd1', type_ref: 'beta/dial', parameters: { mode: 'up' } })

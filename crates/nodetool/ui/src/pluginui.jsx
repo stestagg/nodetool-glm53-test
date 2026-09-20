@@ -46,6 +46,7 @@
 // type's values; until it arrives nothing else waits on it.
 
 import { createContext, Component } from 'react'
+import { declaredRef } from './types.js'
 
 // The contract this page offers. A bundle names the version it was built
 // against; the listing carries that name, so a bundle the page does not
@@ -121,7 +122,7 @@ export function valueTypeRefs(graph, types, dataTypes, values) {
     if (!type) continue
     for (const port of type.outputs) {
       if (values[`${node.uuid}/${port.name}`] === undefined) continue
-      const ref = port.type_refs.length === 1 ? port.type_refs[0] : null
+      const ref = declaredRef(port)
       if (ref && dataTypes?.[ref]?.ui) refs.add(ref)
     }
   }

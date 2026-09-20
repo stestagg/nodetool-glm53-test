@@ -206,9 +206,9 @@ editable fields beside their ports, an edit in either view appearing in
 the other. A field commits on Enter or on leaving it; a select commits the
 option as it is picked, offering exactly the options the type declared and
 showing an unset or unoffered value as itself until one of them replaces
-it — a choice no instance has made is a compile error the canvas marks. A wire over an input replaces its field with the
-declared types in both views; unhooking returns it empty, a replaced
-literal not remembered. A committed value is stored as the plain scalar
+it — a choice no instance has made is a compile error the canvas marks. A
+wire over an input replaces its field with the word `connected` in both
+views; unhooking returns it empty, a replaced literal not remembered. A committed value is stored as the plain scalar
 its text reads as — boolean, integer, float, else string — and a connected
 input takes no value. Background drag pans; scroll zooms. Dragging between
 an output port and an input port — from either end — wires them; one input
@@ -316,7 +316,10 @@ declare both a colour and a shape renders in one shared neutral. Colours
 and shapes live with the type declarations — the base scalars' in core,
 custom types' in the declaring plugin's metadata — composed into the
 listing the server serves, so the browser hardcodes no type's appearance;
-the declared types remain readable in a port's tooltip. Every colour the
+a port declaring exactly one type keeps that one name in its tooltip,
+while a union-declared or family port shows no type text at all — a list
+of types is neither the type the port carries nor an answer anybody asked
+for. Every colour the
 editor renders — its own theme and the neutral pair, and the base
 scalars' declarations against the surfaces they sit on — clears the
 editor's contrast floor: text 4.5:1, meaningful edges 3:1, judged against

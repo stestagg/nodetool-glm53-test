@@ -87,3 +87,9 @@ its declared types.
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
 
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
+
+- 2026-09-21 — Implemented. The rule is `declaredRef` in `types.js`, beside
+  `portAppearance`, which now reads it too: the port's one declared
+  reference, or null. Every site that shows or hides type text asks it —
+  both port tooltips, and the two value-UI lookups that wanted the same
+  classification for a different purpose.

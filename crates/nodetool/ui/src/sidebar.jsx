@@ -65,9 +65,7 @@ export function Sidebar({ node, type, wiredInputs, baseScalars }) {
             <div className="sidebar-row" key={port.name}>
               <span className="sidebar-name">{port.name}</span>
               {wiredInputs.includes(port.name) ? (
-                <span className="sidebar-connected">
-                  connected — {port.type_refs.join(', ')}
-                </span>
+                <span className="sidebar-connected">connected</span>
               ) : (
                 <Field
                   className="sidebar-value"
