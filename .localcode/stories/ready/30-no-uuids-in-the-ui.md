@@ -117,3 +117,5 @@ is built in the editor here.
   structure, addressed by REQ-41 and untouched. The line is rendering: if it
   becomes visible text in the browser, it is a label; if it stays a field in
   a JSON envelope or a Map key in the UI, it is an address.
+
+- 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
