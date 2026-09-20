@@ -48,5 +48,5 @@ mod value;
 
 pub use behaviour::BehaviourFn;
 pub use data_type::{Conversion, ConvertFn, DataType, MetaValue, SerialiseFn, ValueUi};
-pub use node_type::{Choice, NodeType, NodeUi, Port};
+pub use node_type::{carried_check, Choice, NodeType, NodeUi, ParameterCheck, Port};
 pub use value::Value;

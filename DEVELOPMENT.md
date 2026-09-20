@@ -45,10 +45,12 @@ scalar data types.
   crate, installing the dependencies from the lockfile when they are
   missing or stale.
 - `crates/nodetool-utility` — the first-party utility node library, a plugin
-  crate whose only dependency is `nodetool`: an `If` router and a `Format`
-  node, declared through the same `node_type!` registration path and
-  authoring API as any third-party plugin. Linking the crate into a binary
-  is the whole integration step.
+  crate whose only dependency is `nodetool`: an `If` router, a `Format`
+  node, and a `Select` chooser that emits one of its two `String`
+  candidates per boolean choice, pairing each choice with one value from
+  each candidate. All declared through the same `node_type!` registration
+  path and authoring API as any third-party plugin. Linking the crate into
+  a binary is the whole integration step.
 - `crates/nodetool-fizzbuzz` — the first-party fizzbuzz node library, a
   plugin crate like the utility one: a `Counter` source, the two operator
   nodes whose operation each instance chooses — `Arithmetic` (add,
@@ -512,7 +514,10 @@ on the compiled node, so the behaviour builder stamps the instance for that
 type; `crates/nodetool-fizzbuzz` is the reference. The optional
 `check_parameters` arm names a function the compiler consults once the
 instance's parameters and families resolved, for validations the type rules
-cannot express — a zero step, say.
+cannot express — a zero step, say. A behaviour that gates on every one of
+its inputs hands `nodetool::carried_check` their names: an input neither a
+connection feeds nor a parameter holds is then a compile error naming it,
+rather than a run that hangs on a stream that stays empty.
 
 A plugin can also ship UI the same way it ships nodes and types: declared on
 the Rust side, embedded in the crate at build time, served by the editor

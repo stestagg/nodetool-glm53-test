@@ -101,6 +101,22 @@ pub struct Port {
 /// reports naming the node.
 pub type ParameterCheck = fn(&CompiledNode) -> Vec<String>;
 
+/// The compile-time form of an input a behaviour gates on but nothing
+/// carries: neither a connection feeds it nor a parameter holds it, so the
+/// gate waits on a stream that is empty and stays empty — the run would
+/// stall there without end, with nothing to read and no error to show. A
+/// [`ParameterCheck`] hands this the names its behaviour gates on; each one
+/// carried by neither is a compile error naming it.
+pub fn carried_check(compiled: &CompiledNode, names: &[&str]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| !compiled.parameters.contains_key(*name) && !compiled.fed.contains(*name))
+        .map(|name| {
+            format!("input `{name}` holds no parameter value and no connection feeds it — the node would never fire")
+        })
+        .collect()
+}
+
 inventory::collect! { NodeType }
 
 impl fmt::Display for NodeType {

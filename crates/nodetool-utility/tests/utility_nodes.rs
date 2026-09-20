@@ -2,18 +2,21 @@
 //! If routing every pairing decision's value to exactly one selected output,
 //! the stream semantics' first-value gating and held-value re-routing
 //! arriving unchanged, the Format's two modes across the base scalars with
-//! the unfed-template hazard pinned, completion by the default rule, and the
-//! compile-time union — exact matches riding no conversion, a plugin custom
-//! type bridged by its own declared conversion, and the connection neither
-//! can bridge failing with the standard error.
+//! the unfed-template hazard pinned, the Select pairing each choice against
+//! one value from each candidate — connections buffered and consumed in
+//! lockstep, parameter literals read where they lie — completion by the
+//! default rule, and the compile-time checks: the union's exact matches
+//! riding no conversion, a plugin custom type bridged by its own declared
+//! conversion, the connection neither can bridge failing with the standard
+//! error, and an input nothing carries refused before any run.
 
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 
 use nodetool::behaviour::{drive, handoff, Behaviour, Input, Output};
-use nodetool::compile;
-use nodetool::graph::{Edge, GraphDefinition, Mapping, NodeInstance};
+use nodetool::compile::{self, CompiledNode, CompiledParameter};
+use nodetool::graph::{Edge, GraphDefinition, Mapping, NodeInstance, ParameterValue};
 use nodetool::registry::{self, Registry};
 use nodetool::scalars;
 use nodetool::Value;
@@ -46,6 +49,16 @@ nodetool::node_type! {
     outputs: [ value: "String" ],
 }
 
+// A bool-emitting source: the choice stream's upstream side.
+nodetool::node_type! {
+    type_ref: "utility-test/bool_source",
+    label: "Bool source",
+    icon: "<svg/>",
+    plugin: "utility-test",
+    inputs: [],
+    outputs: [ value: "bool" ],
+}
+
 // A custom type whose own declared conversion into `String` is the bridge
 // the union cannot supply: the sibling of the unbridgeable `thing`.
 const WORD: nodetool::Uuid = nodetool::uuid!("00000000-0000-0000-0000-080000000002");
@@ -74,6 +87,8 @@ nodetool::node_type! {
 const SOURCE: &str = "00000000-0000-0000-0000-0800000000a1";
 const ROUTER: &str = "00000000-0000-0000-0000-0800000000a2";
 const FORMATTER: &str = "00000000-0000-0000-0000-0800000000a3";
+const CHOOSER: &str = "00000000-0000-0000-0000-0800000000a4";
+const FLAGGER: &str = "00000000-0000-0000-0000-0800000000a5";
 
 fn node(uuid: &str, type_ref: &str) -> NodeInstance {
     NodeInstance {
@@ -107,12 +122,29 @@ fn definition(nodes: Vec<NodeInstance>, edges: Vec<Edge>) -> GraphDefinition {
 /// The behaviour of the named utility node, built through the one registration
 /// path — the same way an engine builds it.
 fn behaviour_of(type_ref: &str) -> Box<dyn Behaviour> {
+    behaviour_with_parameters(type_ref, &[])
+}
+
+/// The same, for an instance whose named inputs a parameter literal carries
+/// — the shape compile hands a node whose ports hold literals, each
+/// resolved to its registered type.
+fn behaviour_with_parameters(type_ref: &str, held: &[(&'static str, Value)]) -> Box<dyn Behaviour> {
     let node_type =
         registry::node_type(type_ref).expect("the utility crate declares this node type");
-    let compiled = nodetool::compile::CompiledNode {
+    let compiled = CompiledNode {
         node_type,
         label: node_type.label.to_owned(),
-        parameters: Default::default(),
+        parameters: held
+            .iter()
+            .map(|(input, value)| {
+                let parameter = CompiledParameter {
+                    resolved_type: registry::data_type_by_id(value.type_id())
+                        .expect("the literal's type is registered"),
+                    value: value.clone(),
+                };
+                (*input, parameter)
+            })
+            .collect(),
         families: Default::default(),
         fed: Default::default(),
     };
@@ -424,7 +456,7 @@ async fn a_format_whose_template_input_is_never_fed_hangs_the_run() {
 }
 
 #[test]
-fn the_utility_crate_contributes_exactly_its_two_node_types() {
+fn the_utility_crate_contributes_exactly_its_three_node_types() {
     let mut contributed: Vec<&str> = registry::node_types()
         .filter(|node_type| node_type.plugin == "utility")
         .map(|node_type| node_type.type_ref)
@@ -432,8 +464,8 @@ fn the_utility_crate_contributes_exactly_its_two_node_types() {
     contributed.sort_unstable();
     assert_eq!(
         contributed,
-        ["utility/format", "utility/if"],
-        "the utility crate declares exactly the two named nodes: {contributed:?}"
+        ["utility/format", "utility/if", "utility/select"],
+        "the utility crate declares exactly the three named nodes: {contributed:?}"
     );
 }
 
@@ -537,5 +569,281 @@ fn a_connection_the_union_and_declared_conversions_cannot_bridge_fails_to_compil
         message.contains("no exact match and no declared conversion bridges them"),
         "the standard error: {}",
         message
+    );
+}
+
+/// One scripted arrival on a Select's inputs. A test's script is its whole
+/// story: the order the arrivals ride in is what the pairing is about.
+enum Arrival {
+    Choose(bool),
+    Then(&'static str),
+    Else(&'static str),
+}
+
+impl Arrival {
+    fn port(&self) -> &'static str {
+        match self {
+            Arrival::Choose(_) => "choose",
+            Arrival::Then(_) => "then",
+            Arrival::Else(_) => "else",
+        }
+    }
+
+    fn value(&self) -> Value {
+        match self {
+            Arrival::Choose(flag) => Value::new(scalars::BOOL, *flag),
+            Arrival::Then(text) | Arrival::Else(text) => {
+                Value::new(scalars::STRING, (*text).to_owned())
+            }
+        }
+    }
+}
+
+/// Drives one Select to its end and returns what it emitted, in order.
+/// `held` names the inputs a parameter literal carries: each is fed the
+/// stream a parameter feeds — one value, then the end — and takes no part
+/// in the script. A scripted input's stream ends as its last arrival
+/// passes, so a script that stops choosing leaves the later candidates
+/// arriving on a choice stream that has ended.
+async fn selected(held: &[(&'static str, Value)], script: &[Arrival]) -> Vec<String> {
+    let mut behaviour = behaviour_with_parameters("utility/select", held);
+    let (choose_tx, choose_rx) = handoff();
+    let (then_tx, then_rx) = handoff();
+    let (else_tx, else_rx) = handoff();
+    let (value_out, value_rx) = collected("value");
+    let driven = tokio::spawn(async move {
+        let mut inputs = [
+            Input::new("choose", choose_rx),
+            Input::new("then", then_rx),
+            Input::new("else", else_rx),
+        ];
+        let mut outputs = [value_out];
+        drive(behaviour.as_mut(), &mut inputs, &mut outputs).await
+    });
+
+    let mut choose = Some(choose_tx);
+    let mut then = Some(then_tx);
+    let mut otherwise = Some(else_tx);
+    for (port, value) in held {
+        let sender = match *port {
+            "choose" => &mut choose,
+            "then" => &mut then,
+            other => {
+                assert_eq!(other, "else", "the select declares no input `{other}`");
+                &mut otherwise
+            }
+        };
+        sender
+            .take()
+            .expect("one literal per held input")
+            .send(value.clone())
+            .await
+            .expect("the stream takes it");
+    }
+    for (index, arrival) in script.iter().enumerate() {
+        let port = arrival.port();
+        let sender = match port {
+            "choose" => &mut choose,
+            "then" => &mut then,
+            _ => &mut otherwise,
+        };
+        sender
+            .as_ref()
+            .expect("a held input takes no scripted arrivals")
+            .send(arrival.value())
+            .await
+            .expect("the stream takes it");
+        if !script[index + 1..].iter().any(|later| later.port() == port) {
+            sender.take();
+        }
+    }
+    drop((choose, then, otherwise));
+
+    driven
+        .await
+        .expect("the node task ran to its end")
+        .expect("the select completes");
+    drained(value_rx).await
+}
+
+#[tokio::test]
+async fn a_literal_candidate_pairs_each_choice_with_the_connections_next_value() {
+    let emitted = selected(
+        &[("then", Value::new(scalars::STRING, "literal".to_owned()))],
+        &[
+            Arrival::Choose(true),
+            Arrival::Else("e1"),
+            Arrival::Choose(false),
+            Arrival::Else("e2"),
+            Arrival::Choose(true),
+        ],
+    )
+    .await;
+    assert_eq!(
+        emitted,
+        ["literal", "e2"],
+        "the literal never gated a pairing, and the last choice found no `else` value to pair with"
+    );
+}
+
+#[tokio::test]
+async fn two_connected_candidates_arriving_out_of_step_pair_one_to_one_with_each_choice() {
+    let emitted = selected(
+        &[],
+        &[
+            Arrival::Then("t1"),
+            Arrival::Then("t2"),
+            Arrival::Choose(true),
+            Arrival::Else("e1"),
+            Arrival::Choose(false),
+            Arrival::Then("t3"),
+            Arrival::Else("e2"),
+            Arrival::Choose(false),
+            Arrival::Else("e3"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        emitted,
+        ["t1", "e2", "e3"],
+        "each emission pairs the k-th value of every input, never a stale or future neighbour"
+    );
+}
+
+#[tokio::test]
+async fn a_choice_stream_that_ends_still_pairs_its_buffered_choices_with_the_later_candidates() {
+    let emitted = selected(
+        &[],
+        &[
+            Arrival::Choose(true),
+            Arrival::Choose(false),
+            Arrival::Then("t1"),
+            Arrival::Else("e1"),
+            Arrival::Then("t2"),
+            Arrival::Else("e2"),
+            Arrival::Then("t3"),
+            Arrival::Else("e3"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        emitted,
+        ["t1", "e2"],
+        "the two buffered choices paired with the first two candidate pairs; the third pair, left unchosen, emitted nothing and the node still completed"
+    );
+}
+
+#[tokio::test]
+async fn a_choice_held_as_a_parameter_literal_pairs_every_candidate_pair_under_it() {
+    let emitted = selected(
+        &[("choose", Value::new(scalars::BOOL, true))],
+        &[
+            Arrival::Then("t1"),
+            Arrival::Else("e1"),
+            Arrival::Then("t2"),
+            Arrival::Else("e2"),
+            Arrival::Then("t3"),
+            Arrival::Else("e3"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        emitted,
+        ["t1", "t2", "t3"],
+        "the held choice is always there: it pairs with every candidate pair, not only the first"
+    );
+}
+
+#[test]
+fn an_input_nothing_carries_is_a_compile_error_naming_it() {
+    let result = compile::compile(
+        &definition(
+            vec![
+                node(FLAGGER, "utility-test/bool_source"),
+                node(SOURCE, "utility-test/string_source"),
+                node(CHOOSER, "utility/select"),
+            ],
+            vec![
+                edge(FLAGGER, "value", CHOOSER, "choose"),
+                edge(SOURCE, "value", CHOOSER, "then"),
+            ],
+        ),
+        &Registry::collect(),
+    );
+    assert!(
+        result.graph.is_none(),
+        "the `else` input nothing carries blocks the compile"
+    );
+    assert_eq!(
+        result.errors.len(),
+        1,
+        "expected one error, got: {:?}",
+        result.errors
+    );
+    let message = &result.errors[0].message;
+    assert!(
+        message.contains("Select") && message.contains("`else`"),
+        "the error names the node and the input: {message}"
+    );
+    assert!(
+        message.contains("the node would never fire"),
+        "the fault surfaces at compile, before a run hangs on it: {message}"
+    );
+}
+
+#[test]
+fn a_literal_candidate_carries_its_input_beside_a_connected_one() {
+    let mut chooser = node(CHOOSER, "utility/select");
+    chooser
+        .parameters
+        .insert("else".to_owned(), ParameterValue::Str("spare".to_owned()));
+    let result = compile::compile(
+        &definition(
+            vec![
+                node(FLAGGER, "utility-test/bool_source"),
+                node(SOURCE, "utility-test/string_source"),
+                chooser,
+            ],
+            vec![
+                edge(FLAGGER, "value", CHOOSER, "choose"),
+                edge(SOURCE, "value", CHOOSER, "then"),
+            ],
+        ),
+        &Registry::collect(),
+    );
+    assert!(
+        result.graph.is_some(),
+        "the literal carries the `else` input: {:?}",
+        result.errors
+    );
+    assert!(
+        result.warnings.is_empty(),
+        "every input carried, so nothing to warn about: {:?}",
+        result.warnings
+    );
+}
+
+#[tokio::test]
+async fn a_select_whose_every_input_is_held_completes_instead_of_pairing_for_ever() {
+    // Nothing to consume and the pairing always ready: the run has to be
+    // what ends it. The timeout is the assertion — a pairing that looped
+    // on the held values would never return.
+    let emitted = tokio::time::timeout(
+        Duration::from_secs(5),
+        selected(
+            &[
+                ("choose", Value::new(scalars::BOOL, false)),
+                ("then", Value::new(scalars::STRING, "taken".to_owned())),
+                ("else", Value::new(scalars::STRING, "spare".to_owned())),
+            ],
+            &[],
+        ),
+    )
+    .await
+    .expect("the select ended rather than pairing its held values for ever");
+    assert_eq!(
+        emitted,
+        ["spare", "spare", "spare"],
+        "each literal's own arrival fired a run under the held choice, like any other arrival"
     );
 }

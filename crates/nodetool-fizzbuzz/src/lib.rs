@@ -31,6 +31,7 @@ use std::marker::PhantomData;
 use nodetool::async_trait;
 
 use nodetool::behaviour::{Behaviour, Error, Flow, Io, Trigger};
+use nodetool::carried_check;
 use nodetool::compile::CompiledNode;
 use nodetool::node_type;
 use nodetool::scalars;
@@ -99,20 +100,6 @@ fn counter_check(compiled: &CompiledNode) -> Vec<String> {
         // The family itself failed to compile; it reported its own error.
         Vec::new()
     }
-}
-
-/// The compile-time form of an input the behaviour reads but nothing
-/// carries: neither a connection feeds it nor a parameter holds it, so the
-/// node's gate waits on an input whose stream is empty — the run would
-/// stall there without end, with nothing to read and no error to show.
-fn carried_check(compiled: &CompiledNode, names: &[&str]) -> Vec<String> {
-    names
-        .iter()
-        .filter(|name| !compiled.parameters.contains_key(*name) && !compiled.fed.contains(*name))
-        .map(|name| {
-            format!("input `{name}` holds no parameter value and no connection feeds it — the node would never fire")
-        })
-        .collect()
 }
 
 fn counter_step_check<T: Numeric>(compiled: &CompiledNode) -> Vec<String> {
