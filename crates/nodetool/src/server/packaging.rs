@@ -44,7 +44,7 @@ pub fn package(
     }
     for uuid in selection {
         if !graph.nodes.iter().any(|node| node.uuid == *uuid) {
-            return Err(format!("no node {uuid} in the definition"));
+            return Err("no such node in the definition".to_owned());
         }
         if !selected.insert(*uuid) {
             return Err(format!("node {uuid} is named twice in the selection"));
@@ -131,12 +131,16 @@ pub fn package(
 /// parameter. The gesture always succeeds structurally: a returning uuid
 /// that collides with a surviving node is reassigned fresh, and the group
 /// definition leaves with the instance when no other instance references it.
-pub fn unpack(graph: &mut GraphDefinition, uuid: Uuid) -> Result<Vec<Uuid>, String> {
+pub fn unpack(
+    graph: &mut GraphDefinition,
+    uuid: Uuid,
+    registry: &Registry,
+) -> Result<Vec<Uuid>, String> {
     let at = graph
         .nodes
         .iter()
         .position(|node| node.uuid == uuid)
-        .ok_or_else(|| format!("no node {uuid} in the definition"))?;
+        .ok_or("no such node in the definition")?;
     let instance = graph.nodes[at].clone();
     let group = graph
         .groups
@@ -145,7 +149,7 @@ pub fn unpack(graph: &mut GraphDefinition, uuid: Uuid) -> Result<Vec<Uuid>, Stri
         .ok_or_else(|| {
             format!(
                 "node {} instantiates `{}`, which no group in the document defines; there is nothing to unpack",
-                named(&instance),
+                instance.name(registry.node_type(&instance.type_ref)),
                 instance.type_ref
             )
         })?
@@ -291,7 +295,7 @@ fn boundary_placeholder(
         let declared = registry.node_type(&node.type_ref).is_some()
             || graph.groups.iter().any(|group| group.name == node.type_ref);
         if !declared {
-            return Some(named(node));
+            return Some(node.name(registry.node_type(&node.type_ref)).to_owned());
         }
     }
     None
@@ -475,14 +479,4 @@ fn coordinate(value: f64) -> Value {
     } else {
         Value::Number(serde_yaml::Number::from(value))
     }
-}
-
-/// What an error names a node instance by: the label it shows, else its
-/// type reference, with the uuid beside it — compile's dialect.
-fn named(node: &NodeInstance) -> String {
-    format!(
-        "{} ({})",
-        node.label.as_deref().unwrap_or(&node.type_ref),
-        node.uuid
-    )
 }

@@ -426,8 +426,8 @@ edges:
     assert_eq!(reply["type"], "error");
     let message = reply["error"].as_str().unwrap();
     assert!(
-        message.contains(U_ADD_1) && message.contains("gone/missing"),
-        "the refusal names the node whose port would carry nothing: {message}"
+        message.contains("gone/missing") && !message.contains(U_ADD_1),
+        "the refusal names the node whose port would carry nothing — a node nothing declares by the type reference the file writes, never by its uuid: {message}"
     );
     assert_eq!(held_definition(&editor), before);
 

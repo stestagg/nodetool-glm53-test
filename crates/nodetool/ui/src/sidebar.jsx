@@ -43,10 +43,6 @@ export function Sidebar({ node, type, wiredInputs, baseScalars }) {
           <span className="sidebar-name">Type</span>
           <code title={node.type_ref}>{node.type_ref}</code>
         </div>
-        <div className="sidebar-fact">
-          <span className="sidebar-name">UUID</span>
-          <code title={node.uuid}>{node.uuid}</code>
-        </div>
       </section>
       {(choices.length > 0 || scalarPorts.length > 0) && (
         <section className="sidebar-section">

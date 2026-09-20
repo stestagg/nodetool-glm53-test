@@ -132,8 +132,12 @@ async fn start_compiles_the_held_definition_afresh_so_an_edit_since_the_last_run
     assert_eq!(ended["outcome"], json!("failed"));
     let failure = ended["error"].as_str().unwrap();
     assert!(
-        failure.contains(&failer) && failure.contains("the failer ran"),
+        failure.contains("Failer") && failure.contains("the failer ran"),
         "the failure names the node the edited definition runs: {failure}"
+    );
+    assert!(
+        !failure.contains(&failer),
+        "by name, not by uuid: {failure}"
     );
 }
 
@@ -159,17 +163,24 @@ async fn a_compile_failure_is_answered_with_the_errors_and_no_run_starts() {
         );
     }
 
+    // Named on the canvas, so the cycle's walk reads as the two nodes the
+    // user sees rather than twice the type's default label.
+    edit_label(&editor, 6, &doubler_1, "there");
+    edit_label(&editor, 7, &doubler_2, "and back");
+
     // Subscribed only now, past the edits: nothing is pushed for a
     // refused start, neither the running state nor anything else.
     let mut watcher = editor.subscribe();
-    let refused = send(&editor, r#"{"id": 6, "type": "start_run"}"#);
+    let refused = send(&editor, r#"{"id": 8, "type": "start_run"}"#);
     assert_eq!(refused["type"], "error");
     let errors = refused["error"].as_str().unwrap();
     assert!(
-        errors.contains("cycle")
-            && errors.contains(doubler_1.as_str())
-            && errors.contains(doubler_2.as_str()),
+        errors.contains("cycle: there → and back → there"),
         "the compile errors name what and where: {errors}"
+    );
+    assert!(
+        !errors.contains(doubler_1.as_str()) && !errors.contains(doubler_2.as_str()),
+        "by name, not by uuid: {errors}"
     );
     assert!(
         watcher.try_recv().is_err(),
@@ -290,9 +301,12 @@ async fn natural_completion_and_fail_fast_each_return_to_idle_with_their_outcome
     assert_eq!(failed["outcome"], json!("failed"));
     let failure = failed["error"].as_str().unwrap();
     assert!(
-        failure.contains("00000000-0000-0000-0000-0000000000d5")
-            && failure.contains("the failer ran"),
+        failure.contains("Failer") && failure.contains("the failer ran"),
         "the failure names the node instance and what failed: {failure}"
+    );
+    assert!(
+        !failure.contains("00000000-0000-0000-0000-0000000000d5"),
+        "by name; the uuid rides the outcome for the mark: {failure}"
     );
     assert_eq!(
         failed["node"],

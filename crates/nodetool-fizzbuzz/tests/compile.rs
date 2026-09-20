@@ -297,7 +297,10 @@ fn conflicting_sources_fail_naming_the_node_ports_and_types() {
     ));
 
     let error = single_error(messages);
-    assert!(error.contains(COUNTER), "{error}");
+    assert!(
+        error.contains("Counter") && !error.contains(COUNTER),
+        "{error}"
+    );
     assert!(
         error.contains("`start`") && error.contains("`stop`"),
         "{error}"
@@ -312,7 +315,10 @@ fn a_family_with_no_resolution_source_fails() {
         vec![],
     )));
 
-    assert!(error.contains(COUNTER), "{error}");
+    assert!(
+        error.contains("Counter") && !error.contains(COUNTER),
+        "{error}"
+    );
     assert!(
         error.contains("`start`") && error.contains("`stop`") && error.contains("`step`"),
         "{error}"
@@ -332,7 +338,7 @@ fn a_zero_step_literal_fails_at_compile_time() {
     )));
 
     assert!(
-        error.contains(COUNTER) && error.contains("`step`"),
+        error.contains("Counter") && !error.contains(COUNTER) && error.contains("`step`"),
         "{error}"
     );
     assert!(error.contains("zero"), "{error}");
@@ -414,7 +420,7 @@ fn a_value_nothing_bridges_fails_to_compile_into_the_output() {
     )));
 
     assert!(
-        error.contains(OUTPUT) && error.contains("`text`"),
+        error.contains("Output") && !error.contains(OUTPUT) && error.contains("`text`"),
         "{error}"
     );
     assert!(
@@ -487,7 +493,10 @@ fn a_choice_left_unset_fails_compile_naming_the_node_and_the_choice() {
     ));
 
     let error = single_error(messages);
-    assert!(error.contains(COMPARISON), "{error}");
+    assert!(
+        error.contains("Comparison") && !error.contains(COMPARISON),
+        "{error}"
+    );
     assert!(
         error.contains("`cmp`") && error.contains("holds no value"),
         "{error}"
@@ -512,7 +521,10 @@ fn a_choice_outside_its_options_fails_compile_naming_the_value() {
     ));
 
     let error = single_error(messages);
-    assert!(error.contains(COMPARISON), "{error}");
+    assert!(
+        error.contains("Comparison") && !error.contains(COMPARISON),
+        "{error}"
+    );
     assert!(
         error.contains("`cmp`")
             && error.contains("roughly equal")

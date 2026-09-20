@@ -235,12 +235,15 @@ fn an_edge_must_reference_nodes_in_the_file() {
 #[test]
 fn an_input_takes_at_most_one_upstream() {
     let (path, message) = path_error(&format!(
-        "schema_version: 1\nnodes:\n  - uuid: {SPLIT}\n    type_ref: text/split\n  - uuid: {UPPER_1}\n    type_ref: text/uppercase\n  - uuid: {UPPER_2}\n    type_ref: text/uppercase\nedges:\n  - from: {SPLIT}\n    from_port: parts\n    to: {UPPER_1}\n    to_port: text\n  - from: {UPPER_2}\n    from_port: text\n    to: {UPPER_1}\n    to_port: text\n"
+        "schema_version: 1\nnodes:\n  - uuid: {SPLIT}\n    type_ref: text/split\n  - uuid: {UPPER_1}\n    type_ref: text/uppercase\n    label: the shouter\n  - uuid: {UPPER_2}\n    type_ref: text/uppercase\nedges:\n  - from: {SPLIT}\n    from_port: parts\n    to: {UPPER_1}\n    to_port: text\n  - from: {UPPER_2}\n    from_port: text\n    to: {UPPER_1}\n    to_port: text\n"
     ));
     assert_eq!(path, "edges[1]");
     assert!(message.contains("more than one connection"), "{message}");
-    assert!(message.contains("input `text` of node"), "{message}");
-    assert!(message.contains(UPPER_1), "{message}");
+    assert!(
+        message.contains("input `text` of node the shouter"),
+        "the node named as the file names it, not addressed: {message}"
+    );
+    assert!(!message.contains(UPPER_1), "{message}");
     assert!(message.contains("edges[0]"), "{message}");
 }
 
@@ -254,7 +257,11 @@ fn an_input_carries_a_connection_or_a_parameter_not_both() {
         message.contains("holds a parameter value and receives a connection"),
         "{message}"
     );
-    assert!(message.contains(UPPER_1), "{message}");
+    assert!(
+        message.contains("input `text` of node text/uppercase"),
+        "the loader consults no registry, so an unlabelled node reads as the type reference the file writes: {message}"
+    );
+    assert!(!message.contains(UPPER_1), "{message}");
 }
 
 #[test]

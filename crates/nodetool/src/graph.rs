@@ -178,6 +178,20 @@ pub struct NodeInstance {
     pub metadata: Mapping,
 }
 
+impl NodeInstance {
+    /// What a message calls this node: the instance's label, else the
+    /// label of the type it instantiates, else — for a type nothing
+    /// declares — the type reference the file writes. The uuid is the
+    /// internal address, never a name a user reads, so it is absent here;
+    /// two nodes may well answer to the same name, and where text alone
+    /// cannot tell them apart, a mark points at the one meant.
+    pub fn name<'a>(&'a self, node_type: Option<&'a crate::NodeType>) -> &'a str {
+        self.label
+            .as_deref()
+            .unwrap_or_else(|| node_type.map_or(self.type_ref.as_str(), |declared| declared.label))
+    }
+}
+
 /// An edge from one node's output port to another node's input port. An
 /// input takes at most one upstream; an output may feed any number of
 /// downstream inputs.
@@ -750,24 +764,27 @@ fn cross_check(
                 ));
             }
         }
+        // The edge's nodes are known to be in this graph by here, so
+        // each is named the way the file names it — the loader consults
+        // no registry, so an unlabelled node reads as its type reference.
+        let landed = &nodes[indexes[&edge.to]];
         if let Some(first) = connected.insert((edge.to, edge.to_port.as_str()), index) {
             return Err(err(
                 &path,
                 format!(
                     "input `{}` of node {} receives more than one connection; {prefix}{EDGES}[{first}] already feeds it",
-                    edge.to_port, edge.to
+                    edge.to_port,
+                    landed.name(None)
                 ),
             ));
         }
-        if nodes[indexes[&edge.to]]
-            .parameters
-            .contains_key(&edge.to_port)
-        {
+        if landed.parameters.contains_key(&edge.to_port) {
             return Err(err(
                 &path,
                 format!(
                     "input `{}` of node {} holds a parameter value and receives a connection; an input carries one or the other",
-                    edge.to_port, edge.to
+                    edge.to_port,
+                    landed.name(None)
                 ),
             ));
         }

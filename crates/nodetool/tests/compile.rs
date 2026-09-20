@@ -49,6 +49,20 @@ fn node(uuid: &str, type_ref: &str) -> NodeInstance {
     }
 }
 
+fn labelled(mut node: NodeInstance, label: &str) -> NodeInstance {
+    node.label = Some(label.to_owned());
+    node
+}
+
+/// No node uuid leaked into a message: the compiler speaks the names a
+/// user gave, or the labels of the types they instantiate.
+fn names_no_uuid(message: &str) {
+    assert!(
+        !message.contains("00000000-0000"),
+        "a node uuid reached the message text: {message}"
+    );
+}
+
 fn with_parameter(mut node: NodeInstance, name: &str, value: ParameterValue) -> NodeInstance {
     node.parameters.insert(name.to_owned(), value);
     node
@@ -212,12 +226,13 @@ fn a_connection_nothing_bridges_fails_naming_both_sides() {
     ));
 
     let error = single_error(messages);
+    names_no_uuid(&error);
     assert!(
-        error.contains(SOURCE) && error.contains("`value`"),
+        error.contains("Int source") && error.contains("`value`"),
         "{error}"
     );
     assert!(
-        error.contains(SINK_TEXT) && error.contains("`text`"),
+        error.contains("String sink") && error.contains("`text`"),
         "{error}"
     );
     assert!(error.contains("i32") && error.contains("String"), "{error}");
@@ -231,8 +246,8 @@ fn a_connection_nothing_bridges_fails_naming_both_sides() {
 fn a_cycle_is_an_error_naming_the_cycle() {
     let messages = compile_errors(&definition(
         vec![
-            node(PASS_1, "gamma/passthrough"),
-            node(PASS_2, "gamma/passthrough"),
+            labelled(node(PASS_1, "gamma/passthrough"), "there"),
+            labelled(node(PASS_2, "gamma/passthrough"), "and back"),
         ],
         vec![
             edge(PASS_1, "value", PASS_2, "value"),
@@ -241,17 +256,21 @@ fn a_cycle_is_an_error_naming_the_cycle() {
     ));
 
     let error = single_error(messages);
-    assert!(error.starts_with("cycle:"), "{error}");
-    assert!(error.contains(PASS_1) && error.contains(PASS_2), "{error}");
+    names_no_uuid(&error);
+    assert_eq!(error, "cycle: there → and back → there");
 }
 
 #[test]
 fn an_unknown_node_type_is_an_error_naming_the_reference() {
-    let messages = compile_errors(&definition(vec![node(SOURCE, "gamma/missing")], vec![]));
+    let messages = compile_errors(&definition(
+        vec![labelled(node(SOURCE, "gamma/missing"), "the stray")],
+        vec![],
+    ));
 
     let error = single_error(messages);
+    names_no_uuid(&error);
     assert!(
-        error.contains(SOURCE) && error.contains("`gamma/missing`"),
+        error.contains("the stray") && error.contains("`gamma/missing`"),
         "{error}"
     );
 }
@@ -276,7 +295,7 @@ fn an_edge_referencing_an_unknown_instance_is_an_error() {
 }
 
 #[test]
-fn a_duplicate_instance_uuid_is_an_error() {
+fn a_duplicate_instance_uuid_is_an_error_naming_both_nodes() {
     let messages = compile_errors(&definition(
         vec![
             node(SINK, "gamma/int_sink"),
@@ -286,9 +305,25 @@ fn a_duplicate_instance_uuid_is_an_error() {
     ));
 
     let error = single_error(messages);
-    assert!(
-        error.contains("duplicate node uuid") && error.contains(SINK),
-        "{error}"
+    names_no_uuid(&error);
+    assert_eq!(
+        error,
+        "the nodes `Int sink` and `Float64 sink` claim the same identity"
+    );
+}
+
+#[test]
+fn a_duplicate_uuid_between_nodes_that_read_alike_names_the_identity() {
+    // Two unlabelled sinks of one type read the same, so the colliding
+    // uuid is the only key the file offers to tell them apart.
+    let messages = compile_errors(&definition(
+        vec![node(SINK, "gamma/int_sink"), node(SINK, "gamma/int_sink")],
+        vec![],
+    ));
+
+    assert_eq!(
+        single_error(messages),
+        format!("the nodes `Int sink` and `Int sink` claim the same identity {SINK}")
     );
 }
 
@@ -338,8 +373,9 @@ fn an_input_with_two_upstreams_is_an_error() {
         error.contains("input `value` of node") && error.contains("more than one connection"),
         "{error}"
     );
+    names_no_uuid(&error);
     assert!(
-        error.contains(SOURCE) && error.contains(SOURCE_16),
+        error.contains("Int source") && error.contains("Int16 source"),
         "{error}"
     );
 }
@@ -377,8 +413,9 @@ fn a_parameter_naming_neither_an_input_port_nor_a_choice_is_an_error() {
     ));
 
     let error = single_error(messages);
+    names_no_uuid(&error);
     assert!(
-        error.contains(SINK) && error.contains("parameter `nope`"),
+        error.contains("Int sink") && error.contains("parameter `nope`"),
         "{error}"
     );
 }
@@ -432,7 +469,8 @@ fn a_choice_left_unset_is_an_error_naming_the_node_the_choice_and_its_options() 
         vec![],
     )));
 
-    assert!(error.contains(DIAL), "{error}");
+    names_no_uuid(&error);
+    assert!(error.contains("Dial"), "{error}");
     assert!(
         error.contains("`mode`") && error.contains("holds no value"),
         "{error}"
@@ -451,7 +489,8 @@ fn a_choice_outside_its_options_is_an_error_naming_the_value() {
             vec![],
         )));
 
-        assert!(error.contains(DIAL), "{error}");
+        names_no_uuid(&error);
+        assert!(error.contains("Dial"), "{error}");
         assert!(
             error.contains("`mode`") && error.contains("outside its options"),
             "{error}"
@@ -526,7 +565,11 @@ fn a_literal_nothing_bridges_fails_naming_node_input_and_both_types() {
     ));
 
     let error = single_error(messages);
-    assert!(error.contains(SINK) && error.contains("`value`"), "{error}");
+    names_no_uuid(&error);
+    assert!(
+        error.contains("Int sink") && error.contains("`value`"),
+        "{error}"
+    );
     assert!(error.contains("literal \"three\""), "{error}");
     assert!(error.contains("declared types i32"), "{error}");
 }
@@ -560,7 +603,7 @@ fn a_literal_that_does_not_fit_its_exact_match_type_fails() {
 
     let error = single_error(messages);
     assert!(
-        error.contains(SINK_I8) && error.contains("literal 300"),
+        error.contains("Small sink") && error.contains("literal 300"),
         "{error}"
     );
     assert!(error.contains("declared types i8"), "{error}");
@@ -591,7 +634,7 @@ fn a_literal_that_does_not_fit_its_exact_match_type_fails() {
 
     let error = single_error(messages);
     assert!(
-        error.contains(SINK_F32) && error.contains("declared types f32"),
+        error.contains("Float32 sink") && error.contains("declared types f32"),
         "{error}"
     );
 }
@@ -729,7 +772,7 @@ fn a_starving_input_beside_a_fed_one_warns_naming_the_node_the_input_and_the_con
     let messages = compile_warnings(&hung_adder());
     assert_eq!(messages.len(), 1, "{messages:?}");
     assert!(
-        messages[0].contains("Add") && messages[0].contains(ADD) && messages[0].contains("`b`"),
+        messages[0].contains("Add") && messages[0].contains("`b`"),
         "{}",
         messages[0]
     );

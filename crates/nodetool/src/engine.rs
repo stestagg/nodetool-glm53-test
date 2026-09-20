@@ -19,9 +19,10 @@
 //! the first error — a behaviour's, a consumer's, a run task's panic caught
 //! and told where its node is known, or the engine refusing a node whose
 //! type declares no behaviour — ends the run, fail-fast: the remaining
-//! work stops, and the error names the node instance — its label and uuid
-//! — and what went wrong. Or a stop asked on the channel attached with
-//! [`Run::stop_on`] ends it: the remaining work stops where it stands and
+//! work stops, and the error names the node instance by its label — the
+//! uuid rides the failure as structure, for a caller that marks the node,
+//! never as text — and says what went wrong. Or a stop asked on the
+//! channel attached with [`Run::stop_on`] ends it: the remaining work stops where it stands and
 //! in-flight delivery is not promised — the user's stop adopts the
 //! fail-fast cancellation posture, the one ending that abandons undelivered
 //! values. Mid-run cancellation is engine-internal: in-flight values may
@@ -250,7 +251,7 @@ impl<'g> Run<'g> {
         for (uuid, node) in &graph.nodes {
             if node.node_type.behaviour.is_none() {
                 let error: behaviour::Error = format!(
-                    "node {} ({uuid}) instantiates `{}`, which declares no behaviour to run",
+                    "node {} instantiates `{}`, which declares no behaviour to run",
                     node.label, node.node_type.type_ref
                 )
                 .into();
@@ -462,8 +463,8 @@ async fn wait_stop(stop: &mut Option<watch::Receiver<bool>>) {
 /// One node's execution: its behaviour driven over its live ports, per the
 /// stream semantics. Every error it can end on — a behaviour's or a panic
 /// caught here, where the node is known — is told the same way: naming the
-/// node instance, its label and uuid, and what went wrong, the node riding
-/// the returned failure beside the report.
+/// node instance by its label and what went wrong, the node — uuid
+/// included — riding the returned failure beside the report.
 async fn run_node(
     uuid: Uuid,
     label: String,
@@ -503,7 +504,7 @@ async fn run_node(
                 });
             }
             Err(TaskFailure {
-                error: format!("node {} ({}): {error}", node.label, node.uuid).into(),
+                error: format!("node {}: {error}", node.label).into(),
                 node: Some(node),
             })
         }
@@ -559,7 +560,7 @@ async fn consume_stream(
         Err(payload) => Err(panicked(payload)),
     };
     outcome.map_err(|error| TaskFailure {
-        error: format!("a consumer of node {label} ({uuid}) `{port}`: {error}").into(),
+        error: format!("a consumer of node {label} `{port}`: {error}").into(),
         node: Some(Node { uuid, label }),
     })
 }

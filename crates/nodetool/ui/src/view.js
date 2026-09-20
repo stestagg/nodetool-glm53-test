@@ -93,6 +93,13 @@ export function toNodes(graph, listing, marks, statuses, values, facts = groupFa
   })
 }
 
+// What the editor calls a node: its label, else the label of the type it
+// instantiates, else the type reference. Never its uuid — that is the
+// address wires and marks travel on, not a name anybody reads.
+export function nodeName(node, type) {
+  return node.label ?? type?.label ?? node.type_ref
+}
+
 // The definition's edges as canvas wires. Not selectable: drag-off is the
 // one way a wire comes off, so there is no second, selected-then-deleted
 // path. A wire renders in the colour of the source port's declared type —
@@ -102,13 +109,18 @@ export function toEdges(graph, pulsing, listing, facts = groupFacts(graph)) {
   const byRef = new Map((listing?.types ?? []).map((type) => [type.type_ref, type]))
   const dataTypes = listing?.dataTypes ?? {}
   const refOf = new Map(graph.nodes.map((node) => [node.uuid, node.type_ref]))
+  const typeOf = (ref) => facts?.types.get(ref) ?? byRef.get(ref)
+  const nameOf = new Map(
+    graph.nodes.map((node) => [node.uuid, nodeName(node, typeOf(node.type_ref))]),
+  )
   return graph.edges.map((edge) => {
     const id = `${edge.from}/${edge.from_port}->${edge.to}/${edge.to_port}`
-    const ref = refOf.get(edge.from)
-    const type = facts?.types.get(ref) ?? byRef.get(ref)
-    const port = type?.outputs.find((output) => output.name === edge.from_port)
+    const port = typeOf(refOf.get(edge.from))?.outputs.find((output) => output.name === edge.from_port)
     return {
       id,
+      // React Flow announces a wire by its two node ids; the canvas
+      // speaks the names the user gave it instead.
+      ariaLabel: `wire from ${nameOf.get(edge.from)} ${edge.from_port} to ${nameOf.get(edge.to)} ${edge.to_port}`,
       source: edge.from,
       sourceHandle: edge.from_port,
       target: edge.to,

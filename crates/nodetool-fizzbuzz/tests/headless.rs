@@ -345,8 +345,8 @@ fn a_run_that_ends_in_an_error_exits_non_zero_naming_the_node() {
     assert!(stderr.contains("the run ended in failure"), "{stderr}");
     assert!(stderr.contains("stepper"), "{stderr}");
     assert!(
-        stderr.contains("00000000-0000-0000-0000-300000000002"),
-        "{stderr}"
+        !stderr.contains("00000000-0000-0000-0000-300000000002"),
+        "the terminal names the node the user labelled, not its uuid: {stderr}"
     );
     assert!(stderr.contains("zero step"), "{stderr}");
     let _ = std::fs::remove_file(&path);

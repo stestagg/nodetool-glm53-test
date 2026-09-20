@@ -374,8 +374,12 @@ async fn a_failing_run_tells_the_error_and_closes_the_abandoned_work_as_stopped(
         "the run-finished error is the report the run itself returns"
     );
     assert!(
-        report.contains("the guard") && report.contains(FAILER),
+        report.contains("the guard"),
         "the report names the failing node: {report}"
+    );
+    assert!(
+        !report.contains(FAILER),
+        "the node's uuid rides the outcome, never the text: {report}"
     );
     assert!(
         report.contains("the failer ran"),
@@ -403,8 +407,8 @@ async fn a_failed_outcome_carries_the_node_its_error_names() {
     let compiled = compiled(
         vec![
             node(COUNTER, "delta/counter"),
-            node(FAILER, "delta/failer"),
-            node(FAILER_2, "delta/failer"),
+            labelled(node(FAILER, "delta/failer"), "first"),
+            labelled(node(FAILER_2, "delta/failer"), "second"),
         ],
         vec![
             edge(COUNTER, "out", FAILER, "value"),
@@ -435,7 +439,11 @@ async fn a_failed_outcome_carries_the_node_its_error_names() {
         "the node named is one of the two that failed: {node:?}"
     );
     assert!(
-        error.contains(&node.uuid.to_string()),
+        error.contains(if node.uuid == failer {
+            "first"
+        } else {
+            "second"
+        }),
         "the outcome's error and node name the same instance: {error} / {node:?}"
     );
 }

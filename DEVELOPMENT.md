@@ -199,7 +199,7 @@ row creates one at the centre of the view — the same create operation,
 at a position the view names. Dragging a node moves it; a click selects,
 opening the editing sidebar on the right — the node's label editable to
 any name, an empty field returning the type's default, the type reference
-and uuid read-only beneath, and below them a select per declared choice
+read-only beneath, and below them a select per declared choice
 and a field per scalar-possible input; the same values show on the nodes
 themselves, the selects in the middle of the node and the inputs' small
 editable fields beside their ports, an edit in either view appearing in

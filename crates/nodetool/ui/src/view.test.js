@@ -139,11 +139,15 @@ describe('toEdges', () => {
   it('draws the definition\'s edges as wires between the named ports', () => {
     const graph = {
       edges: [{ from: 'u1', from_port: 'sum', to: 'u2', to_port: 'value' }],
-      nodes: [],
+      nodes: [
+        { uuid: 'u1', type_ref: 'alpha/add', label: 'adder' },
+        { uuid: 'u2', type_ref: 'alpha/add', label: 'sink' },
+      ],
     }
     expect(toEdges(graph)).toEqual([
       {
         id: 'u1/sum->u2/value',
+        ariaLabel: 'wire from adder sum to sink value',
         source: 'u1',
         sourceHandle: 'sum',
         target: 'u2',
@@ -159,11 +163,12 @@ describe('toEdges', () => {
   it('marks a wire a node runs back into itself as the loop edge', () => {
     const graph = {
       edges: [{ from: 'u1', from_port: 'sum', to: 'u1', to_port: 'value' }],
-      nodes: [],
+      nodes: [{ uuid: 'u1', type_ref: 'alpha/add', label: 'adder' }],
     }
     expect(toEdges(graph)).toEqual([
       {
         id: 'u1/sum->u1/value',
+        ariaLabel: 'wire from adder sum to adder value',
         source: 'u1',
         sourceHandle: 'sum',
         target: 'u1',
@@ -186,6 +191,24 @@ describe('toEdges', () => {
     }
     const [first, second] = toEdges(graph)
     expect(first.id).not.toEqual(second.id)
+  })
+
+  it('names a wire by its two nodes and ports, never by their uuids', () => {
+    const graph = {
+      edges: [
+        { from: 'u1', from_port: 'value', to: 'u2', to_port: 'text' },
+        { from: 'u2', from_port: 'text', to: 'u3', to_port: 'only' },
+      ],
+      nodes: [
+        { uuid: 'u1', type_ref: 'text/ticker', label: 'every second' },
+        { uuid: 'u2', type_ref: 'text/uppercase' },
+        { uuid: 'u3', type_ref: 'nowhere/nothing' },
+      ],
+    }
+    const listing = { types: [{ type_ref: 'text/uppercase', label: 'Uppercase', inputs: [], outputs: [] }] }
+    const [first, second] = toEdges(graph, undefined, listing)
+    expect(first.ariaLabel).toEqual('wire from every second value to Uppercase text')
+    expect(second.ariaLabel).toEqual('wire from Uppercase text to nowhere/nothing only')
   })
 })
 

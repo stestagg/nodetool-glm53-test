@@ -325,8 +325,8 @@ async fn the_first_behaviour_error_ends_the_run_naming_the_node() {
         "the error names the node's label: {message}"
     );
     assert!(
-        message.contains(FAILER),
-        "the error names the node's uuid: {message}"
+        !message.contains(FAILER),
+        "the failure's text speaks the label; the uuid rides the failure as structure: {message}"
     );
     assert!(
         message.contains("the failer ran"),
@@ -380,8 +380,8 @@ async fn a_consumer_error_ends_the_run_like_a_downstream_failure() {
         "the node named by its default label: {message}"
     );
     assert!(
-        message.contains(DOUBLER_1),
-        "the node's uuid named: {message}"
+        !message.contains(DOUBLER_1),
+        "the node named, not addressed: {message}"
     );
     assert!(
         message.contains("the consumer gave up"),
@@ -413,12 +413,12 @@ async fn a_node_without_behaviour_ends_the_run_naming_it() {
         .expect_err("nothing runs a behaviour-less node");
     let message = error.to_string();
     assert!(
-        message.contains("gamma/passthrough"),
-        "the type reference named: {message}"
+        message.contains("Passthrough") && message.contains("gamma/passthrough"),
+        "the node and the type it instantiates named: {message}"
     );
     assert!(
-        message.contains(PASSTHROUGH),
-        "the node's uuid named: {message}"
+        !message.contains(PASSTHROUGH),
+        "the node named, not addressed: {message}"
     );
     assert!(
         message.contains("no behaviour to run"),
@@ -596,8 +596,8 @@ async fn a_conversion_that_refuses_a_value_ends_the_run_naming_the_node() {
         "the error names the node's label: {message}"
     );
     assert!(
-        message.contains(MIXED_SOURCE),
-        "the error names the node's uuid: {message}"
+        !message.contains(MIXED_SOURCE),
+        "the node named, not addressed: {message}"
     );
     assert!(
         message.contains("a run task panicked"),

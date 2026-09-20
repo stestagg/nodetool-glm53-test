@@ -240,7 +240,7 @@ fn move_naming_an_unknown_uuid_is_an_error_and_the_definition_is_untouched() {
         r#"{"id": 2, "type": "move_node", "uuid": "0d5c1e2a-3b4c-4d5e-8f90-1a2b3c4d5e6f", "position": {"x": 9, "y": 9}}"#,
     );
     assert_eq!(unknown["type"], "error");
-    assert!(unknown["error"].as_str().unwrap().contains("no node"));
+    assert!(unknown["error"].as_str().unwrap().contains("no such node"));
 
     let malformed = send(
         &editor,
@@ -302,11 +302,11 @@ fn label_and_parameter_edits_naming_an_unknown_node_are_errors() {
 
     let renamed = edit_label(&editor, 2, unknown, "Renamed");
     assert_eq!(renamed["type"], "error");
-    assert!(renamed["error"].as_str().unwrap().contains("no node"));
+    assert!(renamed["error"].as_str().unwrap().contains("no such node"));
 
     let edited = edit_parameter(&editor, 3, unknown, "a", Some("1"));
     assert_eq!(edited["type"], "error");
-    assert!(edited["error"].as_str().unwrap().contains("no node"));
+    assert!(edited["error"].as_str().unwrap().contains("no such node"));
 
     let after = send(&editor, r#"{"id": 4, "type": "get_definition"}"#);
     assert_eq!(
@@ -446,7 +446,10 @@ fn a_parameter_edit_for_a_connected_input_is_refused_and_names_the_input() {
         message.contains("`a`"),
         "the error names the input: {message}"
     );
-    assert!(message.contains(&adder), "and the node: {message}");
+    assert!(
+        message.contains("Add") && !message.contains(&adder),
+        "and the node, by name: {message}"
+    );
 
     let definition = held_definition(&editor);
     assert_eq!(
@@ -835,7 +838,7 @@ fn wire_unhook_and_delete_naming_an_unknown_node_are_errors() {
     );
     assert_eq!(wired["type"], "error");
     assert!(
-        wired["error"].as_str().unwrap().contains("no node"),
+        wired["error"].as_str().unwrap().contains("no such node"),
         "the error names the problem: {wired}"
     );
 

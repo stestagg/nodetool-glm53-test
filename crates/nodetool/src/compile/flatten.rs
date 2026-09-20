@@ -242,13 +242,11 @@ impl Flattener<'_> {
                         let label = inner.label.as_deref().unwrap_or(&nested.name);
                         self.flat.errors.push(error(
                             format!(
-                                "group `{}`: the exposed {} port `{}` binds `{}` on the instance {} ({}), which does not expose it",
+                                "group `{}`: the exposed {} port `{}` binds `{}` on the instance {label}, which does not expose it",
                                 group.name,
                                 side.name(),
                                 binding.name,
                                 binding.port,
-                                label,
-                                inner.uuid
                             ),
                             instances.to_owned(),
                         ));
@@ -270,13 +268,11 @@ impl Flattener<'_> {
                         let label = inner.label.as_deref().unwrap_or(node_type.label);
                         self.flat.errors.push(error(
                             format!(
-                                "group `{}`: the exposed {} port `{}` binds port `{}` on node {} ({}), which does not declare it",
+                                "group `{}`: the exposed {} port `{}` binds port `{}` on node {label}, which does not declare it",
                                 group.name,
                                 side.name(),
                                 binding.name,
                                 binding.port,
-                                label,
-                                inner.uuid
                             ),
                             instances.to_owned(),
                         ));
@@ -321,8 +317,7 @@ impl Flattener<'_> {
             if !group.inputs.iter().any(|binding| binding.name == *name) {
                 self.flat.errors.push(error(
                     format!(
-                        "group instance {label} ({}): parameter `{name}` does not name an exposed input",
-                        instance.uuid
+                        "group instance {label}: parameter `{name}` does not name an exposed input"
                     ),
                     vec![root],
                 ));
@@ -346,8 +341,8 @@ impl Flattener<'_> {
                 (Some(_), Some(_)) => {
                     self.flat.errors.push(error(
                         format!(
-                            "group instance {label} ({}) receives the exposed input `{}` through the boundary while carrying a parameter for it; an input carries one or the other",
-                            instance.uuid, binding.name
+                            "group instance {label} receives the exposed input `{}` through the boundary while carrying a parameter for it; an input carries one or the other",
+                            binding.name
                         ),
                         vec![root],
                     ));
@@ -490,7 +485,7 @@ impl Flattener<'_> {
             let label = instance.label.as_deref().unwrap_or(&group.name);
             self.flat.errors.push(error(
                 format!(
-                    "group instance {label} ({instance_uuid}) has no exposed {} port `{port}`",
+                    "group instance {label} has no exposed {} port `{port}`",
                     side.name()
                 ),
                 vec![instance_uuid],

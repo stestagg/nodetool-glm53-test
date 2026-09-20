@@ -148,23 +148,38 @@ fn compile_flat(
 ) -> CompileResult {
     let mut warnings = Vec::new();
 
-    let mut instances = BTreeMap::<Uuid, (&NodeInstance, Option<&'static NodeType>)>::new();
+    let mut instances = Instances::new();
     for instance in nodes {
         let node_type = registry.node_type(&instance.type_ref);
         if node_type.is_none() {
             errors.push(error(
                 format!(
                     "node {} instantiates `{}`, which no group in the document defines and no linked plugin declares",
-                    node_name(instance, node_type),
+                    instance.name(node_type),
                     instance.type_ref
                 ),
                 vec![instance.uuid],
             ));
         }
         match instances.entry(instance.uuid) {
-            std::collections::btree_map::Entry::Occupied(_) => {
+            std::collections::btree_map::Entry::Occupied(first) => {
+                // The complaint's subject is the shared identity. Two
+                // nodes may read alike — two unlabelled counters both read
+                // `counter` — and then the colliding uuid is the only key
+                // the file offers to tell them apart, so the message names
+                // it; where the names differ they point on their own.
+                let (first_instance, first_type) = *first.get();
+                let first_name = first_instance.name(first_type);
+                let name = instance.name(node_type);
+                let identity = if first_name == name {
+                    format!(" {}", instance.uuid)
+                } else {
+                    String::new()
+                };
                 errors.push(error(
-                    format!("duplicate node uuid {}", instance.uuid),
+                    format!(
+                        "the nodes `{first_name}` and `{name}` claim the same identity{identity}"
+                    ),
                     vec![instance.uuid],
                 ));
             }
@@ -179,7 +194,7 @@ fn compile_flat(
             .iter()
             .map(|uuid| {
                 let (instance, node_type) = instances[uuid];
-                node_name(instance, node_type)
+                instance.name(node_type)
             })
             .collect::<Vec<_>>()
             .join(" → ");
@@ -202,8 +217,11 @@ fn compile_flat(
             if !instances.contains_key(&uuid) {
                 errors.push(error(
                     format!(
-                        "edge {} `{}` → {} `{}`: the {role} node {uuid} is not defined in the graph",
-                        edge.from, edge.from_port, edge.to, edge.to_port
+                        "edge {} `{}` → {} `{}`: the {role} node is not defined in the graph",
+                        endpoint(from, edge.from),
+                        edge.from_port,
+                        endpoint(to, edge.to),
+                        edge.to_port
                     ),
                     vec![uuid],
                 ));
@@ -217,7 +235,7 @@ fn compile_flat(
                 errors.push(error(
                     format!(
                         "node {} has no output port `{}`",
-                        node_name(instance, Some(node_type)),
+                        instance.name(Some(node_type)),
                         edge.from_port
                     ),
                     vec![edge.from],
@@ -231,7 +249,7 @@ fn compile_flat(
                 errors.push(error(
                     format!(
                         "node {} has no input port `{}`",
-                        node_name(instance, Some(node_type)),
+                        instance.name(Some(node_type)),
                         edge.to_port
                     ),
                     vec![edge.to],
@@ -243,10 +261,11 @@ fn compile_flat(
                 let (instance, node_type) = instances[&edge.to];
                 errors.push(error(
                     format!(
-                        "input `{}` of node {} receives more than one connection (from {first} and {})",
+                        "input `{}` of node {} receives more than one connection (from {} and {})",
                         input.name,
-                        node_name(instance, node_type),
-                        edge.from
+                        instance.name(node_type),
+                        endpoint(instances.get(&first).copied(), first),
+                        endpoint(from, edge.from)
                     ),
                     vec![edge.to],
                 ));
@@ -275,8 +294,8 @@ fn compile_flat(
                     errors.push(error(
                         format!(
                             "connection {} `{}` ({}) → {} `{}` ({}): no exact match and no declared conversion bridges them",
-                            node_name(from_instance, from_node_type), edge.from_port, output.type_refs.join(", "),
-                            node_name(to_instance, to_node_type), edge.to_port, input.type_refs.join(", ")
+                            from_instance.name(from_node_type), edge.from_port, output.type_refs.join(", "),
+                            to_instance.name(to_node_type), edge.to_port, input.type_refs.join(", ")
                         ),
                         vec![edge.from, edge.to],
                     ));
@@ -304,14 +323,14 @@ fn compile_flat(
                             parameters.insert(choice.name, chosen);
                         }
                         Err(message) => errors.push(error(
-                            format!("node {}: {message}", node_name(instance, Some(node_type))),
+                            format!("node {}: {message}", instance.name(Some(node_type))),
                             vec![*uuid],
                         )),
                     },
                     None => errors.push(error(
                         format!(
                             "node {}: parameter `{}` names neither an input port nor a declared choice",
-                            node_name(instance, Some(node_type)),
+                            instance.name(Some(node_type)),
                             name
                         ),
                         vec![*uuid],
@@ -324,7 +343,7 @@ fn compile_flat(
                     format!(
                         "input `{}` of node {} holds a parameter value and receives a connection; an input carries one or the other",
                         input.name,
-                        node_name(instance, Some(node_type))
+                        instance.name(Some(node_type))
                     ),
                     vec![*uuid],
                 ));
@@ -340,7 +359,7 @@ fn compile_flat(
                     None => errors.push(error(
                         format!(
                             "node {}: input `{}`: literal {literal} does not match declared types {} — no exact match and no declared conversion bridges them",
-                            node_name(instance, Some(node_type)),
+                            instance.name(Some(node_type)),
                             input.name,
                             input.type_refs.join(", ")
                         ),
@@ -354,7 +373,7 @@ fn compile_flat(
                 errors.push(error(
                     format!(
                         "node {}: choice `{}` holds no value — it must be one of {}",
-                        node_name(instance, Some(node_type)),
+                        instance.name(Some(node_type)),
                         choice.name,
                         choice.options.join(", ")
                     ),
@@ -390,7 +409,7 @@ fn compile_flat(
             warnings.push(Problem {
                 message: format!(
                     "node {}: input `{name}` is neither connected nor parameterised — the node will never fire, hanging the run until it is stopped",
-                    node_name(instance, Some(node_type))
+                    instance.name(Some(node_type))
                 ),
                 nodes: vec![*uuid],
             });
@@ -416,7 +435,7 @@ fn compile_flat(
                 errors.push(error(
                     format!(
                         "node {}: the ports of its `{}` family declare different member sets ({}); a family resolves across one shared set",
-                        node_name(instance, Some(node_type)),
+                        instance.name(Some(node_type)),
                         name,
                         ports.iter().map(|port| port.type_refs.join(", ")).collect::<Vec<_>>().join(" / ")
                     ),
@@ -501,7 +520,7 @@ fn compile_flat(
                     errors.push(error(
                         format!(
                             "node {}: the ports of its `{}` family ({}) carry no connection and no parameter value — the family cannot resolve to a type",
-                            node_name(instance, node_type),
+                            instance.name(node_type),
                             job.name,
                             job.ports.iter().map(|port| format!("`{}`", port.name)).collect::<Vec<_>>().join(", ")
                         ),
@@ -514,11 +533,11 @@ fn compile_flat(
                     errors.push(error(
                         format!(
                             "node {}: the ports of its `{}` family cannot resolve to one type — {}",
-                            node_name(instance, node_type),
+                            instance.name(node_type),
                             job.name,
                             job.sources
                                 .iter()
-                                .map(source_describes)
+                                .map(|source| source_describes(source, &instances))
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         ),
@@ -562,7 +581,7 @@ fn compile_flat(
                     errors.push(error(
                         format!(
                             "node {}: input `{}`: literal {literal} does not fit the `{}` family's resolved type {}",
-                            node_name(instance, node_type),
+                            instance.name(node_type),
                             input.name,
                             input.family.expect("a family port"),
                             member.name
@@ -616,9 +635,9 @@ fn compile_flat(
                 errors.push(error(
                     format!(
                         "connection {} `{}` → {} `{}`: the resolved family type cannot reach the other side",
-                        node_name(from_instance, from_node_type),
+                        from_instance.name(from_node_type),
                         connection.from_port,
-                        node_name(to_instance, to_node_type),
+                        to_instance.name(to_node_type),
                         connection.to_port
                     ),
                     vec![connection.from, connection.to],
@@ -647,7 +666,7 @@ fn compile_flat(
         if let Some(check) = node_type.check_parameters {
             for message in check(&compiled) {
                 errors.push(error(
-                    format!("node {}: {message}", node_name(instance, Some(node_type))),
+                    format!("node {}: {message}", instance.name(Some(node_type))),
                     vec![*uuid],
                 ));
             }
@@ -818,19 +837,19 @@ fn choice_parameter(
     })
 }
 
-/// What a compile error names a node instance by: the label the run would
-/// call it — the instance's override, else the type's default — with the
-/// uuid beside it, the dialect the engine's own reports speak. A node
-/// whose type no linked plugin declares falls back to the type reference,
-/// the name the editor shows its placeholder by.
-fn node_name(instance: &NodeInstance, node_type: Option<&NodeType>) -> String {
-    format!(
-        "{} ({})",
-        instance
-            .label
-            .as_deref()
-            .unwrap_or_else(|| node_type.map_or(instance.type_ref.as_str(), |t| t.label)),
-        instance.uuid
+/// The graph's node instances by uuid, each with the node type it
+/// instantiates where one is declared — what every message naming a node
+/// reads from.
+type Instances<'g> = BTreeMap<Uuid, (&'g NodeInstance, Option<&'static NodeType>)>;
+
+/// How a message names one end of an edge: the node's own name where the
+/// graph defines it, else the uuid the file itself writes for it — an
+/// undefined node has no label anywhere, and that uuid is the only name
+/// the user's own document gives it.
+fn endpoint(known: Option<(&NodeInstance, Option<&'static NodeType>)>, uuid: Uuid) -> String {
+    known.map_or_else(
+        || uuid.to_string(),
+        |(instance, node_type)| instance.name(node_type).to_owned(),
     )
 }
 
@@ -928,13 +947,16 @@ fn resolve_family(
 
 /// What one source says about itself, for the conflict error naming the
 /// ports and their types.
-fn source_describes(source: &FamilySource<'_>) -> String {
+fn source_describes(source: &FamilySource<'_>, instances: &Instances<'_>) -> String {
     match source {
         FamilySource::Type(port, resolved_type) => {
             format!("`{port}` carries {}", resolved_type.name)
         }
         FamilySource::Deferred(port, uuid, family) => {
-            format!("`{port}` waits on node {uuid}'s `{family}` family")
+            format!(
+                "`{port}` waits on node {}'s `{family}` family",
+                endpoint(instances.get(uuid).copied(), *uuid)
+            )
         }
         FamilySource::Literal(port, literal) => {
             format!("`{port}` holds the literal {literal:?}")

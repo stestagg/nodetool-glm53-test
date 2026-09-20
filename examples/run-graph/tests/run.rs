@@ -134,8 +134,8 @@ fn the_failing_sample_exits_non_zero_with_the_error_naming_the_node() {
     );
     assert!(err.contains("the guard"), "the node's label named: {err}");
     assert!(
-        err.contains("00000000-0000-0000-0000-200000000003"),
-        "the node's uuid named: {err}"
+        !err.contains("00000000-0000-0000-0000-200000000003"),
+        "the node named, not addressed: {err}"
     );
     assert!(
         err.contains("the value \"one\" is rejected here"),
@@ -160,7 +160,7 @@ fn the_observed_failing_sample_tells_the_failure_in_the_timeline_and_fails_alike
         "run started",
         "the guard started",
         "the guard failed: the value \"one\" is rejected here",
-        "run failed: node the guard (00000000-0000-0000-0000-200000000003): the value \"one\" is rejected here",
+        "run failed: node the guard: the value \"one\" is rejected here",
     ] {
         assert!(
             lines.contains(&told),
@@ -169,7 +169,7 @@ fn the_observed_failing_sample_tells_the_failure_in_the_timeline_and_fails_alike
     }
     assert_eq!(
         lines.last(),
-        Some(&"run failed: node the guard (00000000-0000-0000-0000-200000000003): the value \"one\" is rejected here"),
+        Some(&"run failed: node the guard: the value \"one\" is rejected here"),
         "the failed run-finished closes the timeline: {timeline}"
     );
 }
@@ -210,8 +210,8 @@ fn compile_errors_end_the_path_printed_and_non_zero() {
         "the error names the type reference: {err}"
     );
     assert!(
-        err.contains("00000000-0000-0000-0000-300000000001"),
-        "the error names the node: {err}"
+        !err.contains("00000000-0000-0000-0000-300000000001"),
+        "the node nothing declares reads as the type reference the file writes, never as its uuid: {err}"
     );
 }
 
@@ -224,7 +224,7 @@ fn the_if_true_sample_prints_the_then_branchs_formatted_strings_and_completes() 
     // completes: the warning advises, it changes no outcome.
     assert_eq!(
         err,
-        "compile warning: node else format (00000000-0000-0000-0000-400000000004): input `template` is neither connected nor parameterised — the node will never fire, hanging the run until it is stopped\n",
+        "compile warning: node else format: input `template` is neither connected nor parameterised — the node will never fire, hanging the run until it is stopped\n",
         "the unselected branch's starving template warned: {err}"
     );
     assert_eq!(
@@ -240,7 +240,7 @@ fn the_if_false_sample_prints_the_else_branchs_plain_strings_and_completes() {
     assert_eq!(code, Some(0), "stdout: {out}\nstderr: {err}");
     assert_eq!(
         err,
-        "compile warning: node then format (00000000-0000-0000-0000-500000000003): input `template` is neither connected nor parameterised — the node will never fire, hanging the run until it is stopped\n",
+        "compile warning: node then format: input `template` is neither connected nor parameterised — the node will never fire, hanging the run until it is stopped\n",
         "the unselected branch's starving template warned: {err}"
     );
     assert_eq!(

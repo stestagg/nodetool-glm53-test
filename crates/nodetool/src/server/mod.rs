@@ -397,7 +397,18 @@ impl Editor {
         Ok(json!({ "type": "node_moved" }))
     }
 
-    /// The node an operation names, required to be in the definition.
+    /// The node an operation names, required to be in the definition. A
+    /// reference naming none is a reference, not a node: the refusal says
+    /// so without echoing the uuid it was handed.
+    fn node(graph: &GraphDefinition, uuid: Uuid) -> Result<&crate::graph::NodeInstance, String> {
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.uuid == uuid)
+            .ok_or_else(|| "no such node in the definition".to_owned())
+    }
+
+    /// The same node, to edit.
     fn node_mut(
         graph: &mut GraphDefinition,
         uuid: Uuid,
@@ -406,7 +417,7 @@ impl Editor {
             .nodes
             .iter_mut()
             .find(|node| node.uuid == uuid)
-            .ok_or_else(|| format!("no node {uuid} in the definition"))
+            .ok_or_else(|| "no such node in the definition".to_owned())
     }
 
     /// Set a node's label override, to any name the message carries. An
@@ -443,6 +454,7 @@ impl Editor {
         let input = protocol::take_string(fields, "input")?;
         let value = protocol::take_parameter(fields, "value")?;
         protocol::done(fields)?;
+        let named = Self::node(&session.graph, uuid)?;
         if session
             .graph
             .edges
@@ -450,7 +462,8 @@ impl Editor {
             .any(|edge| edge.to == uuid && edge.to_port == input)
         {
             return Err(format!(
-                "input `{input}` of node {uuid} receives a connection; a connected input carries no parameter value"
+                "input `{input}` of node {} receives a connection; a connected input carries no parameter value",
+                named.name(self.registry.node_type(&named.type_ref))
             ));
         }
         let node = Self::node_mut(&mut session.graph, uuid)?;
@@ -470,11 +483,7 @@ impl Editor {
     /// Whether the node an operation names is in the definition — the
     /// existence check for operations that name one without editing it.
     fn require_node(graph: &GraphDefinition, uuid: Uuid) -> Result<(), String> {
-        if graph.nodes.iter().any(|node| node.uuid == uuid) {
-            Ok(())
-        } else {
-            Err(format!("no node {uuid} in the definition"))
-        }
+        Self::node(graph, uuid).map(|_| ())
     }
 
     /// Wire an output to an input, naming the edge it means. Edit time
@@ -583,7 +592,7 @@ impl Editor {
     ) -> Result<Value, String> {
         let uuid = protocol::take_uuid(fields, "uuid")?;
         protocol::done(fields)?;
-        let nodes = packaging::unpack(&mut session.graph, uuid)?;
+        let nodes = packaging::unpack(&mut session.graph, uuid, &self.registry)?;
         session.dirty = true;
         self.push_definition(session);
         Ok(json!({ "type": "group_unpacked", "nodes": nodes }))

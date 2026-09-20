@@ -123,3 +123,13 @@ is built in the editor here.
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
 
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
+
+- 2026-09-21 — Implemented. The one rule lives on `NodeInstance::name`,
+  taking the type's label when the caller knows the type; `node_name` and
+  packaging's `named` both gave way to it, so compile and the server
+  cannot drift. Two uuids stay in message text, each its complaint's
+  subject or the only name the user's own file gives: the colliding
+  identity where the two duplicate nodes read alike, and the undefined
+  endpoint of a dangling edge — which the edge's own naming now carries,
+  the defined side reading by label. `Editor::unpack` takes the registry
+  so it can speak type labels.

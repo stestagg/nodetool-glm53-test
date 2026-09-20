@@ -889,9 +889,10 @@ async fn a_failing_inner_node_ends_the_run_naming_the_group_instance_and_the_inn
 
     let identity = stage_identity(FAILER);
     let report = error.to_string();
+    assert!(report.contains("double stage · Failer"), "{report}");
     assert!(
-        report.contains("double stage · Failer") && report.contains(&identity.to_string()),
-        "{report}"
+        !report.contains(&identity.to_string()),
+        "the compound label is the name; the derived identity rides the outcome, not the text: {report}"
     );
     // The outcome names the node the failure belongs to — the derived
     // identity, recoverable to the group instance by the same fold.

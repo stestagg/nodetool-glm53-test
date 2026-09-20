@@ -71,12 +71,14 @@ fn the_launch_seed_carries_the_problems_in_the_connect_time_resync() {
         .iter()
         .find(|problem| problem["message"].as_str().unwrap().contains("literal"))
         .expect("the unresolvable literal is an error");
+    let message = error["message"].as_str().unwrap();
     assert!(
-        error["message"]
-            .as_str()
-            .unwrap()
-            .contains("0000b100-0000-0000-0000-0000000000b1"),
-        "{error}"
+        message.contains("Identity"),
+        "the message names the node: {error}"
+    );
+    assert!(
+        !message.contains("0000b100-0000-0000-0000-0000000000b1"),
+        "and never its uuid: {error}"
     );
     assert_eq!(
         error["nodes"],

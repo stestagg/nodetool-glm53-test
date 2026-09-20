@@ -151,6 +151,12 @@ describe('Sidebar', () => {
     })
   })
 
+  it('shows the node\u2019s type and label, never its uuid', () => {
+    single({ uuid: 'd1a4f7c2-0000-4000-8000-000000000001', type_ref: 'beta/dial', parameters: { mode: 'up' } })
+    expect(screen.getByText('beta/dial')).toBeTruthy()
+    expect(screen.queryByText(/d1a4f7c2/)).toBeNull()
+  })
+
   it('the choice sits beside the input fields, not in place of them', () => {
     single({ uuid: 'd1', type_ref: 'beta/dial', parameters: { mode: 'up', value: 7 } })
     expect(screen.getByLabelText('Dial value').value).toBe('7')
