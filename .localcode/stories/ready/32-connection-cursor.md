@@ -1,7 +1,6 @@
 ---
 title: Connection cursor in the port hot-zone
 date: 2026-09-20
-pr_id: 69
 ---
 
 ## Description
@@ -66,3 +65,5 @@ handles, as it already does for the other gestures (style.css:127-134).
 - 2026-09-20 — Keyboard wires land on the same handles; the cursor is a
   pointer affordance only and says nothing about them — no aria or focus
   change rides along.
+
+- 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
