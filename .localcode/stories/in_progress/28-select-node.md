@@ -1,6 +1,7 @@
 ---
 title: Select, an aligned chooser node
 date: 2026-09-20
+pr_id: 76
 ---
 
 ## Description
