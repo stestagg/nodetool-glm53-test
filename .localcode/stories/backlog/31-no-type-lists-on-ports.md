@@ -16,7 +16,7 @@ one word or none — space is at a premium (REQ-47), and a list of types is
 neither the type the port carries nor information the user asked for.
 
 A port never renders a list of multiple types. A port declaring exactly one
-type may show that one name, whether or not the listing has a fact for it —
+type shows that one name, whether or not the listing has a fact for it —
 the declared reference is the graph's own fact, and a missing listing fact
 silences the dot, not the text. Only a declaration of more than one type —
 a union, a family — shows no type text at all: the tooltip stays empty of
@@ -25,8 +25,9 @@ type noise rather than filling with a list.
 When a connection replaces a scalar field, what fills the slot is the
 connection's own indicator, not a stand-in for a type: the span on the node
 and the row in the sidebar read `connected` as visible text — not only a
-`title` — with no type names appended (REQ-58). The declared name keeps
-living in the tooltip, where the node has always kept its declared types.
+`title` — with no type names appended (REQ-58). A single-type port's
+declared name keeps living in the tooltip, where the node has always kept
+its declared types.
 
 ## Definition of done
 
@@ -34,10 +35,14 @@ living in the tooltip, where the node has always kept its declared types.
   type name; a union-declared or family port shows no type text (REQ-47).
 - A connected input's indicator on the node and in the sidebar reads
   `connected` — visible text, not only a `title` — with no type names
-  appended (REQ-58).
-- A single-type port keeps its current behaviour: its dot typed from the
-  listing's fact — neutral when the listing has none — and at most that one
-  name in the tooltip (REQ-27, REQ-48).
+  appended, and the span's own `connected` tooltip goes with it, leaving
+  the port row's declared-name tooltip the one answer a hover gives
+  (REQ-58).
+- A single-type port's dot and tooltip keep their current behaviour — the
+  dot typed from the listing's fact, neutral when the listing has none, and
+  at most that one name in the tooltip — while its wired indicator reads
+  `connected` as the criterion above says, single type included (REQ-27,
+  REQ-48).
 - The node and sidebar tests together cover a union port, a single-type
   port, and an unknown-type reference — the unknown reference living in the
   node tests, since the sidebar renders only scalar-possible ports
@@ -53,8 +58,8 @@ living in the tooltip, where the node has always kept its declared types.
   per-connection type is a compile-time fact (REQ-28), and the editor works
   on the definition while it is edited — wiring the compile's resolutions
   back into the live view is a bigger story about the server's state, not
-  this one. Until that exists, hide: the ask allows exactly that ("or just
-  hide the type altogether if that is too hard").
+  this one. Until that exists, hide: REQ-58 asks for a connected/type
+  indicator, not for the types' names.
 - 2026-09-20 — The four call sites are the whole surface: the tooltip
   `title` on both port divs (nodes.jsx:108, nodes.jsx:170), the
   `.port-connected` span (nodes.jsx:126), and the sidebar's connected row
@@ -63,8 +68,11 @@ living in the tooltip, where the node has always kept its declared types.
   stated once beside it in types.js — one derivation returning a name or
   null, read by every site that shows or hides type text rather than
   re-derived inline at each; the two value-UI lookups (nodes.jsx:148,
-  pluginui.jsx:124) may read the same derivation. One place the
-  resolved-type story of comment 1 extends.
+  pluginui.jsx:124) read the same derivation — the same classification,
+  asked for a different use — and the derivation is named for what it
+  answers (the port's one declared reference, or none), not only for the
+  text it renders. One place the resolved-type story of comment 1 extends,
+  not the last two inline copies of the line for it to hunt.
 - 2026-09-20 — A tooltip is rendered text; it is in scope. One name is
   compliant, a join is not. The port's declared family name does not travel
   the protocol — `ports_json` (crates/nodetool/src/server/protocol.rs:157)
