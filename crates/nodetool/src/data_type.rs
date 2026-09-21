@@ -145,7 +145,7 @@ inventory::collect! { DataType }
 /// }
 /// ```
 ///
-/// `id` is the stable uuid — [`uuid!`] parses the literal at compile time —
+/// `id` is the stable uuid — [`crate::uuid!`] parses the literal at compile time —
 /// and `name` is the reference ports carry. A conversion pairs the target
 /// type's id with the function performing it ([`ConvertFn`]); it may name a
 /// type that is not registered yet, since targets resolve once every linked

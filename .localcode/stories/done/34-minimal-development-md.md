@@ -70,3 +70,11 @@ only what a newcomer needs to get the code running and find the rest.
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
 
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
+
+- 2026-09-21 — Cut from 586 lines to 86. Every command in the file was run
+  as written except the two that bind the editor's loopback default, which
+  a `nodetool-fizzbuzz --ui` already running on this machine held; the same
+  server was verified on `--address 127.0.0.1:0`, and both binaries build.
+  `cargo doc -p nodetool` now builds warning-free too — three intra-doc
+  links (`data_type!`, `uuid!`, and a public doc pointing at the private
+  `bridge` module) were unresolved.

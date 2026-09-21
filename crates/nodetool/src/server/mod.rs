@@ -13,7 +13,7 @@
 //! when a save changes it without touching the definition. The run state
 //! — whether a run is on and how the last one ended — travels beside them
 //! the same way, and with it the run display: the per-node status and the
-//! latest value per output port the bridge ([`bridge`]) derives from the
+//! latest value per output port the bridge derives from the
 //! run's own events and holds beside the rest. The display rides the push
 //! channel — a connecting tab is given it as a push of its own, on the
 //! one ordered stream every later status change and emission rides — so a

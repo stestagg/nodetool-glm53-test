@@ -1,4 +1,4 @@
-//! The base scalar set core ships, declared through the same [`data_type!`]
+//! The base scalar set core ships, declared through the same [`crate::data_type!`]
 //! mechanism a plugin uses — they are an instance of the general capability,
 //! not a core special case. The trivial conversions the base set declares are
 //! the named widenings: `i16`→`i32`, `f32`→`f64`, and the slightly looser
