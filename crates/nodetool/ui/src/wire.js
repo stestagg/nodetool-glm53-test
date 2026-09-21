@@ -80,16 +80,20 @@ export function useEditorWire(showToast) {
     if (text) setStatus({ text, error: run.outcome === 'failed' })
   }, [])
 
-  const actOnRun = useCallback(() => {
-    if (acting || protocol.current === null) return
-    setActing(true)
-    protocol
-      .current(run?.running === true ? 'stop_run' : 'start_run')
-      .catch((error) => {
+  // The run group's one seam: each control names its own operation, and
+  // the guard is against a second send before the run state comes back,
+  // not against which control was pressed.
+  const actOnRun = useCallback(
+    (operation) => {
+      if (acting || protocol.current === null) return
+      setActing(true)
+      protocol.current(operation).catch((error) => {
         setActing(false)
         showToast(error)
       })
-  }, [acting, run, showToast])
+    },
+    [acting, showToast],
+  )
 
   useEffect(
     () =>

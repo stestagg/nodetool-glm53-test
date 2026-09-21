@@ -31,7 +31,7 @@ import {
   inTextField,
   nodeMarks,
   offPortUnhook,
-  runControl,
+  runControls,
   runStatusText,
   saveAsksForPath,
   toEdges,
@@ -347,43 +347,55 @@ describe('hasUnsavedChanges', () => {
   })
 })
 
-describe('runControl', () => {
-  it('flips Start↔Stop with the run state, the states mutually exclusive', () => {
-    expect(runControl({ running: false, outcome: null }, { nodes: [{}] })).toEqual({
-      running: false,
-      label: 'Start',
-      enabled: true,
+describe('runControls', () => {
+  const graph = { nodes: [{}] }
+  const idle = { running: false, outcome: null }
+  const running = { running: true, outcome: null }
+  const finished = { running: false, outcome: 'completed' }
+
+  it('idle: Start alone, with nothing yet to reset', () => {
+    expect(runControls(idle, graph)).toEqual({ start: true, stop: false, reset: false })
+  })
+
+  it('running: Stop and Reset, never a second Start', () => {
+    expect(runControls(running, graph)).toEqual({ start: false, stop: true, reset: true })
+  })
+
+  it('finished: Start again, and Reset while the outcome still stands', () => {
+    expect(runControls(finished, graph)).toEqual({ start: true, stop: false, reset: true })
+    expect(runControls({ running: false, outcome: 'failed' }, graph).reset).toBe(true)
+    expect(runControls({ running: false, outcome: 'stopped' }, graph).reset).toBe(true)
+  })
+
+  it('an empty definition has nothing to run: Start disabled, the rest unaffected', () => {
+    expect(runControls(idle, { nodes: [] })).toEqual({
+      start: false,
+      stop: false,
+      reset: false,
     })
-    expect(runControl({ running: true }, { nodes: [{}] })).toEqual({
-      running: true,
-      label: 'Stop',
-      enabled: true,
+    expect(runControls(running, { nodes: [] })).toEqual({
+      start: false,
+      stop: true,
+      reset: true,
     })
   })
 
-  it('an empty definition has nothing to run: Start disabled, Stop unaffected', () => {
-    expect(runControl({ running: false, outcome: null }, { nodes: [] }).enabled).toBe(false)
-    expect(runControl(null, null).enabled).toBe(false)
-    expect(runControl({ running: true }, { nodes: [] }).enabled).toBe(true)
+  it('a run state not yet resynced reads as an idle editor', () => {
+    expect(runControls(null, graph)).toEqual({ start: true, stop: false, reset: false })
+    expect(runControls(null, null)).toEqual({ start: false, stop: false, reset: false })
   })
 
-  it('a run state not yet resynced reads as an idle start', () => {
-    expect(runControl(null, { nodes: [{}] })).toEqual({
-      running: false,
-      label: 'Start',
-      enabled: true,
+  it('every control reaches the server: no connection, no controls', () => {
+    expect(runControls(running, graph, false)).toEqual({
+      start: false,
+      stop: false,
+      reset: false,
     })
-  })
-
-  it('both acts reach the server: no connection, no control', () => {
-    expect(runControl({ running: true }, { nodes: [{}] }, false)).toEqual({
-      running: true,
-      label: 'Stop',
-      enabled: false,
+    expect(runControls(finished, graph, false)).toEqual({
+      start: false,
+      stop: false,
+      reset: false,
     })
-    expect(runControl({ running: false, outcome: null }, { nodes: [{}] }, false).enabled).toBe(
-      false,
-    )
   })
 })
 

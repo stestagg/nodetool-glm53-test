@@ -85,10 +85,12 @@ impl RunState {
 
 /// Spawn the run of `compiled` the editor just started, with the channel a
 /// stop arrives on attached and the bridge subscribed as the run's one
-/// observer. Each tap the hosting binary named attaches to every instance
-/// of its node type this graph carries. The compiled graph moves into the
-/// task and dies with the run — no compiled graph is kept between runs.
-/// The run's ending comes back through the bridge.
+/// observer, carrying `generation` — the run this is, so a session that
+/// has moved past it hears nothing more from it. Each tap the hosting
+/// binary named attaches to every instance of its node type this graph
+/// carries. The compiled graph moves into the task and dies with the run —
+/// no compiled graph is kept between runs. The run's ending comes back
+/// through the bridge.
 pub(super) fn spawn(
     session: Arc<Mutex<super::Session>>,
     pushes: tokio::sync::broadcast::Sender<String>,
@@ -96,8 +98,11 @@ pub(super) fn spawn(
     compiled: crate::compile::CompiledGraph,
     stop_requested: watch::Receiver<bool>,
     taps: Vec<Tap>,
+    generation: u64,
 ) {
-    let bridge = Arc::new(super::bridge::Bridge::new(session, pushes, registry));
+    let bridge = Arc::new(super::bridge::Bridge::new(
+        session, pushes, registry, generation,
+    ));
     tokio::spawn(async move {
         let mut run = crate::engine::Run::new(&compiled);
         run.stop_on(stop_requested);

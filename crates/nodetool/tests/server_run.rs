@@ -1,8 +1,9 @@
 //! The editor server's run: start compiling the held definition afresh,
-//! stop ending a run beside its natural ends, the outcomes — completed,
-//! failed, stopped — each returning to idle, the editing lock a running
-//! run holds, and the run state pushed to every connection and carried in
-//! the connect-time resync.
+//! stop ending a run beside its natural ends, reset returning the editor
+//! to the idle canvas, the outcomes — completed, failed, stopped — each
+//! returning to idle, the editing lock a running run holds, and the run
+//! state pushed to every connection and carried in the connect-time
+//! resync.
 
 mod server_common;
 
@@ -62,6 +63,22 @@ async fn next_run(receiver: &mut tokio::sync::broadcast::Receiver<String>) -> Va
         }
     }
 }
+
+/// The next run-display push: the canvas's statuses and held port values
+/// as a whole — what a reset empties.
+async fn next_display(receiver: &mut tokio::sync::broadcast::Receiver<String>) -> Value {
+    loop {
+        let pushed: Value = serde_json::from_str(&receiver.recv().await.expect("a push arrives"))
+            .expect("a push is JSON");
+        if pushed["type"] == "run_display" {
+            return pushed;
+        }
+    }
+}
+
+/// How long a test waits to be sure nothing more is coming: the run whose
+/// silence is being judged has already ended.
+const SETTLED: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// The run state the editor holds, as the resync carries it.
 fn held_run(editor: &Editor) -> Value {
@@ -351,4 +368,111 @@ async fn start_while_running_stop_while_idle_and_start_on_an_empty_definition_ar
     send(&editor, r#"{"id": 7, "type": "stop_run"}"#);
     assert_eq!(next_run(&mut watcher).await["outcome"], json!("stopped"));
     assert_eq!(held_run(&editor)["running"], json!(false));
+}
+
+#[tokio::test]
+async fn a_reset_after_a_finished_run_clears_the_outcome_and_the_canvas() {
+    let editor = editor_holding(COUNTER_ALONE);
+    let mut watcher = editor.subscribe();
+    send(&editor, r#"{"id": 1, "type": "start_run"}"#);
+    assert_eq!(next_run(&mut watcher).await["running"], json!(true));
+    assert_eq!(next_run(&mut watcher).await["outcome"], json!("completed"));
+    // The resync asks for the display, which rides the push channel.
+    send(&editor, r#"{"id": 2, "type": "get_definition"}"#);
+    let shown = next_display(&mut watcher).await;
+    assert_ne!(
+        shown["statuses"],
+        json!({}),
+        "the finished run leaves its canvas standing: {shown}"
+    );
+
+    let reset = send(&editor, r#"{"id": 3, "type": "reset_run"}"#);
+    assert_eq!(reset["type"], "run_reset");
+
+    assert_eq!(
+        next_run(&mut watcher).await,
+        json!({
+            "type": "run",
+            "running": false,
+            "outcome": null,
+            "error": null,
+            "node": null,
+        }),
+        "the state a session has before its first run"
+    );
+    let cleared = next_display(&mut watcher).await;
+    assert_eq!(cleared["statuses"], json!({}));
+    assert_eq!(cleared["values"], json!({}));
+    assert_eq!(held_run(&editor)["outcome"], json!(null));
+}
+
+#[tokio::test]
+async fn a_reset_while_running_stops_the_run_and_its_ending_cannot_undo_the_reset() {
+    let editor = editor_holding(HUNG);
+    let mut watcher = editor.subscribe();
+    send(&editor, r#"{"id": 1, "type": "start_run"}"#);
+    assert_eq!(next_run(&mut watcher).await["running"], json!(true));
+
+    let reset = send(&editor, r#"{"id": 2, "type": "reset_run"}"#);
+    assert_eq!(reset["type"], "run_reset");
+    assert_eq!(next_run(&mut watcher).await["outcome"], json!(null));
+    assert_eq!(next_display(&mut watcher).await["statuses"], json!({}));
+
+    // The stopped run is still ending: its run-finished, and whatever
+    // statuses it had in flight, are the ended run's and reach a session
+    // that has moved past it. Nothing more is pushed, and the editor
+    // stays idle.
+    assert!(
+        tokio::time::timeout(SETTLED, next_run(&mut watcher))
+            .await
+            .is_err(),
+        "the ended run's own finish does not push the stopped outcome back"
+    );
+    assert_eq!(held_run(&editor)["outcome"], json!(null));
+
+    // And the next start is a run of its own, inheriting nothing.
+    send(&editor, r#"{"id": 3, "type": "start_run"}"#);
+    assert_eq!(next_run(&mut watcher).await["running"], json!(true));
+    send(&editor, r#"{"id": 4, "type": "stop_run"}"#);
+    assert_eq!(next_run(&mut watcher).await["outcome"], json!("stopped"));
+}
+
+#[tokio::test]
+async fn a_start_after_a_reset_compiles_and_runs_as_any_start_does() {
+    let editor = editor_holding(COUNTER_ALONE);
+    let mut watcher = editor.subscribe();
+    send(&editor, r#"{"id": 1, "type": "start_run"}"#);
+    assert_eq!(next_run(&mut watcher).await["running"], json!(true));
+    assert_eq!(next_run(&mut watcher).await["outcome"], json!("completed"));
+    send(&editor, r#"{"id": 2, "type": "reset_run"}"#);
+    assert_eq!(next_run(&mut watcher).await["outcome"], json!(null));
+
+    send(&editor, r#"{"id": 3, "type": "start_run"}"#);
+    assert_eq!(next_run(&mut watcher).await["running"], json!(true));
+    assert_eq!(next_run(&mut watcher).await["outcome"], json!("completed"));
+}
+
+#[tokio::test]
+async fn a_reset_with_no_run_state_is_refused_and_the_editor_is_untouched() {
+    let editor = editor_holding(COUNTER_ALONE);
+
+    let never_run = send(&editor, r#"{"id": 1, "type": "reset_run"}"#);
+    assert_eq!(never_run["type"], "error");
+    assert!(
+        never_run["error"].as_str().unwrap().contains("no run"),
+        "the refusal names the state: {never_run}"
+    );
+
+    let mut watcher = editor.subscribe();
+    send(&editor, r#"{"id": 2, "type": "start_run"}"#);
+    assert_eq!(next_run(&mut watcher).await["running"], json!(true));
+    assert_eq!(next_run(&mut watcher).await["outcome"], json!("completed"));
+    send(&editor, r#"{"id": 3, "type": "reset_run"}"#);
+    assert_eq!(next_run(&mut watcher).await["outcome"], json!(null));
+
+    let again = send(&editor, r#"{"id": 4, "type": "reset_run"}"#);
+    assert_eq!(again["type"], "error", "nothing left to reset");
+    assert_eq!(held_run(&editor)["outcome"], json!(null));
+    let usable = send(&editor, r#"{"id": 5, "type": "get_definition"}"#);
+    assert_eq!(usable["id"], 5, "the connection is still usable");
 }

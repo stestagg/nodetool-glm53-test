@@ -95,6 +95,12 @@ struct Session {
     file: Option<String>,
     dirty: bool,
     run: RunState,
+    /// Which run the session is on: bumped as each run starts, and again
+    /// when a reset ends one out of band. A run's observer carries the
+    /// generation it was spawned with and is heard only while it is still
+    /// the session's, so a run the reset already ended cannot speak its
+    /// ending back into a session that has moved past it.
+    generation: u64,
     problems: Vec<compile::Problem>,
     display: bridge::RunDisplay,
 }
@@ -156,6 +162,7 @@ impl Editor {
                 file,
                 dirty: false,
                 run: RunState::Idle { outcome: None },
+                generation: 0,
                 problems,
                 display: bridge::RunDisplay::default(),
             })),
@@ -280,6 +287,7 @@ impl Editor {
             "new_graph" => self.new_graph(&mut session, &mut fields),
             "start_run" => self.start_run(&mut session, &mut fields),
             "stop_run" => self.stop_run(&session, &mut fields),
+            "reset_run" => self.reset_run(&mut session, &mut fields),
             other => Err(format!("unknown message type `{other}`")),
         };
         match reply {
@@ -326,9 +334,7 @@ impl Editor {
         // reply was composed can reach the browser first, leaving the
         // older snapshot it carries to revert state the tab has applied —
         // durable for statuses, which are pushed once per transition.
-        let _ = self
-            .pushes
-            .send(protocol::run_display_message(&session.display));
+        self.push_display(session);
         Ok(json!({
             "type": "definition",
             "graph": graph,
@@ -702,6 +708,7 @@ impl Editor {
         };
         let (stop, stop_requested) = watch::channel(false);
         session.run = RunState::Running { stop };
+        session.generation += 1;
         // The next start resets the canvas: the last run's statuses and
         // values give way as this run's own events arrive through the
         // bridge.
@@ -714,6 +721,7 @@ impl Editor {
             compiled,
             stop_requested,
             self.taps.clone(),
+            session.generation,
         );
         Ok(json!({ "type": "run_started" }))
     }
@@ -735,6 +743,40 @@ impl Editor {
             RunState::Idle { .. } => return Err("no run is on to stop".to_owned()),
         }
         Ok(json!({ "type": "run_stopped" }))
+    }
+
+    /// Reset the run: back to the idle canvas. A run still on is asked to
+    /// stop, and either way the outcome, the node statuses, and the port
+    /// values go, leaving the state a session has before its first run —
+    /// a fresh start compiles afresh, as every start does.
+    ///
+    /// The run the reset ends goes on ending in its own time, and the
+    /// generation moves past it here, so its late statuses, its emissions,
+    /// and its own run-finished are heard for a run the session is no
+    /// longer on and dropped. Nothing to reset — never run, or already
+    /// reset — is named; the editor's control is disabled without a run
+    /// state, so this answers a stale tab, not a gesture.
+    fn reset_run(
+        &self,
+        session: &mut Session,
+        fields: &mut serde_json::Map<String, Value>,
+    ) -> Result<Value, String> {
+        protocol::done(fields)?;
+        match &session.run {
+            RunState::Running { stop } => {
+                let _ = stop.send(true);
+            }
+            RunState::Idle { outcome: None } => {
+                return Err("no run to reset: none is on and none has run".to_owned())
+            }
+            RunState::Idle { .. } => {}
+        }
+        session.generation += 1;
+        session.run = RunState::Idle { outcome: None };
+        session.display.reset();
+        self.push_run(session);
+        self.push_display(session);
+        Ok(json!({ "type": "run_reset" }))
     }
 
     /// Push the whole updated definition, with the file state, the run
@@ -778,6 +820,15 @@ impl Editor {
     /// definition untouched, a run starting or ending.
     fn push_run(&self, session: &Session) {
         let _ = self.pushes.send(protocol::run_message(&session.run));
+    }
+
+    /// Push the canvas's run display alone — the statuses and the held
+    /// port values, as a whole: the shape a connecting tab joins with, and
+    /// the shape a reset empties.
+    fn push_display(&self, session: &Session) {
+        let _ = self
+            .pushes
+            .send(protocol::run_display_message(&session.display));
     }
 
     async fn accept(self: &Arc<Self>, mut stream: TcpStream) -> io::Result<()> {

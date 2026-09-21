@@ -20,9 +20,9 @@
 //!
 //! The statuses and the values persist after the run ends — the failure
 //! stays locatable, the counter's last ticked value is evidence of what
-//! the run did — until the next start resets them. The connect-time
-//! snapshot carries them, so a browser connecting at any time sees the
-//! canvas the first tab sees.
+//! the run did — until the next start, or a reset, clears them. The
+//! connect-time snapshot carries them, so a browser connecting at any
+//! time sees the canvas the first tab sees.
 //!
 //! The run never waits on any of this: an observer is a sink, and the
 //! push channel is bounded per connection — a connection that cannot keep
@@ -110,6 +110,8 @@ pub(super) struct Bridge {
     session: Arc<Mutex<Session>>,
     pushes: tokio::sync::broadcast::Sender<String>,
     registry: Arc<Registry>,
+    /// The run this watches, as the session numbers its runs.
+    generation: u64,
 }
 
 impl Bridge {
@@ -117,11 +119,13 @@ impl Bridge {
         session: Arc<Mutex<Session>>,
         pushes: tokio::sync::broadcast::Sender<String>,
         registry: Arc<Registry>,
+        generation: u64,
     ) -> Bridge {
         Bridge {
             session,
             pushes,
             registry,
+            generation,
         }
     }
 
@@ -166,6 +170,15 @@ impl Bridge {
             .session
             .lock()
             .expect("the session lock is never poisoned");
+        // A reset ends a run out of band and moves the session past it, so
+        // whatever that run still has to say — a status in flight, an
+        // emission, its own run-finished — arrives for a run the session
+        // is no longer on. It is dropped here: without this the ending of
+        // the very run a reset ended would write its outcome and its
+        // statuses back over the cleared canvas.
+        if session.generation != self.generation {
+            return;
+        }
 
         // An emission's browser-renderable text: held as the port's latest,
         // and riding the forwarded event. A base scalar renders as its plain

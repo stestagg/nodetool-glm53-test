@@ -358,13 +358,15 @@ edit; a clean graph carries nothing. The server holds the graph: a
 reload or a second tab shows the same graph and the same marks, and an
 edit in one appears in the other.
 
-The chrome carries the run beside the file controls: one control that
-reads Start when the editor is idle and Stop while a run is on — the
-editor session itself is the interactive mode, there is no mode to
-switch on. Start hands the definition the server holds to the compiler —
-every start compiles afresh, so whatever was edited last is exactly what
-runs — and on a clean compile the run begins: the control flips to Stop
-and every connection is pushed the new run state. A compile failure is
+The chrome reads as two groups: the file controls — New, Open, Save,
+Save as — and the run controls beside them, Start, Stop, and Reset. The
+editor session itself is the interactive mode, so there is no mode to
+switch on: Start is enabled while the editor is idle and the graph has
+nodes, Stop only while a run is on, and Reset whenever a run holds any
+state at all. Start hands the definition the server holds to the
+compiler — every start compiles afresh, so whatever was edited last is
+exactly what runs — and on a clean compile the run begins, every
+connection pushed the new run state. A compile failure is
 reported as a toast in the chrome, the errors naming what and where, the
 same errors already sitting as marks on their nodes; the run never
 starts, the state stays idle, and editing stays exactly as free as it
@@ -378,14 +380,18 @@ completed, and editing re-enables without anyone pressing Stop; a node's
 error ends it fail-fast with the failure reported as a toast, naming the
 node instance and what went wrong, and the failed node's mark carries
 the explanation after the toast is gone, both gone when the next start
-resets the canvas; and Stop ends it promptly, the outcome showing
-stopped — including a run making no progress because a node's input
+or a reset clears the canvas; and Stop ends it promptly, the outcome
+showing stopped — including a run making no progress because a node's input
 never fires (a `Format` whose `template` is neither connected nor
 parameterised while its `value` is, is one way to build that — the
-canvas warned about it before the run began). Run state — idle or
-running, and the last run's outcome — is server state like the file:
-a second tab and a reload show it, and a start or stop made in one tab
-is visible in the others. The editor's outputs no node consumes are
+canvas warned about it before the run began). Reset returns the editor
+to the idle canvas: a run still on is stopped, and the outcome, the node
+statuses, and the port values go with it, leaving the state a session
+has before its first run — the stopped run's own ending cannot bring any
+of it back, and the next Start compiles afresh as every start does. Run
+state — idle or running, and the last run's outcome — is server state
+like the file: a second tab and a reload show it, and a start, stop, or
+reset made in one tab is visible in the others. The editor's outputs no node consumes are
 discarded; attaching a console printer to what a run produces is not the
 editor's business.
 
@@ -401,8 +407,8 @@ value bundle the type declares — and a type that declares neither
 serialiser nor bundle animates the wire and carries no invented
 content, exactly as it always has. Statuses and values persist after
 the run ends — the failed node stays findable, the counter's last ticked value stays
-evidence of what the run did — until the next start resets the canvas.
-The browser coalesces the animation, keeping only the latest value per
+evidence of what the run did — until the next start, or a reset, clears
+the canvas. The browser coalesces the animation, keeping only the latest value per
 port and letting a fast graph drop frames rather than queue a backlog,
 and honours the platform's reduced-motion preference. A tab that
 connects at any time — first open, reload, second tab, or a reconnect —
@@ -457,10 +463,10 @@ a banner names the loss and says the editor is trying again, over a
 canvas that keeps its last-known view. The banner and the toasts are
 polite live regions, so the reports the chrome carries are announced to
 assistive technology as they appear, without taking focus. While
-disconnected every
-server-acting gesture — editing, file open and save, start and stop — is
-inert, the browser holding no state that could back an undeliverable
-edit, while panning, zooming, and selecting stay live. The editor keeps
+disconnected every server-acting gesture — editing, file open and save,
+start, stop, and reset — is inert, the browser holding no state that
+could back an undeliverable edit, while panning, zooming, and selecting
+stay live. The editor keeps
 trying, and when the server returns the tab rejoins by itself through
 the connect-time resync — definition, file, run state, problems — the
 banner clears, and a reconnect mid-run reattaches to the live state the

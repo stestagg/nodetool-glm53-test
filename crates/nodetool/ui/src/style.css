@@ -96,6 +96,20 @@ body {
   flex: 1;
 }
 
+/* The two kinds of act the chrome carries — tending the document, driving
+   the run — read as two groups: the buttons of one sit together, and a
+   rule between the groups says where one ends. */
+
+.chrome-group {
+  display: flex;
+  gap: 4px;
+}
+
+.chrome-group + .chrome-group {
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
 .chrome button {
   padding: 2px 10px;
   border: 1px solid var(--border);

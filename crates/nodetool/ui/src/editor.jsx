@@ -79,7 +79,7 @@ import {
   hasUnsavedChanges,
   nodeMarks,
   offPortUnhook,
-  runControl,
+  runControls,
   saveAsksForPath,
   toEdges,
   toNodes,
@@ -778,7 +778,7 @@ export function Editor() {
     graph.nodes.length === 0 &&
     listing?.types !== undefined &&
     listing.types.length > 0
-  const control = runControl(run, graph, connected)
+  const controls = runControls(run, graph, connected)
   const banner = bannerText(connection, mismatch)
 
   return (
@@ -792,13 +792,25 @@ export function Editor() {
                 <span className="file-dirty">unsaved changes</span>
               )}
               <span className="chrome-space" />
-              <button disabled={!control.enabled} onClick={actOnRun}>
-                {control.label}
-              </button>
-              <button disabled={!editable} onClick={newGraph}>New</button>
-              <button disabled={!editable} onClick={openFile}>Open</button>
-              <button disabled={!editable} onClick={() => save(false)}>Save</button>
-              <button disabled={!editable} onClick={() => save(true)}>Save as</button>
+              {/* Two groups, two kinds of act: what tends the document,
+                  and what drives the run. */}
+              <div className="chrome-group">
+                <button disabled={!editable} onClick={newGraph}>New</button>
+                <button disabled={!editable} onClick={openFile}>Open</button>
+                <button disabled={!editable} onClick={() => save(false)}>Save</button>
+                <button disabled={!editable} onClick={() => save(true)}>Save as</button>
+              </div>
+              <div className="chrome-group">
+                <button disabled={!controls.start} onClick={() => actOnRun('start_run')}>
+                  Start
+                </button>
+                <button disabled={!controls.stop} onClick={() => actOnRun('stop_run')}>
+                  Stop
+                </button>
+                <button disabled={!controls.reset} onClick={() => actOnRun('reset_run')}>
+                  Reset
+                </button>
+              </div>
             </header>
             {/* The banner names the loss without covering the canvas: the
                 view beneath stays where the user left it, looking live. */}

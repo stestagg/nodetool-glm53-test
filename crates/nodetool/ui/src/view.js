@@ -265,17 +265,19 @@ export function saveAsksForPath(file, elsewhere) {
   return elsewhere || file?.path == null
 }
 
-// The chrome's one run control: it flips with the run state — Start when
-// idle, Stop while running, no separate mode — and a start needs
-// something to run, an empty definition leaving it disabled. Both acts
-// reach the server, so a connection that cannot deliver them is the
-// same as no control.
-export function runControl(run, graph, connected = true) {
+// The chrome's run group: what each of its three controls can do in the
+// state the server holds. Start needs an idle editor and something to
+// run, an empty definition leaving it disabled — the editor session
+// itself is the interactive mode, so there is none to switch on. Stop
+// needs a run on. Reset needs a run to clear: one on, or one finished
+// whose outcome and canvas still stand. All three reach the server, so a
+// connection that cannot deliver them is the same as no controls.
+export function runControls(run, graph, connected = true) {
   const running = run?.running === true
   return {
-    running,
-    label: running ? 'Stop' : 'Start',
-    enabled: connected && (running || (graph?.nodes.length ?? 0) > 0),
+    start: connected && !running && (graph?.nodes.length ?? 0) > 0,
+    stop: connected && running,
+    reset: connected && (running || (run?.outcome ?? null) !== null),
   }
 }
 

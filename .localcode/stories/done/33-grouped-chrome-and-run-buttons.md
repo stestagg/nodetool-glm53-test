@@ -105,3 +105,12 @@ restart is untouched — Start after Reset compiles as Start after Stop does).
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
 
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
+
+- 2026-09-21 — Implemented on the generation the story settled on. It lives
+  on the session, bumped as each run starts and again when a reset ends one
+  out of band; the bridge carries the generation it was spawned with and
+  drops every event heard for a run the session has moved past — the guard
+  is one early return at the top of `hear`, before the event is even
+  forwarded, so a late status, an emission, and the engine's own
+  run-finished all die together. `push_display` is the reset's second push
+  and `get_definition`'s, one helper for both.
