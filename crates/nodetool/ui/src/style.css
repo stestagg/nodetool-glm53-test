@@ -124,9 +124,10 @@ body {
   border-color: var(--border);
 }
 
-/* The canvas gestures quiet with the chrome: the palette item, the node
-   title, and the port handles keep their look but lose the grab cursor
-   that invites a drag the lock has taken away. */
+/* The canvas gestures quiet with the chrome: the palette item and the
+   node title keep their look but lose the grab cursor, and the port
+   handle loses the connection cursor React Flow gives it — neither
+   invites a gesture the lock has taken away. */
 .app.locked .palette-item,
 .app.locked .node-title,
 .app.locked .react-flow__handle {
@@ -425,7 +426,12 @@ body {
 /* The port dot: the type channel's own — a port declaring exactly one
    type renders in that type's declared colour and shape (colour and
    border inline, the shape as the class name), everything else in the
-   neutral pair. The circle is the base rule's default round dot. */
+   neutral pair. The circle is the base rule's default round dot.
+
+   No cursor here: React Flow gives a connectable handle the connection
+   cursor itself, and this sheet loads after its own, so anything said
+   here talks over it. The handle is the wire's hot-zone, not a draggable
+   surface, and the pointer must say so. */
 
 .port .react-flow__handle {
   position: absolute;
@@ -433,11 +439,20 @@ body {
   height: 8px;
   border: 1px solid;
   border-radius: 50%;
-  cursor: grab;
 }
 
 .port .react-flow__handle.square {
   border-radius: 1px;
+}
+
+/* The one handle the library leaves cursorless: the origin of a wire in
+   flight, which stops counting as a landing zone the moment the drag
+   starts. The cursor holds there so the gesture does not change hands
+   under the pointer. Named for the unlocked app, since a lock landing
+   mid-drag takes the gesture away and the default cursor with it. */
+
+.app:not(.locked) .port .react-flow__handle.connectingfrom {
+  cursor: crosshair;
 }
 
 /* The ring outside the dot, panel colour beneath the accent: the handle

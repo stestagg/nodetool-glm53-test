@@ -71,3 +71,10 @@ handles, as it already does for the other gestures (style.css:127-134).
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
 
 - 2026-09-20: Implementation got stuck at "implement story": opencode run failed (1). The story went back to ready to be picked up again.
+
+- 2026-09-21 — Implemented, and the predicted hole was real: the library's
+  `connectionindicator` is dropped from the drag's own origin the moment a
+  connection starts, so the crosshair would blink off under the pointer.
+  One rule holds it, named for the unlocked app so a lock landing mid-drag
+  still takes the invitation away. `style.test.js` pins the rest: this
+  sheet loads after the library's, so what it does not say is the point.
